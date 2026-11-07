@@ -4,7 +4,7 @@
 **P0:** passed on the local Steel deployment.
 **Prototype:** passed on the public fixture.
 **Implementation:** the unit and contract tiers are complete.
-The live gate is the pool E2E on the eval server (`tests/e2e/test_steel_crawl_pool_e2e.py`, phase F); the retired three-target cloud/CLI bundle (`eval/steel-crawl-e2e/`) is historical setup reference and its measured runs are in `eval/steel-crawl-e2e/NFR-REPORT.md` and `eval/steel-crawl-e2e/ASSERTIONS.md`.
+The live gate is the pool E2E harness (`eval/steel-crawl-e2e/`) on the eval server; the evidence is `docs/design/evidence/steel-pool-mcp/convergence-e2e-2026-11-07.md`. The retired three-target cloud/CLI path in the same directory is historical setup reference; its measured runs are in `eval/steel-crawl-e2e/NFR-REPORT.md` and `eval/steel-crawl-e2e/ASSERTIONS.md`.
 **Design history:** `docs/design/steel-crawl-workbench.md`.
 **P0 evidence:** `docs/experiments/p0-steel-cdp-sidecar.md`.
 **Prototype:** `docs/experiments/crawl_proto_local.py` and `docs/experiments/runs/crawl-proto-20261031T164759Z/`.
@@ -1126,11 +1126,10 @@ unit and contract coverage:
 `tests/kali/test_steel_pool_proxy.py`,
 `tests/recon/crawl/steel/test_mcp_client.py`, and
 `tests/recon/crawl/steel/test_live_transport.py`.
-The live gate is the pool E2E
-(`tests/e2e/test_steel_crawl_pool_e2e.py`) on the eval host:
+The live gate passed on 2026-11-07 on the eval host:
 the ComfyUI `steel_crawl` walkthrough and the White Jotter authenticated
-walkthrough.
-Both are pending phase F of the implementation plan.
+walkthrough both completed with `frontier_empty` and `partial=false`.
+Evidence: `docs/design/evidence/steel-pool-mcp/convergence-e2e-2026-11-07.md`.
 The JEV engine diff against `feat/steel-crawl` is empty.
 The edge gate is `tests/kali/test_http_history_edge.py`.
 The full unit tier is the regression gate.

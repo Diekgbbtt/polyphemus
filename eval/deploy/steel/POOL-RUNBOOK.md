@@ -30,8 +30,9 @@ Build the worker natively on the eval host from the pinned tag:
 
 ```bash
 git clone --depth 1 --branch v0.5.5-beta \
-  https://github.com/steel-dev/steel-browser.git src
-docker build -t steel-browser-api:v0.5.5-beta -f src/api/Dockerfile src
+  https://github.com/steel-dev/steel-browser.git steel-browser-build
+docker build -t steel-browser-api:v0.5.5-beta \
+  -f steel-browser-build/api/Dockerfile steel-browser-build
 docker image inspect steel-browser-api:v0.5.5-beta \
   --format '{{.Architecture}}/{{.Os}}'
 ```

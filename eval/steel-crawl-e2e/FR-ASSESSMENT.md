@@ -1,7 +1,7 @@
 # steel_crawl functional and invariant assessment
 
 > RETIRED: the cloud/CLI bundle predates the pool convergence. The live gate is
-> `tests/e2e/test_steel_crawl_pool_e2e.py` (phase F); the pool contract is
+> `eval/steel-crawl-e2e/` and `docs/design/evidence/steel-pool-mcp/convergence-e2e-2026-11-07.md`; the pool contract is
 > `docs/design/steel-crawl-pool-convergence.md`. Body references to
 > `tests/e2e/test_steel_crawl_e2e.py` are historical and do not name the live
 > gate.

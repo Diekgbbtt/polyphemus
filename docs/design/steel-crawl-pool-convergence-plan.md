@@ -61,9 +61,13 @@ No slice is closed with a failing or unrun test.
 
 ## Phase F - E2E execution
 
-- [ ] F1 Build `steel-browser-api:v0.5.5-beta` for arm64 on the eval host.
-- [ ] F2 Sync the instance, start the baseline stack, verify two healthy
-  workers and the three-tool surface.
-- [ ] F3 Run the ComfyUI `steel_crawl` E2E.
-- [ ] F4 Run the White Jotter authenticated E2E.
-- [ ] F5 Record evidence and close the work items.
+- [x] F1 Build `steel-browser-api:v0.5.5-beta` for arm64 on the eval host
+  (`arm64/linux`, digest `sha256:0dfdb92e...`).
+- [x] F2 Sync the instance, start the baseline stack, verify two healthy
+  workers and the three-tool surface (`pool.discovered 2/2`).
+- [x] F3 Run the ComfyUI `steel_crawl` E2E (`frontier_empty`, `partial=false`,
+  541 endpoints, 553 flows).
+- [x] F4 Run the White Jotter authenticated E2E (`frontier_empty`,
+  `partial=false`, authenticated oracle, 19 endpoints, 29 flows).
+- [x] F5 Record evidence in
+  `docs/design/evidence/steel-pool-mcp/convergence-e2e-2026-11-07.md`.

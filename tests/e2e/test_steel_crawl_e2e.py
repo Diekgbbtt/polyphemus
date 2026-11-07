@@ -5,7 +5,7 @@ This file mints a session on the retired public Steel API and installs the CLI
 in the agent; the production crawl now mounts the in-stack browser MCP and
 never runs the CLI. The historical setup stays for reference, but the file is
 always skipped so it is never mistaken for the live gate. The pool gate is
-`tests/e2e/test_steel_crawl_pool_e2e.py` (phase F).
+`eval/steel-crawl-e2e/` and `docs/design/evidence/steel-pool-mcp/convergence-e2e-2026-11-07.md`.
 
 Spec: `docs/design/steel-crawl-spec.md` sections 2, 4, 9, 10.4, 11, and 14.
 Catalogue: `eval/steel-crawl-e2e/ASSERTIONS.md` (E1-E3, N1-N8).
@@ -36,7 +36,7 @@ pytestmark = [
     ),
     pytest.mark.skip(
         reason="retired cloud/CLI walkthrough; the pool gate is "
-        "tests/e2e/test_steel_crawl_pool_e2e.py",
+        "eval/steel-crawl-e2e/ (evidence: docs/design/evidence/steel-pool-mcp/convergence-e2e-2026-11-07.md)",
     ),
 ]
 

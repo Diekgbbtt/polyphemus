@@ -151,8 +151,12 @@ Implemented on `feat/steel-crawl-convergence`:
   reduced-coverage route.
 - The auth store, gateway, skill, and prompt maps are in the same branch.
 
-The live E2E is gated on the arm64 worker image build and the instance sync
-(phase F of the implementation plan).
+The live E2E passed on 2026-11-07 on `ubuntu-16gb-nbg1-1` (arm64):
+the worker image built natively, the baseline stack discovered two healthy
+workers, the three-tool surface and the agent-side CDP path worked, and the
+ComfyUI and White Jotter crawls completed with `frontier_empty` and
+`partial=false`.
+Evidence: `docs/design/evidence/steel-pool-mcp/convergence-e2e-2026-11-07.md`.
 
 ## 11. Acceptance
 
