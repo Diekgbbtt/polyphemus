@@ -10,6 +10,18 @@ def test_compose_config_is_valid():
     assert "polymerhus-net" in r.stdout
 
 
+def test_agent_data_root_is_a_host_bind():
+    """The base agent carries the host data-root bind.
+
+    Every hunting artifact and the pod-export records must survive a container
+    kill. The app writes `/srv/data`; this bind keeps that path on the host,
+    independent of the host layout.
+    """
+    config = yaml.safe_load(open("docker-compose.yml", encoding="utf-8"))
+    volumes = config["services"]["agent"]["volumes"]
+    assert "${INSTANCE_DATA_ROOT:-./data}:/srv/data" in volumes
+
+
 def test_lightrag_is_baseline_config():
     r = subprocess.run(["docker", "compose", "config"], capture_output=True, text=True, cwd=".")
     assert r.returncode == 0, r.stderr
