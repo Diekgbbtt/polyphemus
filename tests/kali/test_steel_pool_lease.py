@@ -328,6 +328,38 @@ def test_start_failure_quarantines_when_stop_and_release_fail(harness):
         harness.manager.start("mcp-2", "other")
 
 
+def test_a_worker_that_recovers_is_eligible_again(tmp_path):
+    harness = Harness(
+        tmp_path,
+        reports=[
+            _report(unhealthy=(_worker(),)),
+            _report(healthy=(_worker(),)),
+        ],
+        pool_wait_s=5.0,
+    )
+
+    view = harness.manager.start("mcp-1", "hunt")
+
+    assert view.name == "hunt"
+    assert harness.registry.refreshes >= 2
+    assert harness.manager.active_count() == 1
+
+
+def test_a_failed_cli_start_quarantines_the_worker(tmp_path):
+    harness = Harness(tmp_path, pool_wait_s=0.0)
+
+    def fail_start() -> None:
+        raise CliError("the CLI start timed out after creating a session")
+
+    harness.cli_overrides["c1"] = {"start_hook": fail_start}
+
+    with pytest.raises(CliError):
+        harness.manager.start("mcp-1", "hunt")
+
+    with pytest.raises(PoolExhausted):
+        harness.manager.start("mcp-2", "other")
+
+
 def test_pool_exhausted_after_the_bounded_wait(tmp_path):
     harness = Harness(
         tmp_path,

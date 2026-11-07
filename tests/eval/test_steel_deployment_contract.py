@@ -42,6 +42,13 @@ def test_the_retired_compose_says_so_in_its_first_lines():
     assert "docker-compose.steel-pool.yml" in head
 
 
+def test_the_eval_orchestrator_includes_the_pool_file():
+    from orchestrator.instances import COMPOSE_FILES
+
+    assert "docker-compose.pool.yml" in COMPOSE_FILES
+    assert COMPOSE_FILES[-1] == "eval/docker-compose.eval.yml"
+
+
 def test_the_active_pool_runbook_is_the_in_stack_one():
     runbook = (REPO_ROOT / "eval" / "deploy" / "steel" / "POOL-RUNBOOK.md").read_text(
         encoding="utf-8"

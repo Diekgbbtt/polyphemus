@@ -197,8 +197,7 @@ This is the complete, class-grouped inventory of every LangGraph artifact in
 | `triage_fn` → `default_triage_fn` | pod_graph / crawl_pod | `pod.py` | Triager LLM structured-output call. |
 | `pod_invoke` → `default_pod_invoke` | job_agent | `job_agent.py` | Invokes `pod_graph`, or `crawl_pod_invoke` when `configurator_mode=="agent"`. |
 | `preprocess_fn` → `default_preprocess_fn` | job_agent | `job_agent.py` | Builds pod inputs deterministically; batches for `job.batch`. |
-| `run_crawl_fn` → `live_run_crawl_fn` | crawl_pod | `crawl/crawl_pod.py` | The live authenticated Steel crawl (`run_live_crawl`). |
-| `legacy_agentic_run_crawl_fn` | crawl_pod | `crawl/crawl_pod.py` | The legacy ReAct path, kept for compatibility only. |
+| `run_crawl_fn` → `live_run_crawl_fn` | crawl_pod | `crawl/crawl_pod.py` | The live authenticated Steel crawl through the browser MCP (`run_live_crawl`). |
 
 ### 4.7 Helpers / deterministic support modules
 

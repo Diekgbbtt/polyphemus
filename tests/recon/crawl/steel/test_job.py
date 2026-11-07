@@ -25,6 +25,7 @@ from polymerhus.recon.crawl.steel.enumerate import (
 from polymerhus.recon.crawl.steel.frontier import (
     ActionVisit,
     ExecutionResult,
+    FailedVisit,
     FrontierResult,
     PageVisit,
     StaleVisit,
@@ -32,7 +33,12 @@ from polymerhus.recon.crawl.steel.frontier import (
 from polymerhus.recon.crawl.steel.job import CrawlJob
 from polymerhus.recon.crawl.steel.ledger import RunLedger
 from polymerhus.recon.crawl.steel.manifest import RunBlock, build_manifest
-from polymerhus.recon.crawl.steel.session import SessionMissing, SteelEnd
+from polymerhus.recon.crawl.steel.session import (
+    BrowserUnavailable,
+    RestoreFailed,
+    SessionMissing,
+    SteelEnd,
+)
 from polymerhus.recon.crawl.steel.state import BrowserState, PageInstance, StaleElement
 
 
@@ -258,6 +264,36 @@ def test_a_missing_session_is_a_typed_stop_and_never_traverses():
     assert "the session is gone" in (result.error or "")
 
 
+def test_a_browser_unavailable_mount_is_a_typed_partial_stop():
+    job, session, sidecar, run_calls, records = make_job(
+        session=FakeSession(failure=BrowserUnavailable("the pool is down"))
+    )
+
+    result = job.run()
+
+    assert result.status == "partial"
+    assert result.stop_reason == "browser_unavailable"
+    assert any(
+        error.code == "browser_unavailable" and error.stage == "mount"
+        for error in result.manifest.errors
+    )
+
+
+def test_a_restore_failure_is_a_typed_partial_stop():
+    job, session, sidecar, run_calls, records = make_job(
+        session=FakeSession(failure=RestoreFailed("bad state"))
+    )
+
+    result = job.run()
+
+    assert result.status == "partial"
+    assert result.stop_reason == "restore_failed"
+    assert any(
+        error.code == "restore_failed" and error.stage == "mount"
+        for error in result.manifest.errors
+    )
+
+
 def test_a_stale_action_is_recorded_with_its_error():
     root = make_root()
     element = make_element()
@@ -278,6 +314,34 @@ def test_a_stale_action_is_recorded_with_its_error():
     assert record.outcome == "error"
     assert record.error == "stale_element"
     assert result.status == "complete"
+
+
+def test_a_failed_action_is_recorded_with_its_error():
+    root = make_root()
+    element = make_element()
+    frontier = FrontierResult(
+        stop_reason="error",
+        page_visits=(PageVisit(page=root),),
+        failed=(
+            FailedVisit(
+                page=root,
+                element=element,
+                error="command_failed: the browser did not answer",
+            ),
+        ),
+        error="command_failed: the browser did not answer",
+    )
+    job, session, sidecar, run_calls, records = make_job(
+        root=root, frontier=frontier
+    )
+
+    result = job.run()
+
+    assert result.stop_reason == "error"
+    assert len(records["actions"]) == 1
+    record = records["actions"][0]
+    assert record.outcome == "error"
+    assert "command_failed" in (record.error or "")
 
 
 def test_the_job_log_does_not_leak_the_connect_url_or_credentials(caplog):

@@ -79,9 +79,19 @@ def front_conf_path(conf_dir: str | Path, host: str) -> Path:
     return Path(conf_dir) / f"eval-target-{host}.conf"
 
 
-def _compose_ps_kali(paths: InstancePaths) -> str:
+def _compose_ps_service(paths: InstancePaths, service: str) -> str:
     files = " ".join(f"-f {compose_file}" for compose_file in paths.compose_files)
-    return f"docker compose -p {paths.compose_project} {files} ps -q kali"
+    return (
+        f"docker compose -p {paths.compose_project} {files} ps -q {service}"
+    )
+
+
+def _compose_ps_kali(paths: InstancePaths) -> str:
+    return _compose_ps_service(paths, "kali")
+
+
+def _compose_ps_workers(paths: InstancePaths) -> str:
+    return _compose_ps_service(paths, "steel-worker")
 
 
 def _rewrite_hosts(host: str) -> str:
@@ -176,6 +186,59 @@ def kali_clear_command(paths: InstancePaths, host: str) -> Command:
         paths,
         _rewrite_hosts(host),
         description=f"clear {host} from {paths.compose_project} kali",
+    )
+
+
+def _worker_exec_command(
+    paths: InstancePaths, inner: str, *, description: str
+) -> Command:
+    """Run one hosts rewrite inside EVERY replica of the worker service.
+
+    The browser resolves the synthetic target host inside the worker, not in
+    kali. A single replica loop keeps the write point identical for one or
+    many replicas.
+    """
+    script = (
+        f"cids=$({_compose_ps_workers(paths)}); "
+        f"test -n \"$cids\" || {{ echo 'routing: no steel-worker replica for "
+        f"{paths.compose_project}' >&2; exit 1; }}; "
+        f"for cid in $cids; do docker exec \"$cid\" sh -c {shlex.quote(inner)} "
+        f"|| exit 1; done"
+    )
+    return Command(
+        argv=("sh", "-c", script),
+        cwd=str(paths.worktree),
+        description=description,
+    )
+
+
+def worker_alias_command(paths: InstancePaths, host: str, ip: str) -> Command:
+    """Alias the synthetic Host inside every `steel-worker` replica.
+
+    The worker's Chrome resolves the target; the host key must be written in
+    each replica's `/etc/hosts`. `ip` is the Docker host gateway the target
+    front is published on. The same numeric-address rule as the kali alias
+    applies.
+    """
+    if not (is_numeric_address(ip) or is_plan_placeholder(ip)):
+        raise RoutingError(
+            f"refusing to alias {host} to non-numeric address {ip!r}: "
+            "/etc/hosts does not resolve a hostname in its address column"
+        )
+    inner = _rewrite_hosts(host) + f" && echo '{ip} {host}' >> /etc/hosts"
+    return _worker_exec_command(
+        paths,
+        inner,
+        description=f"alias {host} -> {ip} in {paths.compose_project} steel-worker",
+    )
+
+
+def worker_clear_command(paths: InstancePaths, host: str) -> Command:
+    """Remove the synthetic Host from every `steel-worker` replica."""
+    return _worker_exec_command(
+        paths,
+        _rewrite_hosts(host),
+        description=f"clear {host} from {paths.compose_project} steel-worker",
     )
 
 

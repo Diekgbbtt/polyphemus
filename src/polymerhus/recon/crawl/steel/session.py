@@ -133,6 +133,7 @@ class SteelSession(BaseModel):
         session_id: str,
         cdp_url: str,
         cdp_host: str,
+        remaining_ms: int | None = None,
     ) -> "SteelSession":
         """Build from one `browser_start` result."""
         return cls(
@@ -141,6 +142,7 @@ class SteelSession(BaseModel):
             status="live",
             websocket_url=cdp_url or None,
             cdp_host=cdp_host,
+            remaining_ms=remaining_ms,
             source="mcp.start",
         )
 
@@ -197,6 +199,7 @@ class StartResult:
     cdp_url: str = ""
     cdp_host: str = ""
     warnings: tuple[str, ...] = ()
+    remaining_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -370,7 +373,7 @@ class SteelSessionClient:
         if (
             report.get("success") is False
             and not end.stopped
-            and end.released is not True
+            and end.released is None
         ):
             raise SessionStillLive(
                 "the Steel session was neither stopped nor released"

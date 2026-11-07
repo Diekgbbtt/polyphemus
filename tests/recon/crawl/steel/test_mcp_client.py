@@ -43,6 +43,7 @@ START_RESULT = {
     },
     "cdp_url": "ws://172.20.0.5:3000/",
     "cdp_host": "localhost:3000",
+    "remaining_ms": 900_000,
 }
 
 
@@ -104,6 +105,7 @@ def test_start_maps_the_restore_and_cdp_contract():
         cdp_url="ws://172.20.0.5:3000/",
         cdp_host="localhost:3000",
         warnings=("a cookie attribute is not restorable",),
+        remaining_ms=900_000,
     )
     assert fake.calls == [
         ("browser_start", {"name": "steel-proj"}),
@@ -334,6 +336,54 @@ def test_end_reports_a_live_session_as_still_live():
     client.close()
 
 
+def test_a_second_end_is_an_idempotent_success():
+    client, _ = _client(
+        {
+            "browser_start": [FakeToolResult(START_RESULT)],
+            "browser_end": [
+                FakeToolResult(
+                    {"success": True, "ended": False, "stopped": False}
+                )
+            ],
+        }
+    )
+    client.start("steel-proj")
+
+    result = client.end()
+
+    assert result["ended"] is False
+    assert result["success"] is True
+    client.close()
+
+
+def test_an_already_gone_session_is_not_still_live():
+    client, _ = _client(
+        {
+            "browser_start": [FakeToolResult(START_RESULT)],
+            "browser_end": [
+                FakeToolResult(
+                    {
+                        "success": False,
+                        "ended": True,
+                        "stopped": False,
+                        "released": False,
+                        "error": {
+                            "code": "browser_error",
+                            "message": "already gone",
+                        },
+                    }
+                )
+            ],
+        }
+    )
+    client.start("steel-proj")
+
+    result = client.end()
+
+    assert result["released"] is False
+    client.close()
+
+
 def test_end_returns_the_capture_report():
     report = {
         "success": True,
@@ -355,6 +405,35 @@ def test_end_returns_the_capture_report():
 
     assert client.end() == report
     client.close()
+
+
+def test_every_server_error_code_is_typed_on_the_crawl_side():
+    import ast
+    from pathlib import Path
+
+    from polymerhus.recon.crawl.steel.mcp_client import MCP_ERROR_TYPES
+    from polymerhus.recon.crawl.steel.session import CLI_ERROR_TYPES
+
+    source = (
+        Path(__file__).resolve().parents[4]
+        / "kali"
+        / "steel_pool"
+        / "server.py"
+    ).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    codes = set()
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and getattr(node.func, "id", None) == "error_envelope"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+        ):
+            codes.add(node.args[0].value)
+
+    assert codes
+    assert codes <= set(MCP_ERROR_TYPES) | set(CLI_ERROR_TYPES)
 
 
 def test_close_is_idempotent_and_before_open():

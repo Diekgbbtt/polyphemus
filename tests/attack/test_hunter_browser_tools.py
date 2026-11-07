@@ -81,7 +81,42 @@ def test_unreachable_browser_fails_open():
     async def loader(_handle):
         raise AssertionError("the loader must not run without a session")
 
-    assert _collect("http://kali:8003/mcp", session=session, loader=loader) == []
+    assert _collect(
+        "http://kali:8003/mcp",
+        session=session,
+        loader=loader,
+        retry_attempts=1,
+    ) == []
+
+
+def test_a_transient_browser_open_is_retried():
+    class _FlakySession(_Session):
+        def __init__(self):
+            super().__init__()
+            self.attempts = 0
+
+        async def __aenter__(self):
+            self.attempts += 1
+            if self.attempts == 1:
+                raise ConnectionError("starting")
+            return self
+
+    session = _FlakySession()
+
+    async def loader(_handle):
+        return _tools("browser_exec")
+
+    tools = _collect(
+        "http://kali:8003/mcp",
+        session=session,
+        loader=loader,
+        retry_attempts=2,
+        retry_delay_s=0.0,
+    )
+
+    assert [tool.name for tool in tools] == ["browser_exec"]
+    assert session.attempts == 2
+    assert session.closed is True
 
 
 def test_only_the_three_browser_tools_are_exposed():
@@ -143,6 +178,57 @@ def test_a_close_failure_does_not_mask_the_tools():
     tools = _collect("http://kali:8003/mcp", session=session, loader=loader)
 
     assert [tool.name for tool in tools] == ["browser_end"]
+
+
+def test_the_model_facing_start_tool_strips_the_cdp_endpoint():
+    from langchain_core.tools import StructuredTool
+
+    seen: dict = {}
+
+    async def start(name: str) -> dict:
+        return {
+            "success": True,
+            "session": {"name": name, "session_id": "steel-1"},
+            "cdp_url": "ws://172.20.0.5:3000/",
+            "cdp_host": "localhost:3000",
+        }
+
+    tool = StructuredTool.from_function(
+        coroutine=start, name="browser_start", description="mount"
+    )
+
+    async def loader(_handle):
+        return [tool]
+
+    async def run():
+        async with open_browser_tools(
+            "http://kali:8003/mcp",
+            client_factory=lambda: _Client(_Session()),
+            loader=loader,
+        ) as tools:
+            exposed = tools[0]
+            result = await exposed.ainvoke({"name": "steel-proj"})
+            return exposed, result
+
+    exposed, result = asyncio.run(run())
+
+    assert exposed.name == "browser_start"
+    assert result["session"]["session_id"] == "steel-1"
+    assert "cdp_url" not in result
+    assert "cdp_host" not in result
+    seen.update(result)
+
+
+def test_the_strip_handles_a_json_string_envelope():
+    from polymerhus.attack.hunting.browser_tools import strip_cdp_fields
+
+    payload = '{"success": true, "cdp_url": "ws://x/", "cdp_host": "localhost:3000"}'
+
+    stripped = strip_cdp_fields(payload)
+
+    assert "cdp_url" not in stripped
+    assert "cdp_host" not in stripped
+    assert '"success": true' in stripped
 
 
 def test_a_non_positive_read_timeout_is_rejected():

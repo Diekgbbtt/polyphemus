@@ -54,6 +54,7 @@ MCP_ERROR_TYPES: dict[str, type[SteelSessionError]] = {
     "guard_error": GuardError,
     "pool_exhausted": BrowserUnavailable,
     "pool_unavailable": BrowserUnavailable,
+    "browser_unavailable": BrowserUnavailable,
     "restore_failed": RestoreFailed,
     "store_error": CommandFailed,
     "lease_error": CommandFailed,
@@ -91,6 +92,7 @@ class McpStart:
     cdp_url: str
     cdp_host: str
     warnings: tuple[str, ...] = ()
+    remaining_ms: int | None = None
 
 
 def _error_code(error: object) -> tuple[str, str]:
@@ -184,6 +186,7 @@ class McpBrowserClient:
         if not isinstance(cdp_host, str) or not cdp_host:
             raise McpBrowserError("browser_start carried no CDP Host")
         restored = data.get("restored")
+        remaining = data.get("remaining_ms")
         return McpStart(
             name=session_name,
             session_id=session_id,
@@ -191,6 +194,7 @@ class McpBrowserClient:
             cdp_url=cdp_url,
             cdp_host=cdp_host,
             warnings=tuple(str(item) for item in data.get("warnings") or ()),
+            remaining_ms=remaining if isinstance(remaining, int) else None,
         )
 
     def exec(self, command: Sequence[str]) -> Mapping[str, Any]:
@@ -203,10 +207,14 @@ class McpBrowserClient:
     def end(self) -> Mapping[str, Any]:
         data = self._call_raw("browser_end", {})
         if data.get("success") is False:
-            if not data.get("stopped") and data.get("released") is not True:
+            if not data.get("stopped") and data.get("released") is None:
                 raise SessionStillLive(
                     "the browser session was neither stopped nor released"
                 )
+            if data.get("released") is False:
+                # The API reported the session already gone: the lease is
+                # released even though this call did not release it.
+                return data
             raise_for_mcp_error(data.get("error"))
         return data
 
@@ -359,6 +367,7 @@ class McpBackend:
             session_id=start.session_id,
             cdp_url=start.cdp_url,
             cdp_host=start.cdp_host,
+            remaining_ms=start.remaining_ms,
         )
         self._registry.observe_start(session)
         return StartResult(
@@ -367,6 +376,7 @@ class McpBackend:
             cdp_url=start.cdp_url,
             cdp_host=start.cdp_host,
             warnings=start.warnings,
+            remaining_ms=start.remaining_ms,
         )
 
     def command(self, verb: str, *args: str) -> list[str]:

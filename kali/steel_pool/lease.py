@@ -162,6 +162,7 @@ class LeaseView:
     restored: RestoreReport | None = None
     cdp_url: str = ""
     cdp_host: str = ""
+    remaining_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -209,6 +210,7 @@ class Lease:
                 f"ws://{self.worker.container_ip}:{self.worker.api_port}/"
             ),
             cdp_host=f"localhost:{self.worker.api_port}",
+            remaining_ms=self.cli_session.remaining_ms,
         )
 
 
@@ -444,7 +446,9 @@ class LeaseManager:
             return lease.view()
         except BaseException:
             if worker is not None:
-                self._abandon_start(worker, proxy, cli, cli_session, lease)
+                self._abandon_start(
+                    worker, proxy, cli, cli_session, lease, start_attempted=True
+                )
             elif proxy is not None:
                 self._stop_proxy(proxy)
             with self._lock:
@@ -585,9 +589,9 @@ class LeaseManager:
             with self._discovery_lock:
                 report = self._registry.refresh()
             with self._lock:
-                self._quarantined.update(
-                    worker.container_id for worker in report.unhealthy
-                )
+                # Health is the current observation, not a lifetime verdict.
+                # A worker that was briefly unhealthy at stack startup must be
+                # eligible again once the registry reports it healthy.
                 for worker in report.healthy:
                     if worker.container_id in self._quarantined:
                         continue
@@ -621,11 +625,21 @@ class LeaseManager:
         cli: CliAdapter | None,
         cli_session: CliSession | None,
         lease: Lease | None,
+        *,
+        start_attempted: bool,
     ) -> None:
-        """Compensate a failed start and free or quarantine the worker."""
+        """Compensate a failed start and free or quarantine the worker.
+
+        A start that failed before returning a session id may still have
+        created one on the worker. Without a session id there is no safe stop
+        target, so the worker is quarantined instead of being handed to the
+        next lease.
+        """
         healthy = True
         if cli is not None and cli_session is not None:
             healthy = self._stop_and_release(cli, cli_session)
+        elif start_attempted and cli is not None:
+            healthy = False
         if proxy is not None:
             self._stop_proxy(proxy)
         with self._lock:

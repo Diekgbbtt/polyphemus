@@ -59,7 +59,7 @@ See `recon-pipeline-design.md` §9.5 for the full designed-not-built L3 writeup,
 ## D3 - Agentic crawl engine: external Steel.dev (operator decision 2026-07-04) - phrasing corrected against the live client
 
 **Superseded for the live path (2026-11-02).** The production `steel_crawl` is now the deterministic engine in `crawl/steel/`: it drives the Steel CLI, attaches to a pre-authenticated session, observes the session through a passive raw-CDP sidecar, and lets the Jev policy choose actions.
-The ReAct provider described below remains as a compatibility path (`legacy_agentic_run_crawl_fn`).
+The ReAct provider described below is retired from the crawl path by the pool convergence; the browser MCP is the only executor.
 See `steel-crawl-spec.md` and `steel-crawl-integration-impact-map.md`.
 
 `steel_helpers.merge_steel_into_by_base_url` is only a **merge adapter** over a crawl manifest (`{endpoints:[...], js_urls:[...]}`).

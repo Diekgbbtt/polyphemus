@@ -256,6 +256,7 @@ class TargetctlStrategy:
             *self._readiness_plan().commands,
             routing.plan_gateway_resolve(self.paths),
             routing.kali_alias_command(self.paths, self.host, PLAN_IP),
+            routing.worker_alias_command(self.paths, self.host, PLAN_IP),
         ]
 
     def up(self, run: CommandRunner) -> TargetUpResult:
@@ -272,8 +273,13 @@ class TargetctlStrategy:
         front_conf = front.plan_conf_apply(self.host, port)
         require_ok(run(front_conf), front_conf, error=TargetctlError)
 
-        alias = routing.kali_alias_command(self.paths, self.host, self._gateway_address(run))
+        gateway = self._gateway_address(run)
+        alias = routing.kali_alias_command(self.paths, self.host, gateway)
         require_ok(run(alias), alias, error=TargetctlError)
+        worker_alias = routing.worker_alias_command(
+            self.paths, self.host, gateway
+        )
+        require_ok(run(worker_alias), worker_alias, error=TargetctlError)
         return TargetUpResult(
             host=self.host, front_url=self.front_url, backend=backend, ready=True
         )
@@ -298,6 +304,7 @@ class TargetctlStrategy:
             self._targetctl("down", self.target),
             front.plan_conf_remove(self.host),
             routing.kali_clear_command(self.paths, self.host),
+            routing.worker_clear_command(self.paths, self.host),
         ]
 
     def down(self, run: CommandRunner) -> None:
@@ -311,6 +318,8 @@ class TargetctlStrategy:
         front_result = run(front_conf)
         clear = routing.kali_clear_command(self.paths, self.host)
         clear_result = run(clear)
+        worker_clear = routing.worker_clear_command(self.paths, self.host)
+        worker_clear_result = run(worker_clear)
         errors: list[str] = []
         if front_result.returncode != 0:
             errors.append(
@@ -321,6 +330,11 @@ class TargetctlStrategy:
             errors.append(
                 f"alias clear failed: "
                 f"{clear_result.stderr.strip() or clear_result.stdout.strip()}"
+            )
+        if worker_clear_result.returncode != 0:
+            errors.append(
+                f"worker alias clear failed: "
+                f"{worker_clear_result.stderr.strip() or worker_clear_result.stdout.strip()}"
             )
         if down_result.returncode != 0:
             detail = down_result.stderr.strip() or down_result.stdout.strip()

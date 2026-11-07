@@ -714,13 +714,21 @@ def test_image_aliases_kali_to_a_numeric_gateway_address(
 
     result = strategy.up(runner)
 
-    alias_text = " ".join(runner.calls[-1].argv)
+    aliases = [
+        " ".join(call.argv)
+        for call in runner.calls
+        if "ps -q kali" in " ".join(call.argv)
+        and "getent hosts" not in " ".join(call.argv)
+    ]
+    alias_text = aliases[0] if aliases else ""
     # /etc/hosts has no resolver in its address column: write the resolved IP.
     assert f"172.17.0.1 {result.host}" in alias_text
     assert f"host.docker.internal {result.host}" not in alias_text
     assert f"127.0.0.1 {result.host}" not in alias_text
     # The gateway is resolved inside kali via the injected runner.
     assert any("getent hosts host.docker.internal" in t for t in runner.argv_texts)
+    # The same alias is written into every browser worker.
+    assert any("ps -q steel-worker" in t for t in runner.argv_texts)
 
     strategy.await_ready(runner)
     # The host-side readiness probe still runs on loopback.
@@ -861,10 +869,17 @@ def test_compose_aliases_kali_to_a_numeric_gateway_address(
 
     result = strategy.up(runner)
 
-    alias_text = " ".join(runner.calls[-1].argv)
+    aliases = [
+        " ".join(call.argv)
+        for call in runner.calls
+        if "ps -q kali" in " ".join(call.argv)
+        and "getent hosts" not in " ".join(call.argv)
+    ]
+    alias_text = aliases[0] if aliases else ""
     assert f"172.17.0.1 {result.host}" in alias_text
     assert f"host.docker.internal {result.host}" not in alias_text
     assert f"127.0.0.1 {result.host}" not in alias_text
+    assert any("ps -q steel-worker" in t for t in runner.argv_texts)
 
 
 def test_compose_gateway_resolution_failure_is_fatal(

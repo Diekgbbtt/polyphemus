@@ -35,6 +35,8 @@ from polymerhus.recon.crawl.steel.frontier import FrontierResult
 from polymerhus.recon.crawl.steel.ledger import FinalizeResult, RunLedger, finalize
 from polymerhus.recon.crawl.steel.manifest import ErrorRecord, Manifest
 from polymerhus.recon.crawl.steel.session import (
+    BrowserUnavailable,
+    RestoreFailed,
     SessionMissing,
     SteelEnd,
     SteelSessionClient,
@@ -177,7 +179,9 @@ class CrawlJob:
             self._session.attach(self._session_name)
             self._session_attached = True
         except Exception as exc:  # noqa: BLE001 - every failure is a typed stop
-            return self._finish(_stop_reason(exc), str(exc), None)
+            return self._finish(
+                _stop_reason(exc), str(exc), None, error_stage="mount"
+            )
 
         if self._cancel():
             return self._finish("operator_cancel", None, None)
@@ -192,15 +196,21 @@ class CrawlJob:
             self._sidecar.attach()
             self._sidecar_attached = True
         except Exception as exc:  # noqa: BLE001 - capture must not be a false success
-            return self._finish("capture_unavailable", str(exc), None)
+            return self._finish(
+                "capture_unavailable", str(exc), None, error_stage="capture"
+            )
 
         try:
             root = self._prepare_fn()
             self._auth_fn(root)
         except AuthPreconditionFailed as exc:
-            return self._finish("auth_precondition_failed", str(exc), None)
+            return self._finish(
+                "auth_precondition_failed", str(exc), None, error_stage="load"
+            )
         except Exception as exc:  # noqa: BLE001 - a load failure is a typed stop
-            return self._finish(_stop_reason(exc), str(exc), None)
+            return self._finish(
+                _stop_reason(exc), str(exc), None, error_stage="load"
+            )
 
         try:
             frontier = self._run_fn(root)
@@ -216,6 +226,8 @@ class CrawlJob:
         stop_reason: str,
         error: str | None,
         frontier: FrontierResult | None,
+        *,
+        error_stage: str | None = None,
     ) -> JobResult:
         pages, actions = self._records(frontier)
         # Close first: the end report carries whether the browser state was
@@ -223,10 +235,17 @@ class CrawlJob:
         # write. A failed close is evidence loss, never a live session.
         end, close_error = self._close_report()
         manifest = self._manifest_fn(frontier, stop_reason)
+        if error is not None and error_stage is not None:
+            manifest = _add_error(
+                manifest, stop_reason, error, stage=error_stage
+            )
+            manifest = _mark_partial(manifest)
         if end is not None and end.state_managed and end.saved is False:
             manifest = _mark_partial(manifest)
         if close_error is not None:
-            manifest = _add_error(manifest, "session_close_failed", close_error)
+            manifest = _add_error(
+                manifest, "session_close_failed", close_error, stage="finalize"
+            )
             manifest = _mark_partial(manifest)
         result = finalize(
             ledger=self._ledger,
@@ -322,6 +341,21 @@ class CrawlJob:
             )
             actions.append(record)
             _emit(self._record_action, record)
+        for index, failed in enumerate(frontier.failed, start=len(actions) + 1):
+            element = failed.element
+            record = ActionRecord(
+                action_id=f"act_{index}",
+                page_id=failed.page.page_visit_id,
+                element_id=element.element_id,
+                element_type=element.element_type.value,
+                impact=element.impact,
+                capture=element.capture,
+                outcome="error",
+                error=failed.error,
+                fingerprint=element.fingerprint,
+            )
+            actions.append(record)
+            _emit(self._record_action, record)
         return tuple(pages), tuple(actions)
 
 
@@ -340,11 +374,13 @@ def _mark_partial(manifest: Manifest) -> Manifest:
     )
 
 
-def _add_error(manifest: Manifest, code: str, message: str) -> Manifest:
-    """Append one finalize-stage error to the manifest."""
+def _add_error(
+    manifest: Manifest, code: str, message: str, *, stage: str
+) -> Manifest:
+    """Append one staged error to the manifest."""
     errors = [
         *manifest.errors,
-        ErrorRecord(code=code, message=message, stage="finalize"),
+        ErrorRecord(code=code, message=message, stage=stage),
     ]
     return manifest.model_copy(update={"errors": errors})
 
@@ -358,6 +394,10 @@ def _stop_reason(error: BaseException) -> str:
         return "auth_precondition_failed"
     if isinstance(error, CaptureUnavailable) or code == "capture_unavailable":
         return "capture_unavailable"
+    if isinstance(error, BrowserUnavailable) or code == "browser_unavailable":
+        return "browser_unavailable"
+    if isinstance(error, RestoreFailed) or code == "restore_failed":
+        return "restore_failed"
     if isinstance(error, SteelSessionError):
         return "error"
     return "error"

@@ -10,9 +10,14 @@ The JEV engine is unchanged.
 - The browser pool belongs to the polymerhus instance compose project.
   Every instance has its own workers, browser MCP, and store.
 - One Compose service, `steel-worker`, carries the worker definition.
+  It lives in `docker-compose.pool.yml`; the baseline includes that file.
   Compose replication provides the pool size.
 - The baseline count is `deploy.replicas: 2`.
-  The thin mode is `deploy.replicas: 0`, `STEEL_POOL_DOCKER_SOCKET=""`, and `KALI_BROWSER_MCP_URL=""`.
+  Thin mode omits `docker-compose.pool.yml`, sets
+  `STEEL_POOL_DOCKER_SOCKET=""`, and sets `KALI_BROWSER_MCP_URL=""`.
+  A `deploy.replicas: 0` override is not enough: Compose still plans the
+  worker image pull for a declared service, so a thin host without the image
+  would fail to start.
 - The workers are normal containers on `polymerhus-net`.
   There are no worker sidecars and no shared network namespaces.
 - The browser MCP runs in Kali.
@@ -31,7 +36,8 @@ The JEV engine is unchanged.
   Runtime configuration is deferred.
 - The pool manager discovers the actual replicas.
   The discovered count is the truth.
-- Thin mode removes the worker service and the agent's browser URL.
+- Thin mode removes the worker service (by omitting the pool file) and the
+  agent's browser URL.
 
 ## 3. Host contract
 

@@ -10,7 +10,8 @@ No slice is closed with a failing or unrun test.
 ## Phase A - Pool data plane (complete)
 
 - [x] A1 Worker and registry: container-IP discovery, stable public ports,
-  health through the container address.
+  health through the container address; the worker lives in
+  `docker-compose.pool.yml` so thin mode omits it instead of planning a pull.
 - [x] A2 Worker proxy: HTTP and WebSocket forwarding, Host preservation,
   `websocketUrl` rewrite, chunked responses.
 - [x] A3 Lease, service, and boot: proxy lifecycle, CDP fields, end-success

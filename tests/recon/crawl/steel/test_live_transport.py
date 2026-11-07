@@ -68,6 +68,9 @@ class _CdpServer:
                     result = {}
                 connection.send(json.dumps({"id": message["id"], "result": result}))
 
+        # The socket address is 127.0.0.1 while the URI Host is `localhost`.
+        # The server's recorded Host proves the handshake uses the CDP Host,
+        # not the connect address.
         self._server = serve(handler, "127.0.0.1", self.port)
         self._thread = threading.Thread(
             target=self._server.serve_forever, daemon=True

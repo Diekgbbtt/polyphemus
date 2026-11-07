@@ -22,6 +22,8 @@ The target-type job-set decision node is a separate open item (#336, `D-JOBSET`)
 
 Ground every claim in tool output, never in assumption.
 A stale session runs like a fresh one only if you let it: prove it with the oracle, assert it, persist it.
+If the three browser tools are absent, the browser capability is missing.
+Stop with `outcome: failed` and name the missing browser capability; a browser-only target cannot be authenticated without it, and the oracle cannot run.
 
 ### 1. Ground
 
@@ -138,7 +140,7 @@ The span ends in exactly two ways: a passing oracle plus one `auth_store` write 
 Token and credential capture belongs to the gateway only when it minted the account; it never reads an existing secret.
 The stable browser key is not a secret: record it as `accounts.<account>.steel.state` after `browser_end`.
 A key is `steel-<project_slug>` for an anonymous crawl and `steel-<project_slug>-<account_slug>` with an account.
-A slug is lowercase; every run of characters outside `[a-z0-9_-]` becomes `-`, and leading or trailing `-`/`_` are trimmed.
+A slug is lowercase; every run of characters outside `[a-z0-9_-]` becomes one `-`, consecutive hyphens collapse, and leading or trailing `-`/`_` are trimmed.
 
 ### 5. Outer loop, then the verdict
 

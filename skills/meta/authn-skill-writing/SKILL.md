@@ -14,7 +14,7 @@ Record nothing until its gate passes.
 ## Prerequisites
 
 You need generic request tooling for probe and replay work.
-You need a working steel CLI: run `steel scrape https://example.com` as a smoke test. Authenticate the CLI only when your runtime requires it (`steel login`, then `steel doctor --preflight`).
+You need the three browser tools bound to your conversation: `browser_start`, `browser_exec`, and `browser_end`. They mount the pool session; do not run the Steel CLI directly. Smoke-test them with `browser_start(<session_key>)`, `browser_exec("get title")`, and `browser_end()`.
 You need reachability of the seed face `PUT /projects/{project_id}/auth` and the state-read face `GET /projects/{project_id}/auth`.
 You need write access to the target project's skill bundle at `skills/target-specific-procedure/<project_id>/authn/` (the location P5 pins).
 You need no polymerhus internals beyond the seed-face contract and that parametrized bundle location.
@@ -99,7 +99,7 @@ A static element that proves to be a stable target property graduates into the o
 The pool store is the only durable browser-state store: cookies, localStorage, sessionStorage, and indexedDB are captured on `browser_end`; cookies and localStorage are restored on `browser_start`.
 The store holds only `steel: {state}` - the stable pool key - never a secret value.
 The key is `steel-<project_slug>` for an anonymous crawl and `steel-<project_slug>-<account_slug>` with an account.
-A slug is lowercase; every run outside `[a-z0-9_-]` becomes `-`, and leading or trailing `-`/`_` are trimmed.
+A slug is lowercase; every run outside `[a-z0-9_-]` becomes one `-`, consecutive hyphens collapse, and leading or trailing `-`/`_` are trimmed.
 The run id stays in the lease, the ledger, and the manifest, never in the key.
 
 Mount with `browser_start(<stable-key>)`.

@@ -181,6 +181,29 @@ def test_a_failed_flush_keeps_the_ledger_and_the_cursor(tmp_path):
     )
 
 
+def test_the_manifest_writer_receives_the_final_partial_after_a_flush_failure(
+    tmp_path,
+):
+    ledger = RunLedger(tmp_path / "ledger.jsonl")
+    manifest = build_manifest(run=run("frontier_empty"))
+    seen: list = []
+
+    result = finalize(
+        ledger=ledger,
+        manifest=manifest,
+        stop_reason="frontier_empty",
+        finished_at="2026-11-02T10:10:00Z",
+        flush_fn=lambda artifacts: (_ for _ in ()).throw(
+            ConnectionError("edge is down")
+        ),
+        ingest_fn=lambda value: seen.append(value) or {"ok": True},
+    )
+
+    assert result.status == "partial"
+    assert seen
+    assert seen[-1].run.partial is True
+
+
 def test_a_failed_ingest_marks_the_run_partial_but_the_flush_still_runs(tmp_path):
     ledger = RunLedger(tmp_path / "ledger.jsonl")
     manifest = build_manifest(run=run("frontier_empty"))

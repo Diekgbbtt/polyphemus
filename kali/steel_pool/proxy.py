@@ -29,6 +29,7 @@ except ImportError:  # flat deployment beside mcp_server.py
 
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1"})
 UPSTREAM_TIMEOUT_S = 30.0
+WEBSOCKET_DRAIN_S = 30.0
 MAX_HEADER_BYTES = 65536
 MAX_BODY_BYTES = 2**24
 _WEBSOCKET_URL = "websocketUrl"
@@ -63,7 +64,8 @@ def _header_value(headers: Sequence[tuple[str, str]], name: str) -> str:
 def _has_websocket_upgrade(headers: Sequence[tuple[str, str]]) -> bool:
     connection = _header_value(headers, "connection").lower()
     upgrade = _header_value(headers, "upgrade").lower()
-    return "upgrade" in connection.split(",") and upgrade == "websocket"
+    tokens = {token.strip() for token in connection.split(",")}
+    return "upgrade" in tokens and upgrade == "websocket"
 
 
 async def _read_head(reader: asyncio.StreamReader) -> tuple[bytes, bytes]:
@@ -81,10 +83,14 @@ async def _read_head(reader: asyncio.StreamReader) -> tuple[bytes, bytes]:
 
 async def _read_body(
     reader: asyncio.StreamReader, headers: Sequence[tuple[str, str]], initial: bytes
-) -> bytes:
+) -> tuple[bytes, bool]:
+    """Return ``(body, was_chunked)`` for one request."""
+    if "chunked" in _header_value(headers, "transfer-encoding").lower():
+        body = await _read_chunked(_Buffered(reader, initial))
+        return body, True
     raw_length = _header_value(headers, "content-length")
     if not raw_length:
-        return initial
+        return initial, False
     try:
         length = int(raw_length)
     except ValueError as exc:
@@ -97,17 +103,27 @@ async def _read_body(
         if not chunk:
             break
         body += chunk
-    return body[:length]
+    return body[:length], False
 
 
 def _upstream_head(
-    request_line: str, headers: Sequence[tuple[str, str]]
+    request_line: str,
+    headers: Sequence[tuple[str, str]],
+    *,
+    body_length: int | None = None,
 ) -> bytes:
     lines = [request_line]
     for name, value in headers:
-        if name.lower() in {"connection", "proxy-connection"}:
+        if name.lower() in {
+            "connection",
+            "proxy-connection",
+            "transfer-encoding",
+            "content-length",
+        }:
             continue
         lines.append(f"{name}: {value}")
+    if body_length is not None:
+        lines.append(f"Content-Length: {body_length}")
     lines.append("Connection: close")
     return ("\r\n".join(lines) + "\r\n\r\n").encode("latin-1")
 
@@ -205,7 +221,9 @@ async def _read_response(
         try:
             body = await buffered.readexactly(length)
         except asyncio.IncompleteReadError as exc:
-            body = exc.partial
+            raise ProxyError(
+                "the upstream body ended before its declared length"
+            ) from exc
         return status, headers, body
     return status, headers, await buffered.read()
 
@@ -367,8 +385,10 @@ class WorkerProxy:
             if _has_websocket_upgrade(headers):
                 await self._websocket(reader, writer, head, rest)
                 return
-            body = await _read_body(reader, headers, rest)
-            await self._http(writer, request_line, headers, body)
+            body, chunked = await _read_body(reader, headers, rest)
+            await self._http(
+                writer, request_line, headers, body, has_body=bool(body) or chunked
+            )
         except (ProxyError, OSError, asyncio.IncompleteReadError):
             if not writer.is_closing():
                 writer.write(
@@ -399,6 +419,8 @@ class WorkerProxy:
         request_line: str,
         headers: Sequence[tuple[str, str]],
         body: bytes,
+        *,
+        has_body: bool,
     ) -> None:
         try:
             upstream_reader, upstream_writer = await asyncio.wait_for(
@@ -410,7 +432,13 @@ class WorkerProxy:
         except (OSError, asyncio.TimeoutError) as exc:
             raise ProxyError(f"the Steel worker is unreachable: {exc}") from exc
         try:
-            upstream_writer.write(_upstream_head(request_line, headers))
+            upstream_writer.write(
+                _upstream_head(
+                    request_line,
+                    headers,
+                    body_length=len(body) if has_body else None,
+                )
+            )
             if body:
                 upstream_writer.write(body)
             await upstream_writer.drain()
@@ -469,9 +497,19 @@ class WorkerProxy:
         upstream = asyncio.ensure_future(pipe(reader, upstream_writer))
         downstream = asyncio.ensure_future(pipe(upstream_reader, writer))
         try:
-            await asyncio.wait(
+            done, _ = await asyncio.wait(
                 {upstream, downstream}, return_when=asyncio.FIRST_COMPLETED
             )
+            if downstream in done:
+                # The server closed; the client side has nothing left to read.
+                upstream.cancel()
+            else:
+                # The client half-closed its write side. Let the server finish
+                # its remaining frames instead of truncating the response.
+                try:
+                    await asyncio.wait_for(downstream, timeout=WEBSOCKET_DRAIN_S)
+                except asyncio.TimeoutError:
+                    downstream.cancel()
         finally:
             for task in (upstream, downstream):
                 task.cancel()

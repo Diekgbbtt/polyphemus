@@ -291,6 +291,58 @@ def test_proxy_dechunks_a_chunked_response(proxy_factory):
     assert json.loads(body) == {"id": 1}
 
 
+def test_proxy_rejects_a_truncated_upstream_body(proxy_factory):
+    def response(*_):
+        return (
+            b"HTTP/1.1 200 OK\r\n"
+            b"Content-Type: application/json\r\n"
+            b"Content-Length: 100\r\n"
+            b"Connection: close\r\n\r\n"
+            b"short"
+        )
+
+    server, thread = start_http(response)
+    proxy = proxy_factory(server.server_address[1])
+    try:
+        raw = raw_request(
+            proxy.port,
+            (
+                "GET /v1/sessions HTTP/1.1\r\n"
+                f"Host: localhost:{proxy.port}\r\n\r\n"
+            ).encode("latin-1"),
+        )
+    finally:
+        stop_http(server, thread)
+
+    status, _, body = parse_response(raw)
+    assert status == 502
+    assert json.loads(body)["error"]["code"] == "proxy_upstream_unavailable"
+
+
+def test_proxy_dechunks_a_chunked_request(proxy_factory):
+    server, thread = start_http(lambda *_: fixed_response(b'{"ok":true}'))
+    proxy = proxy_factory(server.server_address[1])
+    try:
+        raw_request(
+            proxy.port,
+            (
+                "POST /v1/sessions HTTP/1.1\r\n"
+                f"Host: localhost:{proxy.port}\r\n"
+                "Transfer-Encoding: chunked\r\n\r\n"
+                "4\r\n{\"a\"\r\n"
+                "3\r\n:1}\r\n"
+                "0\r\n\r\n"
+            ).encode("latin-1"),
+        )
+    finally:
+        stop_http(server, thread)
+
+    recorded = server.record[0]
+    assert recorded["body"] == b'{"a":1}'
+    assert recorded["headers"]["content-length"] == "7"
+    assert "transfer-encoding" not in recorded["headers"]
+
+
 def test_proxy_reports_an_unreachable_upstream(proxy_factory):
     proxy = proxy_factory(free_port())
 
@@ -339,6 +391,76 @@ def test_proxy_forwards_a_websocket_and_keeps_the_host(proxy_factory):
         thread.join(timeout=5)
 
     assert hosts == [f"localhost:{proxy.port}"]
+
+
+class _RawWebSocketHandler(socketserver.BaseRequestHandler):
+    def handle(self) -> None:
+        data = b""
+        while b"\r\n\r\n" not in data:
+            chunk = self.request.recv(4096)
+            if not chunk:
+                return
+            data += chunk
+        self.request.sendall(
+            b"HTTP/1.1 101 Switching Protocols\r\n"
+            b"Upgrade: websocket\r\n"
+            b"Connection: Upgrade\r\n\r\n"
+        )
+        time.sleep(0.05)
+        self.request.sendall(b"\x81\x03one")
+        time.sleep(0.15)
+        self.request.sendall(b"\x81\x03two")
+        time.sleep(0.2)
+
+
+def test_proxy_handles_a_comma_separated_upgrade_and_client_half_close(proxy_factory):
+    import base64
+    import os
+
+    server = _HTTPServer(("127.0.0.1", 0), _RawWebSocketHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    proxy = proxy_factory(server.server_address[1])
+    try:
+        key = base64.b64encode(os.urandom(16)).decode("ascii")
+        sock = socket.create_connection(("127.0.0.1", proxy.port), timeout=5)
+        sock.sendall(
+            (
+                "GET / HTTP/1.1\r\n"
+                f"Host: localhost:{proxy.port}\r\n"
+                "Upgrade: websocket\r\n"
+                "Connection: keep-alive, Upgrade\r\n"
+                f"Sec-WebSocket-Key: {key}\r\n"
+                "Sec-WebSocket-Version: 13\r\n\r\n"
+            ).encode("latin-1")
+        )
+        handshake = b""
+        while b"\r\n\r\n" not in handshake:
+            handshake += sock.recv(4096)
+        assert b"101" in handshake.split(b"\r\n", 1)[0]
+        payload = b"hello"
+        mask = os.urandom(4)
+        frame = (
+            bytes([0x81, 0x80 | len(payload)])
+            + mask
+            + bytes(byte ^ mask[index % 4] for index, byte in enumerate(payload))
+        )
+        sock.sendall(frame)
+        sock.shutdown(socket.SHUT_WR)
+        received = b""
+        while received.count(b"one") < 1 or received.count(b"two") < 1:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            received += chunk
+        sock.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    assert b"one" in received
+    assert b"two" in received
 
 
 def test_proxy_start_and_stop_release_the_port(proxy_factory):

@@ -240,16 +240,25 @@ def project_steel_state(
     if not isinstance(account, dict):
         return None
     steel = account.get("steel") or {}
-    if isinstance(steel, dict):
-        state = steel.get("state")
-        if isinstance(state, str) and state:
+    state = steel.get("state") if isinstance(steel, dict) else None
+    if isinstance(state, str) and state.startswith("steel-"):
+        from polymerhus.app.steel_session_state import (  # noqa: PLC0415
+            is_browser_session_name,
+        )
+
+        if is_browser_session_name(state):
             return state
     if project_id and account_name:
         from polymerhus.app.steel_session_state import (  # noqa: PLC0415
             browser_session_name,
         )
 
+        # A legacy value was a per-project file reference (`alice`), not a
+        # pool key. The deterministic key is the only safe mount after the
+        # convergence; never feed a legacy reference to the pool.
         return browser_session_name(project_id, account_name)
+    if isinstance(state, str) and state:
+        return state
     return None
 
 

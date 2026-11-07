@@ -1,20 +1,14 @@
-"""Live steel-crawl walkthroughs on the eval server's three target stacks.
+"""RETIRED: the cloud/CLI steel-crawl walkthrough.
+
+Superseded by the pool convergence (`docs/design/steel-crawl-pool-convergence.md`).
+This file mints a session on the retired public Steel API and installs the CLI
+in the agent; the production crawl now mounts the in-stack browser MCP and
+never runs the CLI. The historical setup stays for reference, but the file is
+always skipped so it is never mistaken for the live gate. The pool gate is
+`tests/e2e/test_steel_crawl_pool_e2e.py` (phase F).
 
 Spec: `docs/design/steel-crawl-spec.md` sections 2, 4, 9, 10.4, 11, and 14.
 Catalogue: `eval/steel-crawl-e2e/ASSERTIONS.md` (E1-E3, N1-N8).
-
-These tests are the gate, not the red/green loop. They start a real target
-stack, mint a real pre-authenticated Steel session, place the real AuthContext
-and project skill through the app API, and run the production `steel_crawl`
-phase inside the deployed agent container. The crawl's gateway, pod, engine,
-CLI, CDP sidecar, Jev policy, ledger, HTTP-history edge, and curator are the
-deployed components; only the target stack and the Steel session are setup.
-
-Run on the eval server:
-
-    STEEL_CRAWL_E2E=1 STEEL_CRAWL_E2E_REPO=/opt/steel-crawl-e2e \
-      /opt/eval-venv/bin/python -m pytest tests/e2e/test_steel_crawl_e2e.py \
-      -k comfyui -s --confcutdir=/opt/steel-crawl-e2e/tests/e2e
 """
 from __future__ import annotations
 
@@ -35,10 +29,16 @@ if str(_SCAFFOLD) not in sys.path:
 
 import scaffold  # noqa: E402
 
-pytestmark = pytest.mark.skipif(
-    os.environ.get("STEEL_CRAWL_E2E") != "1",
-    reason="the live steel-crawl e2e needs the eval server and STEEL_CRAWL_E2E=1",
-)
+pytestmark = [
+    pytest.mark.skipif(
+        os.environ.get("STEEL_CRAWL_E2E") != "1",
+        reason="the live steel-crawl e2e needs the eval server and STEEL_CRAWL_E2E=1",
+    ),
+    pytest.mark.skip(
+        reason="retired cloud/CLI walkthrough; the pool gate is "
+        "tests/e2e/test_steel_crawl_pool_e2e.py",
+    ),
+]
 
 MAX_DURATION_S = int(os.environ.get("STEEL_CRAWL_MAX_DURATION_S", "900"))
 MAX_ACTIONS = int(os.environ.get("STEEL_CRAWL_MAX_ACTIONS", "300"))

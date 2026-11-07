@@ -288,7 +288,8 @@ It marks the shared player `addressable=false`.
   A missing lease answers `no_session`, which maps to `SessionMissing`.
 - A mount failure is `restore_failed`, `pool_exhausted`, or
   `browser_unavailable`; none of them is a silent anonymous continuation.
-- The MCP heartbeat, TTL, MCP close, and `browser_end` all release the lease.
+- The MCP TTL, MCP close, and `browser_end` release the lease.
+  The heartbeat keeps an idle lease alive; it is never a release signal.
 - `remaining_ms` on the start result sits below the requested window.
 - A foreign `default` is untouchable.
 
@@ -1125,8 +1126,10 @@ unit and contract coverage:
 `tests/kali/test_steel_pool_proxy.py`,
 `tests/recon/crawl/steel/test_mcp_client.py`, and
 `tests/recon/crawl/steel/test_live_transport.py`.
-The live gate is `tests/e2e/test_steel_crawl_real_e2e.py` and the White Jotter
-pool E2E on the eval host.
+The live gate is the ComfyUI `steel_crawl` walkthrough
+(`tests/recon/crawl/test_steel_crawl_real_e2e.py`, extended for the pool) and
+the White Jotter authenticated walkthrough on the eval host.
+Both are pending phase F of the implementation plan.
 The JEV engine diff against `feat/steel-crawl` is empty.
 The edge gate is `tests/kali/test_http_history_edge.py`.
 The full unit tier is the regression gate.
@@ -1147,7 +1150,8 @@ The authz residual risk and the coarse effect signal remain accepted as recorded
 - Pin the worker image `steel-browser-api:v0.5.5-beta` and build it for the
   host architecture; the eval host is arm64.
 - The browser pool is part of the instance compose project.
-  The baseline is `deploy.replicas: 2`; the thin overlay sets `0`.
+  The baseline includes `docker-compose.pool.yml` with `deploy.replicas: 2`;
+  the thin stack omits the pool file entirely.
 - The browser MCP runs in Kali and owns the three tools, the reverse proxy,
   and the pool store.
 - `KALI_BROWSER_MCP_URL` is the agent's only browser address.

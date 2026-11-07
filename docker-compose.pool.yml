@@ -1,0 +1,44 @@
+# The Steel browser pool (baseline stack).
+#
+# The baseline includes this file:
+#   docker compose -f docker-compose.yml -f docker-compose.pool.yml ...
+# The thin stack omits it:
+#   docker compose -f docker-compose.yml -f docker-compose.thin.yml ...
+#
+# One service, replicated by Compose. The worker API keeps DOMAIN
+# localhost:3000 inside its own container. The browser MCP reverse proxy maps
+# 127.0.0.1:3100+i to this container's port 3000 and rewrites the session
+# websocket URL, so the CLI stays on localhost and Chrome accepts the Host.
+# The raw Chrome port stays inside the container. The image is built for the
+# host architecture (the eval host is arm64; build it there, do not transfer
+# the amd64 image).
+services:
+  steel-worker:
+    image: steel-browser-api:v0.5.5-beta
+    command: ["--no-nginx"]
+    restart: unless-stopped
+    # Node is PID 1 in the API and never reaps the Chromium children it
+    # reparents. Docker's init reaps them so a long pool lifetime does not
+    # accumulate zombies.
+    init: true
+    environment:
+      HOST: 0.0.0.0
+      PORT: "3000"
+      DOMAIN: localhost:3000
+      CDP_DOMAIN: localhost:3000
+      ENABLE_COMMANDS_API: "false"
+    labels:
+      polymerhus.steel-pool: "true"
+    extra_hosts:
+      # The target front is published on the Docker host. The worker's Chrome
+      # resolves the synthetic host through the eval orchestrator's alias.
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:3000/v1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    deploy:
+      replicas: 2
+    networks: [polymerhus-net]

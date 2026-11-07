@@ -154,7 +154,7 @@ def test_compose_gives_the_end_path_time_to_finish():
 
 
 def test_steel_worker_is_one_replicated_service():
-    rendered = _compose("docker-compose.yml")
+    rendered = _compose("docker-compose.yml", "docker-compose.pool.yml")
     worker = rendered["services"]["steel-worker"]
 
     assert worker["image"] == "steel-browser-api:v0.5.5-beta"
@@ -170,17 +170,17 @@ def test_steel_worker_is_one_replicated_service():
 
 
 def test_steel_worker_has_no_published_port():
-    rendered = _compose("docker-compose.yml")
+    rendered = _compose("docker-compose.yml", "docker-compose.pool.yml")
     worker = rendered["services"]["steel-worker"]
 
     assert "ports" not in worker
     assert "expose" not in worker
 
 
-def test_thin_overlay_scales_the_pool_to_zero():
+def test_thin_overlay_omits_the_worker():
     thin = _yaml("docker-compose.thin.yml")
 
-    assert thin["services"]["steel-worker"]["deploy"]["replicas"] == 0
+    assert "steel-worker" not in thin["services"]
     assert thin["services"]["kali"]["environment"]["STEEL_POOL_DOCKER_SOCKET"] == ""
     assert thin["services"]["agent"]["environment"]["KALI_BROWSER_MCP_URL"] == ""
 
@@ -228,11 +228,13 @@ def test_runbook_describes_the_in_stack_pool():
         assert retired not in runbook, retired
 
 
-def test_compose_renders_the_thin_stack():
+def test_compose_renders_the_thin_stack_without_the_worker():
     rendered = _compose("docker-compose.yml", "docker-compose.thin.yml")
-    worker = rendered["services"]["steel-worker"]
     kali = rendered["services"]["kali"]
 
-    assert worker["deploy"]["replicas"] == 0
+    assert "steel-worker" not in rendered["services"]
     assert kali["environment"]["STEEL_POOL_DOCKER_SOCKET"] == ""
     assert rendered["services"]["agent"]["environment"]["KALI_BROWSER_MCP_URL"] == ""
+
+
+

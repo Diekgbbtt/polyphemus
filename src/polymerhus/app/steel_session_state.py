@@ -99,6 +99,12 @@ def to_sdk_session_context(context: object) -> dict:
 
 _SESSION_NAME_MAX = 128
 _SESSION_SLUG = re.compile(r"[^A-Za-z0-9_-]+")
+_SESSION_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
+
+
+def is_browser_session_name(value: object) -> bool:
+    """Whether the value is a pool-safe browser session name."""
+    return isinstance(value, str) and bool(_SESSION_NAME.fullmatch(value))
 
 
 def _session_slug(value: str, fallback: str) -> str:
@@ -361,6 +367,7 @@ __all__ = [
     "SteelStateError",
     "browser_session_name",
     "capture_session_context",
+    "is_browser_session_name",
     "create_session",
     "load_session_context",
     "project_session_context",

@@ -122,6 +122,9 @@ class ImageStrategy:
             front.plan_conf_apply(self.host, self.port),
             routing.plan_gateway_resolve(self.paths),
             routing.kali_alias_command(self.paths, self.host, routing.PLAN_GATEWAY_IP),
+            routing.worker_alias_command(
+                self.paths, self.host, routing.PLAN_GATEWAY_IP
+            ),
         ]
 
     def up(self, run: CommandRunner) -> TargetUpResult:
@@ -129,10 +132,13 @@ class ImageStrategy:
         require_ok(run(run_cmd), run_cmd, error=ImageError)
         conf = front.plan_conf_apply(self.host, self.port)
         require_ok(run(conf), conf, error=ImageError)
-        alias = routing.kali_alias_command(
-            self.paths, self.host, self._gateway_address(run)
-        )
+        gateway = self._gateway_address(run)
+        alias = routing.kali_alias_command(self.paths, self.host, gateway)
         require_ok(run(alias), alias, error=ImageError)
+        worker_alias = routing.worker_alias_command(
+            self.paths, self.host, gateway
+        )
+        require_ok(run(worker_alias), worker_alias, error=ImageError)
         return TargetUpResult(
             host=self.host, front_url=self.front_url, backend=self.backend, ready=True
         )
@@ -157,6 +163,7 @@ class ImageStrategy:
             self._remove_cmd(),
             front.plan_conf_remove(self.host),
             routing.kali_clear_command(self.paths, self.host),
+            routing.worker_clear_command(self.paths, self.host),
         ]
 
     def down(self, run: CommandRunner) -> None:
@@ -169,6 +176,8 @@ class ImageStrategy:
         conf_result = run(conf)
         clear = routing.kali_clear_command(self.paths, self.host)
         clear_result = run(clear)
+        worker_clear = routing.worker_clear_command(self.paths, self.host)
+        worker_clear_result = run(worker_clear)
         errors: list[str] = []
         if remove_result.returncode != 0 and not is_absent_container(remove_result):
             errors.append(
@@ -184,6 +193,11 @@ class ImageStrategy:
             errors.append(
                 f"clear alias {self.host} failed: "
                 f"{clear_result.stderr.strip() or clear_result.stdout.strip()}"
+            )
+        if worker_clear_result.returncode != 0:
+            errors.append(
+                f"clear worker alias {self.host} failed: "
+                f"{worker_clear_result.stderr.strip() or worker_clear_result.stdout.strip()}"
             )
         if errors:
             raise ImageError("; ".join(errors))

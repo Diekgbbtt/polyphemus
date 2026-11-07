@@ -3,15 +3,12 @@
 # Usage:
 #   docker compose -f docker-compose.yml -f docker-compose.thin.yml up -d
 #
-# The baseline stack includes the browser pool because recon needs the browser.
-# The thin mode is the explicit opt-out: it scales the worker service to zero,
-# stops the browser MCP, and clears the agent's browser URL. The exec plane,
-# the capture plane, and every non-browser job are unchanged.
+# The baseline includes `docker-compose.pool.yml`; the thin stack omits it.
+# A `deploy.replicas: 0` override is not enough: Compose still plans the worker
+# image pull for a declared service, so a thin host without the arm64 worker
+# image would fail to start. Omitting the file removes the service entirely.
+# This overlay clears the Docker socket and the agent's browser URL too.
 services:
-  steel-worker:
-    deploy:
-      replicas: 0
-
   kali:
     environment:
       STEEL_POOL_DOCKER_SOCKET: ""

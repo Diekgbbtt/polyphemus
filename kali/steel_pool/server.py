@@ -118,9 +118,7 @@ _FORBIDDEN_VERBS = frozenset({"start", "stop", "sessions", "live"})
 # mounted session, so refuse it here instead of letting the CLI answer a
 # confusing usage error.
 _NON_BROWSER_VERBS = frozenset({"scrape"})
-_FORBIDDEN_OPTIONS = frozenset(
-    {"--session", "--api-url", "--local", "-l"}
-)
+_FORBIDDEN_OPTIONS = frozenset({"--session", "--api-url", "--local"})
 _FORBIDDEN_OPTION_PREFIXES = ("--session=", "--api-url=")
 _STRIP_OPTIONS = frozenset({"--json"})
 
@@ -300,7 +298,11 @@ class BrowserService:
         except DockerAPIError as exc:
             return error_envelope("pool_unavailable", str(exc), retryable=True)
         except CliError as exc:
-            return error_envelope("browser_error", str(exc), retryable=True)
+            # A mount failure is a browser-plane outage, not a bad command:
+            # the crawl maps it to a retryable BrowserUnavailable.
+            return error_envelope(
+                "browser_unavailable", str(exc), retryable=True
+            )
         except RestoreError as exc:
             return error_envelope("restore_failed", str(exc), retryable=False)
         except ValueError as exc:
@@ -327,6 +329,7 @@ class BrowserService:
             },
             "cdp_url": view.cdp_url,
             "cdp_host": view.cdp_host,
+            "remaining_ms": view.remaining_ms,
         }
 
     def exec(self, mcp_session_id: str, command: object) -> dict:
@@ -378,9 +381,15 @@ class BrowserService:
             return error_envelope(
                 "internal_error", f"{type(exc).__name__}: {exc}", retryable=True
             )
-        # The session is gone when the CLI stopped it or the API released it.
-        # A capture or save miss is evidence loss, not a live session.
-        success = report.stopped or report.released is True
+        # The session is gone when the CLI stopped it or the API answered the
+        # release. `released=False` means the API reported it already gone;
+        # `None` means the release was not needed or failed. An idempotent
+        # second end has no lease and is a success.
+        success = (
+            not report.ended
+            or report.stopped
+            or report.released is not None
+        )
         result = {
             "success": success,
             "ended": report.ended,

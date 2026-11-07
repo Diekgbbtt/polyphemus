@@ -14,15 +14,70 @@ lease TTL.
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+import asyncio
+import json
 import logging
 
 BROWSER_TOOL_NAMES = frozenset({"browser_start", "browser_exec", "browser_end"})
+# The crawl consumes these two fields; the model must not see the worker's
+# container address or its raw CDP port. The generic binding strips both.
+_CDP_FIELDS = frozenset({"cdp_url", "cdp_host"})
+DEFAULT_RETRY_ATTEMPTS = 3
+DEFAULT_RETRY_DELAY_S = 1.0
 # A command is bounded by the CLI timeout, and an end can spend that bound on
 # the capture plus the stop. Keep the stream read above both.
 DEFAULT_READ_TIMEOUT_S = 600.0
 
 logger = logging.getLogger(__name__)
+
+
+def strip_cdp_fields(value):
+    """Remove the CDP endpoint from a model-facing browser result.
+
+    The crawl's own client keeps the endpoint; the generic tool surface must
+    not expose the worker container address or its raw Chrome port. String
+    payloads are decoded and re-encoded so a JSON tool envelope is filtered
+    too.
+    """
+    if isinstance(value, Mapping):
+        return {
+            key: strip_cdp_fields(item)
+            for key, item in value.items()
+            if key not in _CDP_FIELDS
+        }
+    if isinstance(value, (list, tuple)):
+        return [strip_cdp_fields(item) for item in value]
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except (TypeError, ValueError):
+            return value
+        if isinstance(parsed, (Mapping, list)):
+            return json.dumps(strip_cdp_fields(parsed), ensure_ascii=False)
+        return value
+    return value
+
+
+def _strip_start_tool(tool):
+    """Wrap `browser_start` so its result omits the CDP endpoint."""
+    if getattr(tool, "name", "") != "browser_start":
+        return tool
+    coroutine = getattr(tool, "coroutine", None)
+    func = getattr(tool, "func", None)
+    if coroutine is None and func is None:
+        return tool
+
+    async def call(*args, **kwargs):
+        if coroutine is not None:
+            result = await coroutine(*args, **kwargs)
+        else:
+            result = func(*args, **kwargs)
+        return strip_cdp_fields(result)
+
+    if hasattr(tool, "model_copy"):
+        return tool.model_copy(update={"coroutine": call, "func": None})
+    return tool
 
 
 @asynccontextmanager
@@ -32,6 +87,8 @@ async def open_browser_tools(
     read_timeout_s: float = DEFAULT_READ_TIMEOUT_S,
     client_factory: Callable | None = None,
     loader: Callable | None = None,
+    retry_attempts: int = DEFAULT_RETRY_ATTEMPTS,
+    retry_delay_s: float = DEFAULT_RETRY_DELAY_S,
 ) -> AsyncIterator[Sequence]:
     """Yield the three browser tools over one session, or an empty list.
 
@@ -44,6 +101,10 @@ async def open_browser_tools(
         return
     if read_timeout_s <= 0:
         raise ValueError("the browser MCP read timeout must be positive")
+    if retry_attempts < 1:
+        raise ValueError("the browser MCP retry count must be at least one")
+    if retry_delay_s < 0:
+        raise ValueError("the browser MCP retry delay must not be negative")
 
     if client_factory is None or loader is None:
         from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -64,13 +125,23 @@ async def open_browser_tools(
 
     client = client_factory()
     session = client.session("browser")
-    try:
-        handle = await session.__aenter__()
-    except Exception:  # noqa: BLE001 - a missing browser must not stop a hunt
+    handle = None
+    last_error: Exception | None = None
+    for attempt in range(1, retry_attempts + 1):
+        try:
+            handle = await session.__aenter__()
+            break
+        except Exception as exc:  # noqa: BLE001 - a missing browser degrades
+            last_error = exc
+            if attempt < retry_attempts:
+                await asyncio.sleep(retry_delay_s * attempt)
+    if handle is None:
         logger.warning(
-            "browser tools are unavailable at %s; the hunt runs without them",
+            "browser tools are unavailable at %s after %d attempt(s); the "
+            "caller runs without them: %s",
             target,
-            exc_info=True,
+            retry_attempts,
+            last_error,
         )
         yield []
         return
@@ -85,7 +156,11 @@ async def open_browser_tools(
                 exc_info=True,
             )
             tools = []
-        yield [tool for tool in tools if tool.name in BROWSER_TOOL_NAMES]
+        yield [
+            _strip_start_tool(tool)
+            for tool in tools
+            if tool.name in BROWSER_TOOL_NAMES
+        ]
     finally:
         try:
             await session.__aexit__(None, None, None)

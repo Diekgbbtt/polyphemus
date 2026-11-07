@@ -47,7 +47,7 @@ COMPLETE_ENV = {
     "LLM_CAPABILITY_OVERRIDES": CAPABILITY_OVERRIDE_ENV,
 }
 
-BASE_SERVICES = {"agent", "kali", "postgres", "neo4j", "lightrag", "steel-worker"}
+BASE_SERVICES = {"agent", "kali", "postgres", "neo4j", "lightrag"}
 
 docker = pytest.mark.skipif(
     shutil.which("docker") is None, reason="docker CLI unavailable"
@@ -136,9 +136,11 @@ def test_eval_overlay_disables_agent_reload() -> None:
 
 
 @docker
-def test_eval_overlay_passes_the_steel_endpoint_to_the_agent(tmp_path: Path) -> None:
-    """#391: the agent's SDK provider reads the same deployment value as kali."""
-    env = {**COMPLETE_ENV, "STEEL_BROWSER_API_URL": "http://192.0.2.10:3000/v1"}
+def test_eval_overlay_uses_the_browser_mcp_as_the_browser_address(
+    tmp_path: Path,
+) -> None:
+    """The eval overlay sets the pool URL and adds no Steel runtime URL."""
+    env = {**COMPLETE_ENV}
     project = stage(tmp_path, env)
 
     rendered = render(
@@ -148,9 +150,16 @@ def test_eval_overlay_passes_the_steel_endpoint_to_the_agent(tmp_path: Path) -> 
     assert rendered.returncode == 0, rendered.stderr
     config = yaml.safe_load(rendered.stdout)
     agent_env = environment_map(config["services"]["agent"])
-    kali_env = environment_map(config["services"]["kali"])
-    assert agent_env["STEEL_BROWSER_API_URL"] == "http://192.0.2.10:3000/v1"
-    assert agent_env["STEEL_BROWSER_API_URL"] == kali_env["STEEL_BROWSER_API_URL"]
+    assert agent_env["KALI_BROWSER_MCP_URL"] == "http://kali:8003/mcp"
+    overlay = yaml.safe_load(
+        (REPO_ROOT / "eval" / "docker-compose.eval.yml").read_text(encoding="utf-8")
+    )
+    assert "STEEL_BROWSER_API_URL" not in overlay["services"]["agent"].get(
+        "environment", {}
+    )
+    assert "STEEL_BROWSER_API_URL" not in (
+        overlay["services"].get("kali", {}).get("environment", {})
+    )
 
 
 @docker

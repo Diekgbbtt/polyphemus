@@ -49,12 +49,13 @@ From the instance worktree, with the instance `.env`:
 docker compose -p ph-<short> \
   -f docker-compose.yml \
   -f docker-compose.dev.yml \
+  -f docker-compose.pool.yml \
   -f eval/docker-compose.eval.yml \
   up -d
 ```
 
 The baseline starts two workers.
-The thin mode starts none:
+The thin mode omits the pool file and starts none:
 
 ```bash
 docker compose -p ph-<short> \
@@ -63,10 +64,12 @@ docker compose -p ph-<short> \
   up -d
 ```
 
-The thin overlay sets `deploy.replicas: 0`, clears
+The thin overlay omits the worker service, clears
 `STEEL_POOL_DOCKER_SOCKET`, and clears `KALI_BROWSER_MCP_URL`.
 
 ## 3. Verify
+
+Run these with the same `-f` file set as the start command.
 
 ```bash
 docker compose -p ph-<short> ps steel-worker
@@ -78,8 +81,10 @@ docker compose -p ph-<short> exec kali \
 
 The pool log must contain `pool.discovered` with the same worker count as the
 Compose service and `healthy` equal to that count.
-The browser MCP listens on `127.0.0.1:8003`.
-The public proxy ports start at `3100` and are loopback-only.
+The browser MCP listens on port `8003` on the compose network; it is not
+published on the host.
+The agent reaches it at `http://kali:8003/mcp`.
+The public proxy ports start at `3100` and are loopback-only inside Kali.
 
 Check the three-tool surface from Kali:
 
@@ -112,7 +117,7 @@ both before the model sees them.
 The count is a bootstrap setting, not a runtime command.
 
 1. Edit `deploy.replicas` on `steel-worker` in `docker-compose.yml`.
-2. Run `docker compose -p ph-<short> up -d --remove-orphans`.
+2. Run `docker compose -p ph-<short> -f docker-compose.yml -f docker-compose.pool.yml up -d --remove-orphans`.
 3. Read `pool.discovered` in the browser MCP log.
 
 `--scale` is deliberately not the supported path.

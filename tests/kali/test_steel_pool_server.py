@@ -47,6 +47,7 @@ class FakeManager:
             restored=RestoreReport(2, 1, 3, ()),
             cdp_url="ws://172.20.0.5:3000/",
             cdp_host="localhost:3000",
+            remaining_ms=900_000,
         )
         self.payload: dict = {"success": True, "data": {"title": "app"}}
         self.end_report = EndReport(
@@ -75,6 +76,7 @@ class FakeManager:
             restored=self.view.restored,
             cdp_url=self.view.cdp_url,
             cdp_host=self.view.cdp_host,
+            remaining_ms=self.view.remaining_ms,
         )
 
     def exec(self, mcp_session_id: str, args):
@@ -169,6 +171,7 @@ class TestCommandGrammar:
                 ["batch", "--", "snapshot -i", "click @e1"],
             ),
             ("wait --selector '#app' --timeout 5000", ["wait", "--selector", "#app", "--timeout", "5000"]),
+            ("wait -l networkidle", ["wait", "-l", "networkidle"]),
         ],
     )
     def test_parse_accepts_the_browser_grammar(self, command, expected):
@@ -222,6 +225,7 @@ class TestBrowserService:
             },
             "cdp_url": "ws://172.20.0.5:3000/",
             "cdp_host": "localhost:3000",
+            "remaining_ms": 900_000,
         }
 
     def test_start_hides_the_http_worker_origin(self):
@@ -324,6 +328,16 @@ class TestBrowserService:
         assert result["error"]["code"] == "browser_error"
         assert result["error"]["retryable"] is True
 
+    def test_start_transport_failure_is_a_retryable_pool_outage(self):
+        manager = FakeManager()
+        manager.start_error = CliError("the CLI timed out")
+        service, _ = _service(manager)
+
+        result = service.start("mcp-1", "hunt")
+
+        assert result["error"]["code"] == "browser_unavailable"
+        assert result["error"]["retryable"] is True
+
     def test_exec_rejects_a_bad_command_before_the_lease(self):
         manager = FakeManager()
         service, _ = _service(manager)
@@ -367,9 +381,9 @@ class TestBrowserService:
 
         result = service.end("mcp-1")
 
-        assert result["success"] is False
+        assert result["success"] is True
         assert result["ended"] is False
-        assert result["error"]["code"] == "browser_error"
+        assert "error" not in result
 
     def test_end_is_successful_when_the_session_is_stopped(self):
         manager = FakeManager()
@@ -404,6 +418,23 @@ class TestBrowserService:
 
         assert result["success"] is True
         assert result["released"] is True
+
+    def test_end_is_successful_when_the_api_reported_already_gone(self):
+        manager = FakeManager()
+        manager.end_report = EndReport(
+            ended=True,
+            reason="explicit",
+            captured=False,
+            saved=False,
+            stopped=False,
+            released=False,
+        )
+        service, _ = _service(manager)
+
+        result = service.end("mcp-1")
+
+        assert result["success"] is True
+        assert result["released"] is False
 
     def test_end_fails_when_neither_stop_nor_release_succeeded(self):
         manager = FakeManager()

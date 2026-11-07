@@ -273,6 +273,26 @@ def test_project_steel_state_falls_back_to_the_stable_key():
     ) == "steel-proj1-alice"
 
 
+@pytest.mark.parametrize(
+    "legacy",
+    ["alice", "../escape", "a" * 200, "old-session-name", ""],
+)
+def test_project_steel_state_replaces_a_legacy_reference(legacy):
+    account = {"steel": {"state": legacy}}
+
+    assert project_steel_state(
+        account, project_id="proj1", account_name="alice"
+    ) == "steel-proj1-alice"
+
+
+def test_project_steel_state_keeps_a_valid_stable_key():
+    account = {"steel": {"state": "steel-proj1-alice"}}
+
+    assert project_steel_state(
+        account, project_id="proj1", account_name="alice"
+    ) == "steel-proj1-alice"
+
+
 def test_project_steel_state_silently_ignores_an_old_profile():
     assert project_steel_state({"steel": {"profile": "old"}}) is None
 

@@ -25,6 +25,7 @@ from orchestrator.setup import Instance
 COMPOSE_FILES: tuple[str, ...] = (
     "docker-compose.yml",
     "docker-compose.dev.yml",
+    "docker-compose.pool.yml",
     "eval/docker-compose.eval.yml",
 )
 OVERLAY_FILE = "eval/docker-compose.eval.yml"

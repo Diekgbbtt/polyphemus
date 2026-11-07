@@ -76,6 +76,41 @@ def test_kali_clear_removes_only_the_host(tmp_path) -> None:
     assert "10.0.0.5" not in script
 
 
+def test_worker_alias_targets_every_replica(tmp_path) -> None:
+    paths = _paths(tmp_path)
+
+    command = routing.worker_alias_command(paths, "t-aaaa.target", "172.17.0.1")
+    script = command.argv[-1]
+
+    assert "ps -q steel-worker" in script
+    assert "for cid in $cids" in script
+    assert "docker exec" in script
+    assert "t-aaaa.target" in script
+    assert "172.17.0.1" in script
+    assert paths.compose_project in script
+    assert "no steel-worker replica" in script
+
+
+def test_worker_clear_removes_only_the_host(tmp_path) -> None:
+    paths = _paths(tmp_path)
+
+    command = routing.worker_clear_command(paths, "t-aaaa.target")
+    script = command.argv[-1]
+
+    assert "ps -q steel-worker" in script
+    assert "t-aaaa.target" in script
+    assert "172.17.0.1" not in script
+
+
+def test_worker_alias_rejects_a_non_numeric_address(tmp_path) -> None:
+    paths = _paths(tmp_path)
+
+    with pytest.raises(routing.RoutingError, match="non-numeric"):
+        routing.worker_alias_command(
+            paths, "t-aaaa.target", "host.docker.internal"
+        )
+
+
 def test_kali_hosts_command_reads_the_instance_hosts_file(tmp_path) -> None:
     paths = _paths(tmp_path)
 

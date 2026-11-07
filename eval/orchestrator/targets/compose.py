@@ -121,6 +121,9 @@ class ComposeStrategy:
             front.plan_conf_apply(self.host, self.port),
             routing.plan_gateway_resolve(self.paths),
             routing.kali_alias_command(self.paths, self.host, routing.PLAN_GATEWAY_IP),
+            routing.worker_alias_command(
+                self.paths, self.host, routing.PLAN_GATEWAY_IP
+            ),
         ]
 
     def up(self, run: CommandRunner) -> TargetUpResult:
@@ -128,10 +131,13 @@ class ComposeStrategy:
         require_ok(run(up_cmd), up_cmd, error=ComposeTargetError)
         conf = front.plan_conf_apply(self.host, self.port)
         require_ok(run(conf), conf, error=ComposeTargetError)
-        alias = routing.kali_alias_command(
-            self.paths, self.host, self._gateway_address(run)
-        )
+        gateway = self._gateway_address(run)
+        alias = routing.kali_alias_command(self.paths, self.host, gateway)
         require_ok(run(alias), alias, error=ComposeTargetError)
+        worker_alias = routing.worker_alias_command(
+            self.paths, self.host, gateway
+        )
+        require_ok(run(worker_alias), worker_alias, error=ComposeTargetError)
         return TargetUpResult(
             host=self.host, front_url=self.front_url, backend=self.backend, ready=True
         )
@@ -156,10 +162,11 @@ class ComposeStrategy:
             self._compose("down", "-v", "--remove-orphans"),
             front.plan_conf_remove(self.host),
             routing.kali_clear_command(self.paths, self.host),
+            routing.worker_clear_command(self.paths, self.host),
         ]
 
     def down(self, run: CommandRunner) -> None:
-        # SP3: best-effort cleanup; the front conf and kali alias are always
+        # SP3: best-effort cleanup; the front conf and both aliases are always
         # removed, and an aggregate error is raised at the end for reporting.
         down_cmd = self._compose("down", "-v", "--remove-orphans")
         down_result = run(down_cmd)
@@ -167,6 +174,8 @@ class ComposeStrategy:
         conf_result = run(conf)
         clear = routing.kali_clear_command(self.paths, self.host)
         clear_result = run(clear)
+        worker_clear = routing.worker_clear_command(self.paths, self.host)
+        worker_clear_result = run(worker_clear)
         errors: list[str] = []
         if down_result.returncode != 0:
             errors.append(
@@ -182,6 +191,11 @@ class ComposeStrategy:
             errors.append(
                 f"clear alias {self.host} failed: "
                 f"{clear_result.stderr.strip() or clear_result.stdout.strip()}"
+            )
+        if worker_clear_result.returncode != 0:
+            errors.append(
+                f"clear worker alias {self.host} failed: "
+                f"{worker_clear_result.stderr.strip() or worker_clear_result.stdout.strip()}"
             )
         if errors:
             raise ComposeTargetError("; ".join(errors))

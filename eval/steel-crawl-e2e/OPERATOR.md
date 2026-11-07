@@ -1,5 +1,10 @@
 # Steel-crawl live e2e - operator runbook
 
+> RETIRED: this cloud/CLI walkthrough predates the pool convergence. The live
+> gate is the pool E2E described in
+> `docs/design/steel-crawl-pool-convergence-plan.md` phase F. The target-stack
+> and front-alias setup below remains useful as setup reference.
+
 This directory is the host-side scaffold for the three live `steel_crawl` walkthroughs.
 The crawl runs inside the deployed agent container; only the target stack, the Steel session, and the assertions are outside it.
 The assertions are in `ASSERTIONS.md`; the executable walkthroughs are in `tests/e2e/test_steel_crawl_e2e.py`.

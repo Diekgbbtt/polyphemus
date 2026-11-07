@@ -15,7 +15,6 @@ import base64
 import json
 import os
 from collections.abc import Callable, Mapping, Sequence
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -210,11 +209,11 @@ def finalize(
 ) -> FinalizeResult:
     """Finalize a run from its ledger, on success and on every failure path.
 
-    The sidecar closes first, the partial manifest is appended, then the HTTP
-    flush and the graph ingestion run in parallel. Each failure is recorded as a
-    ledger error and in the manifest's error list; a failed flush leaves the
-    ledger and its cursor intact. The returned manifest is always the final
-    terminal state.
+    The sidecar closes first. The HTTP flush runs, its failure is folded into
+    the run's partial flag, and only then does the manifest writer receive the
+    final manifest. A failed flush leaves the ledger and its cursor intact.
+    The returned manifest is always the final terminal state, and the durable
+    manifest never records a complete run that the finalize knows is partial.
     """
     errors: list[str] = []
     if close_fn is not None:
@@ -254,29 +253,35 @@ def finalize(
                 cursor = None
         return result, None, cursor
 
+    # The flush is independent of the manifest write, and its failure changes
+    # the durable partial flag. Run it first, fold its outcome, then hand the
+    # final manifest to the writer. A parallel write would persist a complete
+    # manifest that this same finalize is about to mark partial.
+    flush_result, flush_error, cursor = run_flush()
+    if flush_error is not None:
+        errors.append(flush_error)
+        ledger.append_error("http_history_flush_failed", flush_error, stage="flush")
+        partial = True
+    elif cursor is not None:
+        ledger.set_cursor(cursor)
+    if partial:
+        manifest = manifest.model_copy(
+            update={"run": manifest.run.model_copy(update={"partial": True})}
+        )
+
     def run_ingest() -> tuple[Any, str | None]:
         try:
             return ingest_fn(manifest), None
         except Exception as exc:  # noqa: BLE001 - the partial run is not complete
             return None, f"graph_ingest_failed: {exc}"
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        flush_future = pool.submit(run_flush)
-        ingest_future = pool.submit(run_ingest)
-        flush_result, flush_error, cursor = flush_future.result()
-        ingest_result, ingest_error = ingest_future.result()
-
-    if flush_error is not None:
-        errors.append(flush_error)
-        ledger.append_error("http_history_flush_failed", flush_error, stage="flush")
-    elif cursor is not None:
-        ledger.set_cursor(cursor)
+    ingest_result, ingest_error = run_ingest()
     if ingest_error is not None:
         errors.append(ingest_error)
         ledger.append_error("graph_ingest_failed", ingest_error, stage="ingest")
+        partial = True
 
     if errors:
-        partial = True
         recorded = list(manifest.errors) + [
             ErrorRecord(
                 code=error.split(":", 1)[0],

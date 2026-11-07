@@ -111,11 +111,11 @@ pipeline is configured FOR THIS PROFILE:
 - **Host service scanning (naabu) is excluded**: the target is one app on one
   published port; scanning the host probes unrelated infrastructure (the
   reverse proxy, other containers) and produces off-scope noise.
-- **The browser crawl (steel_crawl) needs a Steel runtime on the operator's
-  network**: the Steel cloud pool cannot reach a target exposed only on a
-  private VM. When `STEEL_BROWSER_API_URL` names the local runtime (section
-  2.14), the crawl runs against it; without that value it stays on the cloud
-  and cannot cover the target.
+- **The browser crawl (steel_crawl) uses the instance's Steel pool**: the
+  Steel cloud cannot reach a target exposed only on a private VM. The agent
+  addresses the pool through `KALI_BROWSER_MCP_URL` (section 2.14); the eval
+  overlay sets `http://kali:8003/mcp`. `STEEL_BROWSER_API_URL` is not the
+  crawl's address.
 - **Heavy content discovery (ffuf, kiterunner) is excluded**: OOM-prone on a
   small host, and the app's surface is small enough for katana to cover.
 
@@ -1060,6 +1060,7 @@ The last command prints `arm64/linux`.
 docker compose -p ph-<short> \
   -f docker-compose.yml \
   -f docker-compose.dev.yml \
+  -f docker-compose.pool.yml \
   -f eval/docker-compose.eval.yml \
   up -d
 docker compose -p ph-<short> ps steel-worker
@@ -1068,7 +1069,8 @@ docker compose -p ph-<short> exec kali \
 ```
 
 The browser MCP log must carry `pool.discovered` with the replica count.
-The browser MCP listens on `127.0.0.1:8003` inside Kali.
+The browser MCP listens on port 8003 on the compose network; it is not
+published on the host.
 The agent reaches it at `http://kali:8003/mcp`.
 
 #### Agent path

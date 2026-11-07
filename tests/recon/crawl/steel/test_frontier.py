@@ -612,6 +612,9 @@ def test_a_typed_action_error_stops_with_its_code_and_message():
     assert result.stop_reason == "error"
     assert result.error == "command_failed: the browser did not answer"
     assert graph.executed == [(ROOT, "e-boom")]
+    assert len(result.failed) == 1
+    assert result.failed[0].element.element_id == "e-boom"
+    assert "command_failed" in result.failed[0].error
 
 
 def test_a_typed_choice_error_stops_with_its_code_and_message():

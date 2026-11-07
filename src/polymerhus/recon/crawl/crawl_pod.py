@@ -16,11 +16,11 @@ terminal `fail` node that sets `verdict="failed"` and curates ONE
 Nothing from this node ever propagates as an unhandled exception.
 
 The crawl path is session-only (#395, D20): the node runs under the
-gateway-established auth state. The feed supplies the resolved state file
-(`extra["steel_state"]`) and the browser auth material
-(`extra["browser_auth"]`: cookies, required headers, header-located tokens,
-and storage-located tokens). The provider restores the state, replicates the
-material, and gates the result. There is no interactive `steel_await_auth`
+gateway-established auth state. The feed supplies the stable browser key
+(`extra["steel_session"]`) and the gate metadata
+(`extra["browser_auth"]`: `auth_probe` and `login_url`). The browser MCP
+mounts the key, restores cookies and localStorage from the pool store, and
+gates the result. There is no interactive `steel_await_auth`
 human-in-the-loop path, no credentialed login, and no operator prompt -
 post-gateway, auth is already established and a mid-run prompt is strictly
 worse.
@@ -114,21 +114,6 @@ def _coverage_observation(input_asset: dict, reason: str) -> Observation:
     )
 
 
-def legacy_agentic_run_crawl_fn(target: str, *, scope: list[str], steel_state=None,
-                                browser_auth=None):
-    """The retired agentic Steel crawl loop, kept for a controlled fallback.
-
-    Wraps `crawl_agent.run_crawl` (async) behind `run_coro_blocking`. The new
-    `steel_crawl` job uses `live_run_crawl_fn`; this function remains only so a
-    deployment can pin the old loop while the new engine is being validated.
-    """
-    from polymerhus.recon.crawl import crawl_agent
-    from polymerhus.recon.control.async_bridge import run_coro_blocking
-
-    return run_coro_blocking(crawl_agent.run_crawl(
-        target, scope=scope, steel_state=steel_state, browser_auth=browser_auth))
-
-
 def live_run_crawl_fn(
     target: str,
     *,
@@ -140,11 +125,14 @@ def live_run_crawl_fn(
     """The production `steel_crawl` collaborator: the deterministic engine.
 
     The pod passes the job's `extra`, which carries the project and run ids,
-    the selected account, and the feed-projected browser material. The engine
-    attaches to the pre-authenticated session, runs the real CDP sidecar, the
-    CLI page factory, the Jev policy, and the bounded DFS, and returns the v2
-    manifest dict the pod's parser consumes. Every runtime failure is raised to
-    the pod's `fail` node, which records reduced coverage.
+    the selected account, and the stable browser key. The engine mounts that
+    key through the browser MCP, runs the real CDP sidecar, the MCP page
+    factory, the Jev policy, and the bounded DFS, and returns the v2 manifest
+    dict the pod's parser consumes. Every runtime failure is raised to the
+    pod's `fail` node, which records reduced coverage.
+
+    `steel_state` is accepted for the contract tier but is not used by this
+    engine: the pool store is the only browser-state store.
     """
     import os  # noqa: PLC0415
 
@@ -237,12 +225,12 @@ def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn):
     curate_fn(assets, observations, project_id) -> (int, int).
 
     Session-only (#395, D20): the `crawl` node runs `run_crawl_fn` under the
-    feed-projected state. The state file restores application context; the
-    browser auth material replicates cookies, headers, and storage tokens.
-    Auth-eligibility is the pipeline's single concern (C1): the feed keys are
-    present only for a `use_auth` job with a resolved account. A non-auth
-    crawl, or an auth-capable job run without a resolved account, crawls
-    anonymously. There is no interactive path and no operator prompt.
+    feed-projected stable key. The browser MCP restores cookies and
+    localStorage from the pool store; the feed supplies only the oracle and
+    login URL. Auth-eligibility is the pipeline's single concern (C1): the
+    feed keys are present only for a `use_auth` job with a resolved account.
+    A non-auth crawl, or an auth-capable job run without a resolved account,
+    crawls anonymously. There is no interactive path and no operator prompt.
 
     The `extra` keyword is passed only to a collaborator that declares it, so
     the three-argument fakes of the contract tier stay compatible.

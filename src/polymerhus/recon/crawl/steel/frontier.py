@@ -127,6 +127,19 @@ class StaleVisit:
 
 
 @dataclass(frozen=True)
+class FailedVisit:
+    """One candidate whose execution raised a typed failure.
+
+    The traversal stops on the failure, but the action is still recorded with
+    its true outcome so the action ledger has no silent gap.
+    """
+
+    page: PageInstance
+    element: Element
+    error: str
+
+
+@dataclass(frozen=True)
 class FrontierResult:
     """What one traversal did, in order, and why it stopped (spec 2.2 T10)."""
 
@@ -137,6 +150,7 @@ class FrontierResult:
     unrecoverable: tuple[PageInstance, ...] = ()
     duplicates: tuple[DuplicateVisit, ...] = ()
     stale: tuple[StaleVisit, ...] = ()
+    failed: tuple[FailedVisit, ...] = ()
     error: str | None = None
 
 
@@ -174,6 +188,7 @@ class Frontier:
         unrecoverable: list[PageInstance] = []
         duplicates: list[DuplicateVisit] = []
         stale: list[StaleVisit] = []
+        failed: list[FailedVisit] = []
         stack: list[PageInstance] = []
         current: PageInstance | None = root
         # The root was just loaded by the page factory; its snapshot and refs
@@ -192,6 +207,7 @@ class Frontier:
                 unrecoverable=tuple(unrecoverable),
                 duplicates=tuple(duplicates),
                 stale=tuple(stale),
+                failed=tuple(failed),
                 error=error,
             )
 
@@ -289,6 +305,13 @@ class Frontier:
             except SessionMissing as error:
                 return finish("session_missing", _error_text(error))
             except Exception as error:  # noqa: BLE001 - a typed action failure
+                failed.append(
+                    FailedVisit(
+                        page=current,
+                        element=chosen,
+                        error=_error_text(error),
+                    )
+                )
                 return finish("error", _error_text(error))
             self._state.consume(current, chosen.fingerprint)
             action_visits.append(
@@ -377,6 +400,7 @@ __all__ = [
     "DuplicateVisit",
     "ExecuteAction",
     "ExecutionResult",
+    "FailedVisit",
     "Frontier",
     "FrontierResult",
     "PageVisit",
