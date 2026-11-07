@@ -1022,138 +1022,107 @@ EVAL_SURFER_COMMAND='opencode run --agent eval-surfer --dir <canonical-checkout>
 
 ### 2.14. The Steel browser pool (#359)
 
-The Steel browser capability reaches targets that the public internet cannot
-route to through a Steel runtime on the operator's own network.
-The runtime host is fixed (`dj-viscon-workshop-1`); the polymerhus stack stays
-portable, and mutual reachability is the invariant (D359-1).
-The declared artifact is `eval/deploy/steel/docker-compose.steel-pool.yml`:
-two v0.5.5 API workers, each publishing its API on the host loopback only.
-There is no UI container, no published 5173, and no 9223 listener.
+The browser pool belongs to the instance compose project.
+There is no separate pool host, no SSH tunnel, and no cross-host forward.
 The full operator sequence is `eval/deploy/steel/POOL-RUNBOOK.md`.
 
-#### Deploy
+#### Topology
 
-On the pool host, from the synced `steel-pool` directory:
+One Compose service, `steel-worker`, is replicated with `deploy.replicas`.
+The baseline count is `2`; the thin overlay sets `0`.
+The workers run on `polymerhus-net`; the browser MCP runs in Kali.
+The MCP starts one reverse proxy per replica on `127.0.0.1:3100+i` and
+rewrites the session `websocketUrl` to `ws://localhost:3100+i/`.
+The worker keeps `DOMAIN=localhost:3000` and `CDP_DOMAIN=localhost:3000`.
+The worker API port, the raw Chrome port, and the proxy port are never
+published on the host.
+The eval orchestrator writes the synthetic target host into each worker's
+`/etc/hosts`.
 
-```
-cd /home/ubuntu/steel-pool
-docker compose -f docker-compose.steel-pool.yml up -d
-```
+#### Build
 
-The image is built once from the pinned tag:
+The eval host is arm64.
+Build the worker natively on the eval host; do not transfer the amd64 image:
 
 ```
 git clone --depth 1 --branch v0.5.5-beta \
   https://github.com/steel-dev/steel-browser.git src
 docker build -t steel-browser-api:v0.5.5-beta -f src/api/Dockerfile src
+docker image inspect steel-browser-api:v0.5.5-beta \
+  --format '{{.Architecture}}/{{.Os}}'
 ```
 
-`DOMAIN` and `CDP_DOMAIN` default to `localhost:<published port>` per worker.
-The compose reads `STEEL_WORKER_DOMAIN` for a deployment whose client resolves
-a named host instead; the eval pool keeps `localhost`.
-The CLI reaches the worker through the operator's forward, so the value is the
-loopback origin and never the host's public address.
+The last command prints `arm64/linux`.
 
-#### Reachability
+#### Start and verify
 
-The workers publish on `127.0.0.1:3100` and `127.0.0.1:3101`.
-The operator forwards each port and the Docker socket into the Kali container.
-When the forward lands on the Docker host instead, the Kali entrypoint relays
-the worker ports onto the container loopback and keeps the worker URL
-`http://localhost:<port>`; the runbook step 4b states the relay and the
-`Host: localhost` constraint.
-The pool manager reads the socket and discovers the workers by label.
-It has no SSH logic.
-The browser MCP listens on 8003 inside the compose network and is not
-published.
-An eval target has its own synthetic-Host double forward; the runbook step 6
-states it.
-The old public single-container deploy (`docker-compose.steel.yml`) and its
-`allowlist.sh` are retired: nothing publishes port 3000 or 9223.
+```
+docker compose -p ph-<short> \
+  -f docker-compose.yml \
+  -f docker-compose.dev.yml \
+  -f eval/docker-compose.eval.yml \
+  up -d
+docker compose -p ph-<short> ps steel-worker
+docker compose -p ph-<short> exec kali \
+  tail -20 /var/log/kali-browser-mcp.log
+```
+
+The browser MCP log must carry `pool.discovered` with the replica count.
+The browser MCP listens on `127.0.0.1:8003` inside Kali.
+The agent reaches it at `http://kali:8003/mcp`.
 
 #### Agent path
 
-The agent calls `browser_start`, `browser_exec`, and `browser_end` on
-`http://kali:8003/mcp`.
-The MCP owns the worker choice and the session.
-No worker URL, port, or container name reaches the agent.
-The pool path does not read `STEEL_BROWSER_API_URL`.
-Keep that value unset or point it at a local runtime; a value for the retired
-public API is a defect.
+The agent calls `browser_start`, `browser_exec`, and `browser_end`.
+The MCP owns the worker choice and the lease.
+The crawl's `steel_crawl` consumes the CDP endpoint the start result returns;
+the generic browser tool strips `cdp_url` and `cdp_host` before the model sees
+them.
+No worker HTTP origin, port, or container name reaches the model.
+
+#### State
+
+The pool store is `/var/lib/steel/sessions`, one owner-only JSON file per
+stable key.
+The key is `steel-<project_slug>` without an account and
+`steel-<project_slug>-<account_slug>` with one.
+`accounts.<account>.steel.state` holds the key, not a file path.
+`browser_end` captures cookies, localStorage, sessionStorage, and indexedDB,
+saves them under the key, stops the browser, and releases the session.
+`browser_start` restores cookies and localStorage.
+The auth feed carries only `auth_probe` and `login_url` to the crawl.
 
 #### Teardown
 
 ```
-docker compose -f docker-compose.steel-pool.yml down
+docker compose -p ph-<short> down
 ```
 
-`down` keeps the worker volumes and their browser state.
+`down` keeps the `steel-sessions` volume and its browser state.
 Use `down -v` only when you intend to destroy that state.
 
 #### Process lifecycle (zombie reaping)
 
-The API runs Node as PID 1 and never reaps the Chromium children it reparents.
-Repeated launch/release cycles accumulate zombies (`chrome_crashpad`,
-`chromium`) that no signal clears.
-The compose file sets `init: true`, so Docker's init (tini) is PID 1, reaps
-every orphan, and forwards signals.
-Measured on the pinned image: 6 launch/release cycles left 108 zombies without
-`init` and 0 with it.
-
+The worker API runs Node as PID 1 and never reaps the Chromium children it
+reparents.
+The `steel-worker` service sets `init: true`, so Docker's init is PID 1 and
+reaps every orphan.
 Check the tier after a busy period:
 
 ```
-docker exec steel-1 sh -lc "ps -eo stat,comm | awk '\$1 ~ /Z/ {c++} END {print c+0}'"
+docker compose -p ph-<short> exec steel-worker \
+  sh -lc "ps -eo stat,comm | awk '\$1 ~ /Z/ {c++} END {print c+0}'"
 ```
 
-A rising count means the container was started without `init` (recreate it from
-this compose file). It is never a reason to restart blindly: the zombies are a
-symptom of the missing init, not of the browser.
+A rising count means the service was recreated without `init: true`.
 
-#### State-preserving teardown
-
-Tearing a session down without losing its identity costs three calls, in order:
-
-1. Capture: `GET /v1/sessions/<id>/context` returns `{cookies, localStorage,
-   sessionStorage, indexedDB}` while the session is live.
-2. Store: write that JSON to a durable path (the session store volume, or a
-   caller-owned file).
-3. Release: `POST /v1/sessions/<id>/release` ends the session and kills the
-   browser.
-
-The pool MCP runs this sequence on every end: `browser_end`, the MCP close
-hook, the server shutdown, and the TTL all use it.
-Its store is `/var/lib/steel/sessions`, one owner-only JSON file per name, and
-the agent never reads it.
-The scalar client path keeps its own file.
-
-Restore by passing the stored JSON as `sessionContext` on the next create
-(`POST /v1/sessions`), the same shape the capture returns.
-`src/polymerhus/app/steel_session_state.py` implements this sequence.
-The tool is session-only in the cloud and locally; profiles are retired (#395,
-D20). The store is the caller's own file, per account, owner-only, atomic, and
-single-writer. The account holds a `steel.state` reference, not the state.
-The four state fields are cookies, localStorage, sessionStorage, and indexedDB.
-The state is application context; the crawl also replicates auth material (cookies, required headers, header-located tokens, and storage-located tokens) and gates the attempt on application state or an authenticated-surface response.
+#### Workers and the cloud
 
 The workers need no `STEEL_API_KEY`; the CLI reaches them through the guard.
-The pool does not set a fixed user agent: the v0.5.5 API's native value follows
-the worker's Chrome build.
-The retired single-container deployment pinned a fixed value through a
-wrapper; the pool keeps the API's native value. See
-`docs/design/evidence/steel-359/t395-fingerprint-consistency.md`.
-
-#### Moving the stack to another host
-
-1. Deploy the pool compose file on the new host.
-2. Set each worker's `DOMAIN` and `CDP_DOMAIN` to `localhost:<published port>`.
-3. Update the tunnel target and the forwarded ports in the runbook command.
-4. Update `STEEL_POOL_SIZE` on the polymerhus side when the worker count
-   changes, then recreate the `kali` service.
-5. Tear the old pool down with `down` and keep its volumes for audit.
-
-The pool manager discovers workers from the Docker labels and their published
-ports, so no code constant changes.
+The pool keeps the API's native user agent; it never pins one.
+`STEEL_API_KEY` remains accepted by the agent's Steel clients; when it is
+present, both use the cloud instead of the pool.
+The eval `.env` sets neither `STEEL_API_KEY` nor `STEEL_BROWSER_API_URL`.
 
 #### The #245 portability boundary
 

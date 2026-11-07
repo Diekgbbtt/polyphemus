@@ -134,7 +134,21 @@ The JEV engine is unchanged.
 6. Tests and E2E: unit seams, contract over the real MCP protocol, deployment compose checks, White Jotter and ComfyUI live E2E on the eval host.
 7. Documentation: spec sections 2.1, 4.1, 4.3, 4.4, 9.1, 12, and 15; pool runbook; `eval/OPERATOR.md`; conjunction; evidence.
 
-## 10. Acceptance
+## 10. Implementation status
+
+Implemented on `feat/steel-crawl-convergence`:
+
+- `2b27ce71` - worker discovery, the per-replica reverse proxy, the CDP
+  fields, and the end-success rule.
+- `1aae0895` - the MCP browser client, the session backend facade, the lazy
+  CDP transport, the 600-second budget, the partial manifest, and the
+  reduced-coverage route.
+- The auth store, gateway, skill, and prompt maps are in the same branch.
+
+The live E2E is gated on the arm64 worker image build and the instance sync
+(phase F of the implementation plan).
+
+## 11. Acceptance
 
 - The thin stack renders and starts without the worker service or the browser URL.
 - The baseline stack starts two workers and the MCP discovers both.

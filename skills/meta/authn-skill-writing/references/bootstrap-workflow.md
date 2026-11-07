@@ -32,7 +32,7 @@ You run outside the system under test, with your own request tooling and the aut
 You are the operator, by hand: you write store facts only through the seed face, and you write the procedure only as the project skill bundle. Facts live in the store, steps live in the skill, and secret values never leave the store.
 
 Read `<meta_skill_path>` and follow its phases P0 through P6 in order, including its seed-face contract and its steel session discipline.
-Before the first browser step, read `<mechanics_skill_path>` (and its `references/` scripts beside it) for the operation MECHANICS - snapshot, batch, waiting, ref flow, variadic encoding, session lifecycle; do not re-derive the steel CLI from `--help`.
+Before the first browser step, read `<mechanics_skill_path>` (and its `references/` scripts beside it) for the operation MECHANICS - snapshot, batch, waiting, ref flow, variadic encoding, session lifecycle; do not re-derive the command grammar from `--help`.
 Interfaces: write store facts with `PUT <seed_face_url>` and body `{overview?, accounts?}`; read state with `GET <read_face_url>`; write the project skill at `<data_root>/<project_id>/skills/<skill_name>/SKILL.md` with references beside it.
 Target: sign-in at `<login_url>`; sign-up at `<signup_url>`; account `<credentials>`.
 If `<signup_url>` is not `none`, run sign-up and sign-in as SEPARATE flows, never merged.
@@ -63,7 +63,7 @@ Prove both polarities before recording it:
 - A URL that answers 2xx anonymously is not an oracle; find another one.
 - A login page is never the oracle.
 
-Verify with the canonical probe: `SESSION=<session_name> bash <mechanics_skill_path>/../references/auth-oracle.sh <auth_probe_path>`.
+Verify with the canonical probe: `browser_exec("eval <fetch-script>")`, using the script in `<mechanics_skill_path>/../references/auth-oracle.sh`.
 The oracle is the ONLY pass/fail signal for authentication.
 2xx passes; 401, 403, or 3xx fails; anything else is indeterminate and is not a pass.
 Store `overview.auth_probe = {url: <auth_probe_path>}`; it is a deployment-neutral path, never a host.
@@ -71,18 +71,18 @@ A target with no reliable oracle is a loud blocker, not a pass.
 
 ## Browser branch (only when the probe forces it)
 
-Survey the catalogue first: `steel browser sessions --json`.
-If the named session is live, reuse it.
-Otherwise start a FREE name only when this bootstrap owns the session: `steel browser start --session <session_name> --session-timeout <session_timeout_ms> --inactivity-timeout <inactivity_timeout_ms> --json`.
-A start on a live name is refused (`session_taken`); reuse the now-live name, never start a twin.
-A known loss returns `session_missing` / `recreate_session`; a blank replacement is not a recovery. Re-bootstrap or report to the operator.
+Mount the stable key with `browser_start(<session_key>)`.
+The pool store restores its cookies and localStorage; a fresh key starts a fresh context.
+A mount while the name is held elsewhere answers `session_in_use`; reuse the mounted name, never start a twin.
+A name that was live and disappeared answers `session_missing` or `no_session`; the next stable-key start recreates the context from the saved state, never a blank replacement.
+A state restore that cannot complete answers `restore_failed`; stop and report it.
+A pool with no free worker answers `pool_exhausted`; retry after a lease ends.
 Log in only when the oracle fails.
-The pinned CLI has no state field, so a later CLI flow must reuse this live session. Do not claim that a new CLI session restored state.
-Pace the login per the mechanics skill's cadence rules, and settle with a condition rather than a fixed pause or network idle: `steel browser wait --url <authenticated_landing_substr>` or `steel browser wait --text <marker>`, because `navigate --wait-until networkidle` never settles on a continuously-active page and burns its whole timeout.
+Pace the login per the mechanics skill's cadence rules, and settle with a condition rather than a fixed pause or network idle: `browser_exec("wait --url <authenticated_landing_substr>")` or `browser_exec("wait --text <marker>")`, because `navigate --wait-until networkidle` never settles on a continuously-active page and burns its whole timeout.
 Those waits only settle the page; the oracle still decides pass or fail.
 Wait on the challenge's own marker with a bounded `--timeout`, then escalate to the operator: the post-gate state cannot appear until the human acts, so a wait on it burns its whole timeout.
-Stop every session with `steel browser stop --session <session_name> --json` and prove it gone against `steel browser sessions --json`.
-Record `steel.state` only when a state file exists.
+Call `browser_end()` on every path; it captures, saves, stops, and releases.
+After a successful end, record `steel.state = <session_key>` in the account.
 
 ## Report back
 
@@ -91,6 +91,6 @@ Cite secret names only: no secret VALUE in the report or in the skill.
 
 ## Deliverable
 
-- Store facts via the seed face: the typed overview (`login_endpoint`, `required_headers`, `mechanism`, `defences`, `fingerprinting`, `technical_conditions`, `anti-bot`, `http-client-replayability`, `auth_probe`) and, per account named `<username>-<minting_context>` (the credential username with its email location suffix stripped, plus the run or flow that minted it, never the procedure), `credentials`, `tokens` (with locations), `steel` state reference only when a state file exists, `snapshot`, and the `procedure` label joining the account to the skill procedure.
+- Store facts via the seed face: the typed overview (`login_endpoint`, `required_headers`, `mechanism`, `defences`, `fingerprinting`, `technical_conditions`, `anti-bot`, `http-client-replayability`, `auth_probe`) and, per account named `<username>-<minting_context>` (the credential username with its email location suffix stripped, plus the run or flow that minted it, never the procedure), `credentials`, `tokens` (with locations), the `steel` state reference (the stable pool key) after a successful `browser_end`, `snapshot`, and the `procedure` label joining the account to the skill procedure.
 - The project skill at `<data_root>/<project_id>/skills/<skill_name>/SKILL.md`, with the mandatory block embedded verbatim and target-specific ordered steps (tool plus why per step), sign-up and sign-in as separate named procedures, the oracle verification step, and secret values cited by name only.
 - Report: the mode decision with its forcing evidence; the `anti-bot` name or null; the replayability verdict and continuation facts; the oracle path and both polarities; the token names/locations if a browser was used; the written skill path; and any error verbatim.

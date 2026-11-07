@@ -13,7 +13,9 @@ No second decision point exists downstream.
 The phase plan is the static `JOBS`/`PHASES` registry, not a list you author.
 The crawl phase is `katana`, `ffuf`, and `steel_crawl`.
 `steel_crawl` is the only browser-capable job.
-It attaches to a pre-authenticated live session, never starts one, and consumes the BaseURL the earlier phases produced.
+It mounts the same stable browser session this turn uses and consumes the BaseURL the earlier phases produced.
+The pool store is the only browser-state store: `browser_start` restores its cookies and localStorage, and `browser_end` saves them under the same stable key.
+The run id stays in the lease, the ledger, and the manifest, never in the key.
 A `browser_only` branch prunes every request job and keeps `steel_crawl` alone.
 Never rename a job and never invent a job outside the registry.
 The target-type job-set decision node is a separate open item (#336, `D-JOBSET`); when it lands it must read the same registry and keep `steel_crawl` for browser-only targets.
@@ -53,13 +55,18 @@ The store holds a deployment-neutral path such as `/api/authentication`; the rea
 A browser request to that URL is the oracle.
 It is the ONLY pass/fail signal.
 
-Run the browser request in the live session from a page on the probe's origin.
-If the live page is not on that origin, navigate to the target root first, then run the fetch.
+Mount the stable browser session before the oracle: `browser_start(<session-key>)`.
+The pool restores its cookies and localStorage; a fresh key starts a fresh context.
+Run the browser request in that mounted session from a page on the probe's origin.
+If the live page is not on that origin, `browser_exec("navigate <target-root>")` first, then run the fetch.
 A cross-origin fetch without CORS is indeterminate, not a pass.
 
 ```
-steel browser eval "(async()=>{const r=await fetch('<probe-url>',{redirect:'follow',credentials:'include',cache:'no-store'});return {status:r.status,redirected:r.redirected,url:r.url}})()" --session <live-session> --json
+browser_exec("eval (async()=>{const r=await fetch('<probe-url>',{redirect:'follow',credentials:'include',cache:'no-store'});return {status:r.status,redirected:r.redirected,url:r.url}})()")
 ```
+
+The command grammar is the browser command grammar without the session; the lease supplies the session.
+Never pass `--session`, `--api-url`, `--local`, or a lifecycle verb.
 
 Classify exactly:
 
@@ -83,9 +90,10 @@ Branch directives shape the rest of the run, never the oracle:
   The capture plane and the pipeline's auth feed apply the raw material server-side; it never crosses the model.
   If no captured artifact exists, record the replayability fact as unresolved and keep the request branch honest; do not read secrets.
   An unresolved request fact does not turn a passing oracle into a failure.
-- browser_only: validate EXCLUSIVELY through the oracle in the Steel path.
-  Reuse the operator-owned live session named by the `authn` skill.
-  Do not start a replacement: a start on a live name is refused with `session_taken`, and a loss (`session_missing`) requires a state-restoring recreate, not a blank session.
+- browser_only: validate EXCLUSIVELY through the oracle in the mounted browser session.
+  `browser_start(<session-key>)` rests the durable state; do not start a twin.
+  A name mounted elsewhere answers `session_in_use`; reuse the mounted name.
+  A live name that disappeared is `session_missing`; the next stable-key start recreates the context from the saved state, never a blank replacement.
 - request_browser_first: validate the session with the oracle, then release request collection.
   The request material is applied server-side by the pipeline; do not read or compare token values.
 - resolve_in_loop: the overview's replayability is unknown.
@@ -93,7 +101,9 @@ Branch directives shape the rest of the run, never the oracle:
   If no captured artifact exists, do not invent a result; record the fact as unresolved, loudly.
   The oracle still decides whether the session itself is authenticated; an unresolved request fact never forces a fail-open.
 
-A new CLI session cannot restore saved browser state, so reuse a live session whenever the validation needs continuity.
+`browser_start(<session-key>)` restores cookies and localStorage; sessionStorage and indexedDB are captured as evidence, not restored.
+Call `browser_end()` on every path after the first mount.
+It captures, saves, stops, and releases; its result carries `captured`, `saved`, `stopped`, and `released`.
 
 Assert the outcome in the store BEFORE entering sign-in with an `auth_store` write of `accounts.<account>.status`: `valid` on a 2xx oracle, `not_valid` on 401, 403, or 3xx.
 The assertion is the loop's boundary act and the write LANDS: an operator-stamped account merges the write like any other, keeping its `origin: operator` stamp as provenance.
@@ -115,16 +125,20 @@ On `not_valid` or no usable account, run the `authn` skill's procedure.
 
 A missing or unauthenticated session does not fail open.
 It enters sign-in or mint with the account asserted `not_valid`, never a silent anonymous turn and never a newly minted unauthenticated session.
-The browser path reuses the operator-owned live session; it does not start a replacement.
-A new CLI session cannot restore saved state.
-Only the crawl provider captures session state, on its own release.
+The browser path mounts the stable session; it never starts a twin.
+`browser_end()` captures and saves the state under the stable key.
+After a successful end, write `accounts.<account>.steel.state = <session-key>`.
+The crawl reads the same key, so the next turn and the crawl share one durable browser state.
 
 If the skill provides no sign-in and no sign-up path, or the required data dependency (an invite code, a seed identity, a recovery channel) is absent, stop with `outcome: failed` and name the missing dependency.
 A failed authentication stops the run: collection must not proceed unauthenticated.
 
 There is NO attempt cap and no duplicate-command rejection: adjust one variable per attempt and keep debugging while progress is real.
 The span ends in exactly two ways: a passing oracle plus one `auth_store` write of `accounts.<account>.status` (or the minted account record), or your declaration that the tweaking space is exhausted - the terminal failed verdict.
-Token and credential capture belongs to the gateway only when it minted the account; it never reads an existing secret and never writes a browser state reference.
+Token and credential capture belongs to the gateway only when it minted the account; it never reads an existing secret.
+The stable browser key is not a secret: record it as `accounts.<account>.steel.state` after `browser_end`.
+A key is `steel-<project_slug>` for an anonymous crawl and `steel-<project_slug>-<account_slug>` with an account.
+A slug is lowercase; every run of characters outside `[a-z0-9_-]` becomes `-`, and leading or trailing `-`/`_` are trimmed.
 
 ### 5. Outer loop, then the verdict
 

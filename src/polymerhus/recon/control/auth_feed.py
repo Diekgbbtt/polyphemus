@@ -200,72 +200,43 @@ def project_request_auth(account: dict | None,
 def project_browser_auth(account: dict | None,
                          overview: dict | None = None,
                          origin: str | None = None) -> dict:
-    """Project an account onto browser auth material.
+    """Project an account onto the crawl's gate metadata.
 
-    Cookies come from the snapshot and cookie-located tokens. Headers come
-    from the overview's `required_headers` plus header-located tokens.
-    Storage-located tokens group under their `target` origin; a storage token
-    with no target is skipped because it cannot be placed in a browser origin.
+    The pool store is the only browser-state store, so this projection carries
+    NO cookie, header, or storage values: the browser MCP restores them from
+    the stable pool key. The only crawl inputs are the resolved
+    authenticated-context oracle (`auth_probe`) and the optional `login_url`
+    used by the legacy surface gate.
 
-    The overview's authenticated-context oracle (`auth_probe.url`) is resolved
-    against `origin` and carried as `auth_probe`, so the crawl gate asks the
-    same deterministic question as the gateway. An absent/empty overview
-    projects no required headers and no probe. A stale `snapshot.headers` bag
-    is never replayed. The result is empty when the account carries no browser
-    material."""
+    An absent/empty overview projects no probe; an account without a login URL
+    projects no login URL. The result is empty when neither exists."""
     if not isinstance(account, dict):
         return {}
-    headers = _parse_required_headers(overview)
-    cookies: list = []
-    storage: dict = {}
-    snapshot = account.get("snapshot") or {}
-    if isinstance(snapshot, dict):
-        source_cookies = snapshot.get("cookies") or []
-        if isinstance(source_cookies, list):
-            cookies.extend(
-                c for c in source_cookies
-                if isinstance(c, dict) and isinstance(c.get("name"), str)
-                and isinstance(c.get("value"), str))
-    tokens = account.get("tokens") or {}
-    if isinstance(tokens, dict):
-        for name, entry in tokens.items():
-            if not isinstance(entry, dict):
-                continue
-            value = entry.get("value")
-            if not isinstance(value, str) or not value:
-                continue
-            location = entry.get("location")
-            if location == "header" and isinstance(name, str) and name:
-                headers[name] = value
-            elif location == "cookie" and isinstance(name, str) and name:
-                cookies.append({"name": name, "value": value})
-            elif location == "storage" and isinstance(name, str) and name:
-                target = entry.get("target")
-                if isinstance(target, str) and target:
-                    storage.setdefault(target, {})[name] = value
     material: dict = {}
-    if cookies:
-        material["cookies"] = cookies
-    if headers:
-        material["headers"] = headers
-    if storage:
-        material["storage"] = storage
     probe = resolve_auth_probe(overview, origin)
     if probe:
         material["auth_probe"] = probe
-    if material:
-        credentials = account.get("credentials")
-        if isinstance(credentials, dict):
-            login_url = credentials.get("login_url")
-            if isinstance(login_url, str) and login_url:
-                material["login_url"] = login_url
+    credentials = account.get("credentials")
+    if isinstance(credentials, dict):
+        login_url = credentials.get("login_url")
+        if isinstance(login_url, str) and login_url:
+            material["login_url"] = login_url
     return material
 
 
-def project_steel_state(account: dict | None) -> str | None:
-    """The account's session-state reference (`steel.state`), or None.
+def project_steel_state(
+    account: dict | None,
+    *,
+    project_id: str | None = None,
+    account_name: str | None = None,
+) -> str | None:
+    """The account's stable pool key, or None.
 
-    The retired `steel.profile` key is silently ignored (Q5)."""
+    `accounts.<account>.steel.state` is authoritative when present. A missing
+    reference falls back to the deterministic key for the project and account,
+    so a gateway turn that could not write the key still mounts the same
+    durable browser state. The retired `steel.profile` key is ignored (Q5).
+    """
     if not isinstance(account, dict):
         return None
     steel = account.get("steel") or {}
@@ -273,6 +244,12 @@ def project_steel_state(account: dict | None) -> str | None:
         state = steel.get("state")
         if isinstance(state, str) and state:
             return state
+    if project_id and account_name:
+        from polymerhus.app.steel_session_state import (  # noqa: PLC0415
+            browser_session_name,
+        )
+
+        return browser_session_name(project_id, account_name)
     return None
 
 

@@ -106,12 +106,14 @@ GROUNDED_HINT = (
 """Injected when grounding completes: retrieve and select the account."""
 
 RETRIEVED_HINT = (
-    "Account selected. Validate it with the authenticated-context oracle at "
-    "`overview.auth_probe.url`: a browser request in the live session. A 2xx "
-    "passes; 401, 403, or any 3xx fails; anything else is indeterminate and "
-    "does not pass. The in-process auth-store view is redacted: never read or "
-    "paste token, cookie, or credential values. Conclude by asserting the "
-    "account status valid or not_valid in the store before any sign-in."
+    "Account selected. Mount the stable browser session with `browser_start` "
+    "and validate it with the authenticated-context oracle at "
+    "`overview.auth_probe.url`: a browser request in the mounted session. A "
+    "name mounted elsewhere answers `session_in_use`; reuse it, never twin "
+    "it. A 2xx passes; 401, 403, or any 3xx fails; anything else is indeterminate "
+    "and does not pass. The in-process auth-store view is redacted: never "
+    "read or paste token, cookie, or credential values. Conclude by asserting "
+    "the account status valid or not_valid in the store before any sign-in."
 )
 """Injected on RETRIEVED: validate the selected account with the oracle."""
 
@@ -141,7 +143,8 @@ GENERATION_SIGNIN_HINT = (
     "credentials and status valid, then re-run the oracle. If the skill has "
     "no mint path, stop with the terminal failed verdict (missing bootstrap "
     "data dependency); do not fail open and do not mint an unauthenticated "
-    "browser session. Never write a browser state reference."
+    "browser session. Call `browser_end()` after the flow and record the "
+    "stable browser key as the account's `steel.state`."
 )
 """Injected when the accounts read holds no usable account: mint one."""
 

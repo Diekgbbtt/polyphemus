@@ -197,37 +197,45 @@ def test_project_request_auth_empty_account_projects_empty():
     assert project_request_auth(None, None) == {}
 
 
-def test_project_browser_auth_carries_cookies_headers_and_storage(tmp_path):
+def test_project_browser_auth_carries_only_probe_and_login_url(tmp_path):
     store = _seeded_store(tmp_path)
     account = resolve_account("p1", "alice", store=store)
-    overview = resolve_overview("p1", store=store)
-    material = project_browser_auth(account, overview)
-    assert {c["name"] for c in material["cookies"]} == {"sid", "session"}
-    assert material["headers"]["X-Api-Key"] == "K"
-    assert material["headers"]["Authorization"] == "Bearer T"
-    assert material["storage"] == {"https://x.example": {"csrf-store": "C"}}
-    assert material["login_url"] == "https://x/login"
+    overview = dict(
+        resolve_overview("p1", store=store),
+        auth_probe={"url": "/api/me"},
+    )
+    material = project_browser_auth(
+        account, overview, origin="https://app.test"
+    )
+    assert material == {
+        "auth_probe": "https://app.test/api/me",
+        "login_url": "https://x/login",
+    }
+    assert "cookies" not in material
+    assert "headers" not in material
+    assert "storage" not in material
 
 
-def test_project_browser_auth_never_replays_snapshot_headers(tmp_path):
+def test_project_browser_auth_never_projects_snapshot_or_token_material(tmp_path):
     store = _seeded_store(tmp_path)
     material = project_browser_auth(
         resolve_account("p1", "alice", store=store),
         resolve_overview("p1", store=store),
     )
-    assert "X-Snapshot" not in material["headers"]
+    text = str(material)
+    assert "X-Snapshot" not in text
+    assert "sid" not in text
+    assert "csrf-store" not in text
 
 
-def test_project_browser_auth_skips_storage_without_a_target_origin():
+def test_project_browser_auth_ignores_storage_tokens():
     account = {
         "tokens": {
             "csrf-store": {"value": "C", "location": "storage"},
             "ok": {"value": "V", "location": "storage", "target": "https://x.example"},
         },
     }
-    material = project_browser_auth(account)
-    assert material["storage"] == {"https://x.example": {"ok": "V"}}
-    assert "csrf-store" not in str(material)
+    assert project_browser_auth(account) == {}
 
 
 def test_project_browser_auth_resolves_the_oracle_path():
@@ -245,15 +253,24 @@ def test_project_browser_auth_keeps_an_absolute_oracle():
 def test_project_browser_auth_empty_projects_empty():
     assert project_browser_auth({}, {}) == {}
     assert project_browser_auth(None, None) == {}
-    # A login URL alone is gate metadata, not auth material.
+
+
+def test_project_browser_auth_carries_a_login_url_alone():
     assert project_browser_auth(
-        {"credentials": {"login_url": "https://x/login"}}, {}) == {}
+        {"credentials": {"login_url": "https://x/login"}}, {}
+    ) == {"login_url": "https://x/login"}
 
 
 def test_project_steel_state_reads_the_session_reference(tmp_path):
     account = resolve_account("p1", "alice", store=_seeded_store(tmp_path))
     assert project_steel_state(account) == "alice"
     assert project_steel_state({}) is None
+
+
+def test_project_steel_state_falls_back_to_the_stable_key():
+    assert project_steel_state(
+        {}, project_id="proj1", account_name="alice"
+    ) == "steel-proj1-alice"
 
 
 def test_project_steel_state_silently_ignores_an_old_profile():

@@ -201,7 +201,7 @@ def test_pipeline_binds_steel_state_and_browser_auth_to_crawl(tmp_path):
         accounts={"alice": {
             "credentials": {"username": "u", "password": "p",
                             "login_url": "https://x/login"},
-            "steel": {"state": "alice"},
+            "steel": {"state": "steel-proj1-alice"},
             "snapshot": {"cookies": COOKIES},
         }})
 
@@ -232,10 +232,9 @@ def test_pipeline_binds_steel_state_and_browser_auth_to_crawl(tmp_path):
         )
     )
 
-    assert seen["steel_crawl"]["steel_state"].endswith(
-        "/proj1/steel-state/alice.json")
+    assert seen["steel_crawl"]["steel_session"] == "steel-proj1-alice"
+    assert "steel_state" not in seen["steel_crawl"]
     assert seen["steel_crawl"]["browser_auth"] == {
-        "cookies": COOKIES,
         "login_url": "https://x/login",
     }
     assert seen["steel_crawl"]["auth_account"] == "alice"

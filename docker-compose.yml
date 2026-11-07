@@ -224,6 +224,10 @@ services:
     image: steel-browser-api:v0.5.5-beta
     command: ["--no-nginx"]
     restart: unless-stopped
+    # Node is PID 1 in the API and never reaps the Chromium children it
+    # reparents. Docker's init reaps them so a long pool lifetime does not
+    # accumulate zombies.
+    init: true
     environment:
       HOST: 0.0.0.0
       PORT: "3000"

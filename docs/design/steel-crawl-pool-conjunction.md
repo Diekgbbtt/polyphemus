@@ -1,7 +1,9 @@
 # The steel_crawl to pool MCP conjunction
 
 Date: 2026-11-05.
-Status: open decision. No crawler adapter is implemented on this branch.
+Status: historical analysis. The decision and the implementation record are
+`docs/design/steel-crawl-pool-convergence.md`; this note states the problem,
+not the current contract.
 Scope: the `feat/steel-crawl` crawler and the `feat/steel-crawl-pool` browser pool MCP.
 
 This note states the discrepancy, not a solution.

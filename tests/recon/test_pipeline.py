@@ -187,7 +187,7 @@ def test_feed_projects_store_material_only_to_use_auth_jobs(tmp_path):
                             "login_url": "https://x/login"},
             "tokens": {"Authorization": {"value": "Bearer T",
                                          "location": "header"}},
-            "steel": {"state": "alice"},
+            "steel": {"state": "steel-proj1-alice"},
             "snapshot": {"cookies": [{"name": "sid", "value": "S"}]},
         }})
 
@@ -228,13 +228,11 @@ def test_feed_projects_store_material_only_to_use_auth_jobs(tmp_path):
         "cookies": [{"name": "sid", "value": "S"}],
         "Authorization": "Bearer T"}
     assert seen_extra["katana"]["auth_context"] == seen_extra["httpx"]["auth_context"]
-    # the agent-driven crawl gets the resolved state path plus browser material
+    # the agent-driven crawl gets the stable pool key plus gate metadata only
     assert seen_extra["steel_crawl"]["auth_account"] == "alice"
-    assert seen_extra["steel_crawl"]["steel_state"].endswith(
-        "/proj1/steel-state/alice.json")
+    assert seen_extra["steel_crawl"]["steel_session"] == "steel-proj1-alice"
+    assert "steel_state" not in seen_extra["steel_crawl"]
     assert seen_extra["steel_crawl"]["browser_auth"] == {
-        "cookies": [{"name": "sid", "value": "S"}],
-        "headers": {"Authorization": "Bearer T"},
         "login_url": "https://x/login"}
 
 

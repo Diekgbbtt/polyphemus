@@ -32,8 +32,8 @@ The Steel session is the bound.
 
 | ID | Requirement | Acceptance |
 | - | - | - |
-| A1 | Attach to exactly one pre-authenticated live Steel session by name and runtime id. | The catalogue has the name, the record has the id and the websocket. |
-| A2 | Never start a session. A `start` on a live name is `session_taken`. | The crawl has no `start` call. |
+| A1 | Mount exactly one durable Steel session by its stable pool key. | `browser_start(<key>)` returns the runtime id, `restored`, and the CDP endpoint. |
+| A2 | Never start a twin. A name mounted elsewhere is `session_in_use`. | The crawl has no raw `start` command; the browser MCP owns the lease. |
 | A3 | Run the authenticated-context oracle once before traversal. | The oracle outcome is `authenticated`. |
 | A4 | The oracle is a browser fetch to `overview.auth_probe.url`. | `2xx` with `redirected: false` passes. |
 | A5 | `401`, `403`, any `3xx`, or `redirected: true` fails. | The run returns `auth_precondition_failed`. |
@@ -41,11 +41,18 @@ The Steel session is the bound.
 | A7 | A missing oracle is loud. | The run logs the missing probe and uses the legacy surface gate. |
 | A8 | The legacy gate rejects login redirects, `401`, `403`, and any `3xx`. | No anonymous continuation. |
 | A9 | On failure, return a typed failure and let the orchestrator resurrect. | One bounded retry through the authn skill and the auth store. |
-| A10 | A known loss is `session_missing`, not a typo. | The orchestrator restores state and recreates. |
+| A10 | A known loss is `session_missing` or `no_session`, not a typo. | The next stable-key start restores the saved state. |
+| A11 | The pool store is the only browser-state store. | Cookies and localStorage restore; all four fields are captured. |
+| A12 | The gateway records the stable key in `accounts.<account>.steel.state`. | The crawl mounts the same key. |
+| A13 | The crawl budget is 600 seconds; time is the only bound. | No action cap exists. |
+| A14 | An incomplete stop carries `manifest.run.partial`. | A partial manifest routes to reduced coverage. |
 
 The oracle is never a navigation envelope.
-`steel browser navigate` follows a `302` and reports success with the final `200` URL.
+`navigate` follows a `302` and reports success with the final `200` URL.
 The fetch exposes `redirected` and the true status.
+The stable key is `steel-<project_slug>` without an account and
+`steel-<project_slug>-<account_slug>` with one.
+The key is deterministic across runs; the run id never enters it.
 
 ### 2.2 Traversal
 
@@ -136,9 +143,11 @@ The fetch exposes `redirected` and the true status.
 ```mermaid
 flowchart LR
     JOB[CrawlJob]
-    SESS[SteelSession<br/>CLI client]
+    SESS[SteelSessionClient<br/>backend facade]
+    MCP[McpBrowserClient<br/>one MCP session]
+    SERVER[Browser MCP<br/>Kali]
     CLI[Steel CLI]
-    STEEL[Steel runtime<br/>one browser session]
+    WORKER[Steel worker<br/>one browser session]
     CDP[CaptureSidecar<br/>raw CDP]
     POL[Policy<br/>Jev]
     OBS[Observability<br/>pages and actions]
@@ -146,18 +155,21 @@ flowchart LR
     GRAPH[Neo4j curator]
 
     JOB --> SESS
-    SESS --> CLI
-    CLI --> STEEL
+    SESS --> MCP
+    MCP --> SERVER
+    SERVER --> CLI
+    CLI --> WORKER
     JOB --> POL
     JOB --> CDP
-    STEEL -. raw CDP .-> CDP
+    WORKER -. CDP endpoint .-> CDP
     JOB --> OBS
     CDP --> HH
     JOB --> GRAPH
 ```
 
-The CLI drives the browser.
-The sidecar observes the same session over raw CDP.
+The browser MCP owns the lease and runs the CLI.
+The CLI drives the one worker.
+The sidecar observes the same session over the CDP endpoint the MCP returned.
 The policy chooses actions and touches neither.
 The observability platform owns the page and action records.
 The HTTP-history edge owns the flow evidence.
@@ -168,7 +180,8 @@ The graph owns the endpoints, parameters, and scripts.
 ```text
 src/polymerhus/recon/crawl/steel/
 ├── job.py              # CrawlJob: lifecycle, deadline, finalize
-├── session.py          # SteelSession: catalogue, attach, CLI envelope, stop
+├── session.py          # SteelSessionClient + CliBackend: identity and backend facade
+├── mcp_client.py       # McpBrowserClient + McpBackend: MCP session, typed errors
 ├── auth.py             # AuthOracle: probe fetch and classification
 ├── state.py            # BrowserState: page node, snapshot cache, consumed set
 ├── command.py          # Action -> SteelCommand -> SteelResult -> error
@@ -196,8 +209,9 @@ src/polymerhus/recon/crawl/steel/
 
 | Concern | Owner | Decides | Never decides |
 | - | - | - | - |
-| Run lifecycle | `CrawlJob` | start, stop, deadline, finalize | element identity, safety |
-| Session lifecycle | `SteelSession` | catalogue, attach, stop | crawl order |
+| Run lifecycle | `CrawlJob` | mount, stop, deadline, finalize | element identity, safety |
+| Session lifecycle | `SteelSessionClient` and the browser MCP | mount, exec, end | crawl order |
+| Worker lease | Browser MCP `LeaseManager` | worker, heartbeat, TTL, release | element choice |
 | Authentication | `AuthOracle` | authenticated or not | traversal, action |
 | Command construction | `CommandMapper` | exact CLI string and recovery | target choice |
 | Ref validity | `BrowserState` | valid or stale | element ranking |
@@ -213,9 +227,15 @@ src/polymerhus/recon/crawl/steel/
 
 ## 4. Steel interaction contract
 
-The pinned CLI is `0.5.0-preview.6`.
-The public binary is `steel`; the private core is never called by name or path.
-Every command carries `--json` and `--session`.
+The crawl addresses the browser MCP at `KALI_BROWSER_MCP_URL`.
+The MCP exposes exactly three tools: `browser_start`, `browser_exec`, and
+`browser_end`.
+The browser MCP runs in Kali and owns the Steel CLI, the worker lease, the
+pool store, the heartbeat, and the TTL.
+The crawl never runs the CLI and never sees the worker's HTTP origin.
+
+The MCP tool results use one envelope: `success: true` plus the payload, or
+`success: false` plus `error: {code, message, retryable, recovery?}`.
 
 ### 4.1 Session record
 
@@ -223,17 +243,27 @@ Every command carries `--json` and `--session`.
 
 ```text
 session_id, name, status, viewer_url, debug_url, debugger_url,
-websocket_url, created_at, remaining_ms, inactivity_timeout_ms, source
+websocket_url, cdp_host, created_at, remaining_ms,
+inactivity_timeout_ms, source
 ```
 
 The session id and the name are the stable identity pair.
-The name can be reused after a release.
+The name is the stable pool key and can be reused after a release.
 The runtime id is the tiebreaker.
-The websocket URL is secret and stays in memory.
+`websocket_url` is the CDP URL the sidecar connects to; it is secret and stays
+in memory.
+`cdp_host` is the Host the CDP handshake presents (`localhost:<port>`).
+The browser MCP returns both from `browser_start`.
 
 `SteelSessionRegistry` observes start, catalogue, API, and stop.
 The registry never starts, stops, or releases a session.
 The lifecycle owner calls the observations.
+
+`SteelSessionClient` is a facade over one backend.
+The production backend is `McpBackend` over `McpBrowserClient`; the local CLI
+backend remains for a local-only deployment and for the engine contract tests.
+The facade owns `cdp_endpoint` and the attachment identity; the backend owns
+the transport and the error mapping.
 
 ### 4.2 Live view
 
@@ -244,36 +274,66 @@ It marks the shared player `addressable=false`.
 
 ### 4.3 Lifecycle
 
-- `start` is create-time.
-- A `start` on a catalogued live name is refused with `session_taken`.
-- The crawl never starts. It attaches to the pre-authenticated name.
-- Use a finite inactivity window below the session window.
-- `remaining_ms` on receipt sits below the requested timeout.
-- Stop by name and prove the catalogue clean.
+- The gateway mounts the stable key with `browser_start`.
+  It validates the oracle in that session, signs in or mints on failure, and
+  calls `browser_end`.
+  A successful end captures and saves the state under the key.
+  The gateway then writes `accounts.<account>.steel.state = <key>`.
+- The crawl mounts the same key with `browser_start` and calls `browser_end`
+  in its finalize close.
+- `browser_start` restores cookies and localStorage from the pool store; all
+  four captured fields are evidence on the end record.
+- One MCP session is one lease.
+  A name mounted elsewhere answers `session_in_use`.
+  A missing lease answers `no_session`, which maps to `SessionMissing`.
+- A mount failure is `restore_failed`, `pool_exhausted`, or
+  `browser_unavailable`; none of them is a silent anonymous continuation.
+- The MCP heartbeat, TTL, MCP close, and `browser_end` all release the lease.
+- `remaining_ms` on the start result sits below the requested window.
 - A foreign `default` is untouchable.
 
 ### 4.4 Envelope and errors
 
-`steel_exec` returns:
+`browser_exec` returns the CLI's own command envelope for a command-level
+result: `data`, `error`, `warning`, and the optional `steel_events`.
+A refusal, a missing lease, a pool failure, or a capture failure returns the
+MCP's typed error envelope instead.
+
+`SteelResult` is the action-level projection:
 
 ```text
-stdout, stderr, returncode, shell_returncode, duration_ms,
-error, warning, steel_events, exec_id, http_artifact_refs, capture_warning
+output, success, error, warning, steel_events, exit_code, stderr,
+duration_ms, read_back
 ```
 
-`error` is authoritative over the return code and the text.
-`steel_events` carries verb, session, session id, remaining ms, decision, return code, duration, error or warning, and the catalogue fact.
+The CLI path fills the process facts (`exit_code`, `stderr`, `duration_ms`).
+The MCP path leaves them empty or `None`; it never fabricates them.
+`error` is authoritative over any success flag and over the text.
 
-| Code | Meaning | Recovery |
+The crawl's typed errors are:
+
+| CLI code | Meaning | Recovery |
 | - | - | - |
 | `unknown_session` | The name was never live. | Choose a live name. |
-| `session_missing` | The name was live and is gone. | Recreate with state restore. |
+| `session_missing` | The name was live and is gone. | Remount the stable key with state restore. |
 | `session_taken` | A start named a live session. | Reuse the live session. |
-| `target_lost` | The CDP target disappeared. | `tab new`, then retry the read. |
-| `browser_stuck` | The command exceeded its browser budget. | Recreate the session. |
+| `target_lost` | The CDP target disappeared. | Open a tab, then retry the read. |
+| `browser_stuck` | The command exceeded its browser budget. | End the session and remount. |
 | `invalid_command` | The CLI rejected the grammar. | Fix the command. |
 | `command_failed` | The execution surface raised. | Inspect. |
-| `guard_error` | The guard failed. | Surface it. |
+| `guard_error` | The guard failed. | Surface the payload; do not route around it. |
+
+The browser MCP's own codes map onto the same typed surface:
+
+| MCP code | Crawl error |
+| - | - |
+| `no_session` | `SessionMissing` |
+| `session_in_use` | `SessionTaken` |
+| `invalid_command`, `invalid_argument` | `InvalidCommand` |
+| `guard_error` | `GuardError` (payload preserved) |
+| `pool_exhausted`, `pool_unavailable` | `BrowserUnavailable` |
+| `restore_failed` | `RestoreFailed` |
+| `store_error`, `lease_error`, `capture_failed`, `browser_error`, `internal_error` | `CommandFailed` |
 
 ### 4.5 Auth oracle
 
@@ -760,16 +820,22 @@ pattern, min, max
 
 ### 9.1 Raw CDP endpoint
 
-The local Steel API exposes raw CDP on `9223`.
-Port `9222` binds `127.0.0.1` inside the API container and is not reachable through a published port.
-Port `9223` binds `0.0.0.0` and returns the Chromium CDP `json/version`.
-The local compose publishes `9223:9223`.
+The browser MCP returns the CDP endpoint on `browser_start`:
+`cdp_url = ws://<worker-container-ip>:3000/` and
+`cdp_host = localhost:3000`.
 
-The cloud runtime exposes a raw CDP websocket in the session `connectUrl`.
+The sidecar opens its socket to the worker container address and sends the
+handshake with `Host: localhost:3000`.
+The worker API's CDP proxy forwards that Host to Chrome, which rejects any
+other Host.
+The URI is `ws://localhost:3000/`; the `websockets` `sock` parameter separates
+the connect address from the Host header.
 
-The sidecar connects to the page target from `http://<host>:9223/json/list`.
-The page target websocket is `ws://<host>:9223/devtools/page/<id>`.
-The `webSocketDebuggerUrl` may omit the port; the client adds `9223`.
+The worker's raw Chrome debug port stays inside the worker container.
+The browser MCP's reverse proxy owns the loopback public port the CLI uses;
+that port is never published on the host.
+The agent reaches the worker over `polymerhus-net`; it never sees the worker's
+HTTP origin or its published port.
 
 The sidecar enables:
 
@@ -944,12 +1010,19 @@ The v2 parser is additive.
 | Code | Stage | Recovery |
 | - | - | - |
 | `auth_precondition_failed` | Auth | Orchestrator resurrection, one retry. |
-| `session_missing` | Session | Recreate with state restore. |
+| `session_missing` | Session | Remount the stable key; restore the saved state. |
+| `no_session` | Session | Map to `session_missing`; remount the stable key. |
+| `session_in_use` | Session | Reuse the mounted name; never twin it. |
 | `unknown_session` | Session | Choose a live name. |
 | `session_taken` | Session | Reuse the live name. |
-| `target_lost` | Browser | `tab new`, retry the read. |
-| `browser_stuck` | Browser | Recreate the session. |
+| `restore_failed` | Session | Surface the state failure; do not crawl anonymously. |
+| `pool_exhausted` | Pool | Retry after a lease ends. |
+| `pool_unavailable` | Pool | Surface the pool failure; retry the run. |
+| `browser_unavailable` | Pool or MCP | Surface the transport failure; retry the run. |
+| `target_lost` | Browser | Open a tab, retry the read. |
+| `browser_stuck` | Browser | End the session; remount the stable key. |
 | `capture_unavailable` | Capture | Fail the run; do not produce a false success. |
+| `session_close_failed` | Finalize | Record the failure; the run is partial. |
 | `stale_element` | Executor | Consume the candidate; record the gap. |
 | `policy_stale_removal` | Policy | Protocol error; do not execute. |
 | `policy_invalid_choice` | Policy | Protocol error; do not execute. |
@@ -958,11 +1031,16 @@ The v2 parser is additive.
 | `manifest_write_failed` | Output | Fail the run; keep the ledger. |
 | `http_history_flush_failed` | Output | Retry with the cursor; keep the ledger. |
 | `graph_ingest_failed` | Output | Record the failure; the partial run is not complete. |
-| `budget_exhausted` | Run | Session deadline; finalize. |
-| `operator_cancel` | Run | Finalize. |
+| `session_deadline` | Run | 600-second budget; finalize as partial. |
+| `operator_cancel` | Run | Finalize as partial. |
 | `unrecoverable_state` | Traversal | Pop to the nearest ancestor with residue. |
 
-The CLI errors map to `session_missing`, `target_lost`, `browser_stuck`, `invalid_command`, `command_failed`, and `guard_error`.
+The CLI errors map to `session_missing`, `target_lost`, `browser_stuck`,
+`invalid_command`, `command_failed`, and `guard_error`.
+The browser MCP's errors map through the table in section 4.4.
+`operator_cancel`, `session_deadline`, and `session_missing` are incomplete
+runs: the manifest carries `run.partial = true` and the crawl pod routes it to
+reduced coverage.
 
 ## 13. Observability
 
@@ -973,7 +1051,9 @@ An action record carries the id, page id, element identity, kind, impact, captur
 The manifest references the page and action ids.
 It does not duplicate the records.
 
-The `steel_events` channel carries the session, runtime id, remaining ms, decision, return code, duration, catalogue fact, error, and warning.
+The `steel_events` channel is populated by the CLI path.
+The MCP path carries the browser MCP's typed error envelope instead and leaves
+the process facts empty; it never fabricates them.
 The CDP events are the capture evidence.
 The P0 evidence is in `docs/experiments/p0-steel-cdp-sidecar.md`.
 
@@ -1033,6 +1113,21 @@ The crawl package contains every module in section 3.1 plus the `forms.py`, `run
 - P5 is covered by the job lifecycle, the bounded session boundary, and the finalize suites.
 
 The deterministic gate is `tests/recon/crawl/steel`.
+
+### 14.5 Pool convergence status (2026-11-07)
+
+The crawl's production executor is the browser MCP, not an agent-side CLI.
+The crawl closes the session before the manifest is built, and a failed save
+makes the run partial.
+The stable pool key is the only browser-state key.
+The pool deployment, proxy, CDP transport, MCP client, and error mapping have
+unit and contract coverage:
+`tests/kali/test_steel_pool_proxy.py`,
+`tests/recon/crawl/steel/test_mcp_client.py`, and
+`tests/recon/crawl/steel/test_live_transport.py`.
+The live gate is `tests/e2e/test_steel_crawl_real_e2e.py` and the White Jotter
+pool E2E on the eval host.
+The JEV engine diff against `feat/steel-crawl` is empty.
 The edge gate is `tests/kali/test_http_history_edge.py`.
 The full unit tier is the regression gate.
 The job stops the owned session through the session client and proves the catalogue clean on the finalize path.
@@ -1049,11 +1144,22 @@ The authz residual risk and the coarse effect signal remain accepted as recorded
 ## 15. Rollout and compatibility
 
 - Pin the CLI to `0.5.0-preview.6` in the Kali image.
-- Publish raw CDP on `9223` only to the crawler network.
-- Keep the API control path on `3000`.
+- Pin the worker image `steel-browser-api:v0.5.5-beta` and build it for the
+  host architecture; the eval host is arm64.
+- The browser pool is part of the instance compose project.
+  The baseline is `deploy.replicas: 2`; the thin overlay sets `0`.
+- The browser MCP runs in Kali and owns the three tools, the reverse proxy,
+  and the pool store.
+- `KALI_BROWSER_MCP_URL` is the agent's only browser address.
+  The base is empty; the eval overlay sets `http://kali:8003/mcp`.
+- The eval `.env` carries no `STEEL_API_KEY` and no `STEEL_BROWSER_API_URL`.
+  `STEEL_API_KEY` remains accepted; when present both Steel clients use the
+  cloud.
+- The stable key is `steel-<project_slug>[-<account_slug>]`.
+  `accounts.<account>.steel.state` holds it.
 - Keep the HTTP-history addon and the read tools compatible.
 - Keep the v1 manifest parser.
-- Add the v2 manifest parser.
+- Keep the v2 manifest parser.
 - The graph `profile` remains the httpx_reprofile phase.
 - The `ScriptAsset` is the stable contract for the chunk analysis replacement.
 - The source maps belong to the JS client-side code analysis phase.

@@ -103,7 +103,8 @@ def test_session_discipline_names_the_state_reference_and_has_no_profile():
     assert "profile" not in body.lower()
     assert "--profile" not in body
     assert "profile-mount.sh" not in body
-    assert "CLI login path does not write state" in body
+    assert "stable pool key" in body
+    assert "browser_end" in body
 
 
 def test_account_identity_is_the_credential_not_the_procedure():
@@ -170,7 +171,7 @@ def test_skill_carries_the_browser_fast_path():
     body = _body()
     assert "steel-browser` skill" in body
     assert "snapshot -i" in body
-    assert "batch --session" in body
+    assert "batch -- 'snapshot -i'" in body
     assert "-- <value>" in body
     assert "wait --url" in body
 
@@ -192,33 +193,29 @@ def test_bootstrap_prompt_cites_the_mechanics_skill():
     )
     assert "<mechanics_skill_path>" in prompt
     assert "steel-browser" in prompt
-    assert "do not re-derive the steel CLI from `--help`" in prompt
+    assert "do not re-derive the command grammar from `--help`" in prompt
 
 
-def test_browser_discipline_reuses_a_live_session_and_logs_in_only_on_failure():
+def test_browser_discipline_mounts_the_stable_key_and_logs_in_only_on_failure():
     body = _body()
-    assert "reuse it" in body
-    assert "start a FREE name" in body
-    assert "--inactivity-timeout 300000" in body
-    assert "session_taken" in body
+    assert "browser_start(<stable-key>)" in body
+    assert "browser_end()" in body
+    assert "session_in_use" in body
     assert "session_missing" in body
-    assert "Log in when the live session does not pass the oracle" in body
-    assert "programmatic crawl provider restores state" in body
+    assert "Log in when the mounted session does not pass the oracle" in body
+    assert "pool store is the only durable browser-state store" in body
     assert "profile" not in body.lower()
 
 
-def test_bootstrap_prompt_reuses_a_live_session_and_cannot_restore_state():
+def test_bootstrap_prompt_mounts_the_stable_key_and_restores_state():
     prompt = (SKILL_DIR / "references" / "bootstrap-workflow.md").read_text(
         encoding="utf-8"
     )
-    assert "Survey the catalogue first" in prompt
-    assert "If the named session is live, reuse it" in prompt
-    assert "start a FREE name" in prompt
-    assert "--inactivity-timeout <inactivity_timeout_ms>" in prompt
-    assert "session_taken" in prompt
+    assert "browser_start(<session_key>)" in prompt
+    assert "browser_end()" in prompt
+    assert "session_in_use" in prompt
     assert "session_missing" in prompt
-    assert "pinned CLI has no state field" in prompt
-    assert "Do not claim that a new CLI session restored state" in prompt
+    assert "restores its cookies and localStorage" in prompt
     assert "profile" not in prompt.lower()
     assert "--profile" not in prompt
 
@@ -252,14 +249,14 @@ def test_generated_procedure_uses_the_redacted_material_path():
     assert "search_http_history" in body
     assert "replay_http_request" in body
     assert "never instructs a model-facing follower to read or paste a value" in body
-    assert "reuse the operator-owned live session" in body
-    assert "never start a replacement" in body
+    assert "mount the stable key" in body
+    assert "never start a twin" in body
 
 
-def test_mechanics_skill_paces_the_login_and_sizes_the_clock():
-    """The non-reactive half of the fix: one submit (no blind resubmits) and a
-    session clock sized for a human step. No solving surface is taught."""
+def test_mechanics_skill_paces_the_login_and_names_the_end_path():
+    """The non-reactive half of the fix: one submit (no blind resubmits). The
+    pool owns the session clocks; the mechanics skill names the explicit end."""
     body = skills.skill_for("steel-browser")
     assert "Submit once, then wait on the condition" in body
-    assert "--inactivity-timeout" in body
-    assert "the 120 s default releases it mid-solve" in body
+    assert "browser_end()" in body
+    assert "conversation close" in body

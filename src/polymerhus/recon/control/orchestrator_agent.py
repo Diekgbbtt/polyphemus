@@ -153,10 +153,13 @@ def build_authn_loop_middleware():
 # static discipline lives in the prompt file; only the run facts vary here).
 _BRANCH_MANNER = {
     "request": (
-        "No blocking defence recorded. Validate the loaded session with the "
-        "authenticated-context oracle at `overview.auth_probe.url`: a browser "
-        "request in the live session. 2xx passes; 401, 403, or any 3xx fails; "
-        "anything else is indeterminate and stops the run. Then validate the "
+        "No blocking defence recorded. Mount the stable browser session with "
+        "`browser_start(<key>)`; the pool restores its cookies and "
+        "localStorage. Validate it with the authenticated-context oracle at "
+        "`overview.auth_probe.url` using `browser_exec(\"eval ...\")`: 2xx "
+        "passes; 401, 403, or any 3xx fails; anything else is indeterminate "
+        "and stops the run. Call `browser_end()` when the turn is done and "
+        "write `accounts.<account>.steel.state = <key>`. Then validate the "
         "request material with the recorded HTTP history replay "
         "(`search_http_history`, then `replay_http_request`); the in-process "
         "auth-store view is redacted, so never read or paste token values. "
@@ -164,35 +167,43 @@ _BRANCH_MANNER = {
         "released."),
     "browser_only": (
         "Browser-only target (the defence is not HTTP-replayable). Validate "
-        "EXCLUSIVELY through the oracle in the Steel path. Reuse the "
-        "operator-owned live session named by the authn skill. Do not start a "
-        "replacement: a start on a live name is refused with session_taken, "
-        "and a loss (session_missing) needs state-restoring recreation, not a "
-        "blank session. A 2xx oracle passes; 401, 403, or 3xx fails. On a "
-        "failure, sign in or mint a new account through the authn skill's "
-        "sign-up procedure with synthetic identity data, then prove the oracle "
-        "again. A failed or indeterminate oracle stops the run. Never use "
-        "request tools. You never write a browser state reference; only the "
-        "crawl provider captures state. Request phases will be pruned; only "
-        "the Steel crawl runs."),
+        "EXCLUSIVELY through the oracle in the mounted browser session. "
+        "`browser_start(<key>)` mounts the durable session; the pool restores "
+        "its cookies and localStorage. Do not start a twin: the name is the "
+        "durable handle. A name mounted elsewhere answers `session_in_use`; a "
+        "name that was mounted and disappeared answers `session_missing`. Run "
+        "the oracle with `browser_exec(\"eval ...\")`; a "
+        "2xx passes, 401, 403, or 3xx fails. On a failure, sign in or mint a "
+        "new account through the authn skill's sign-up procedure with "
+        "synthetic identity data in the same session, then prove the oracle "
+        "again. Call `browser_end()` on every path; it captures, saves, stops, "
+        "and releases. Write `accounts.<account>.steel.state = <key>` after a "
+        "successful end. A failed or indeterminate oracle stops the run. "
+        "Never use request tools. Request phases will be pruned; only the "
+        "Steel crawl runs."),
     "request_browser_first": (
-        "Replayable defence. Validate the session with the oracle at "
-        "`overview.auth_probe.url` first. Reuse the operator-owned live "
-        "session; the request material is applied server-side by the "
-        "pipeline. Do not read or compare token values. On a failed oracle, "
-        "sign in or mint a new account through the authn skill's sign-up "
-        "procedure with synthetic identity data, then prove the oracle again. "
-        "Then release request collection."),
+        "Replayable defence. Mount the stable browser session with "
+        "`browser_start(<key>)` and validate the oracle at "
+        "`overview.auth_probe.url` first. The request material is applied "
+        "server-side by the pipeline. Do not read or compare token values. On "
+        "a failed oracle, sign in or mint a new account through the authn "
+        "skill's sign-up procedure with synthetic identity data, then prove "
+        "the oracle again. Call `browser_end()` and write "
+        "`accounts.<account>.steel.state = <key>`. Then release request "
+        "collection."),
     "resolve_in_loop": (
         "Replayability UNKNOWN. Resolve it with the recorded HTTP history "
         "replay: replayable releases the request branch (record replayability "
         "true), not replayable prunes to browser-only (record false). If no "
         "captured artifact exists, do not read secrets and do not invent a "
         "result; record the fact as unresolved and loud. The oracle still "
-        "decides whether the session is authenticated; an unresolved request "
-        "fact never forces a fail-open. Persist any resolved fact to the "
-        "overview with an auth_store write (your write merges; the operator "
-        "stamp stays), and record it in the rationale and verdict."),
+        "decides whether the session is authenticated. Mount the stable "
+        "browser session with `browser_start(<key>)` for the oracle, call "
+        "`browser_end()`, and write `accounts.<account>.steel.state = <key>`. "
+        "An unresolved request fact never forces a fail-open. Persist any "
+        "resolved fact to the overview with an auth_store write (your write "
+        "merges; the operator stamp stays), and record it in the rationale "
+        "and verdict."),
 }
 
 
@@ -202,7 +213,13 @@ def _gateway_human(*, project_id: str, directive: str, candidate: str | None) ->
     carries NO store contents - the model grounds itself through its own
     reads, which is what the loop tracker observes."""
     from langchain_core.messages import HumanMessage  # noqa: PLC0415
+
+    from polymerhus.app.steel_session_state import (  # noqa: PLC0415
+        browser_session_name,
+    )
+
     manner = _BRANCH_MANNER.get(directive, _BRANCH_MANNER["request"])
+    session_key = browser_session_name(project_id, candidate)
     selection = (
         f"Candidate account (most recently updated usable): {candidate}."
         if candidate else
@@ -212,7 +229,11 @@ def _gateway_human(*, project_id: str, directive: str, candidate: str | None) ->
     return HumanMessage(content=(
         f"Auth gateway for project {project_id}.\n\n"
         f"Branch directive: {directive}.\n{manner}\n\n"
-        f"{selection}\n\n"
+        f"{selection}\n"
+        f"Stable browser session key: `{session_key}`. Mount exactly this "
+        "name. If you mint a different account, its key is "
+        "`steel-<project_slug>-<account_slug>` with the same slug rule "
+        "(lowercase; runs outside [a-z0-9_-] become `-`).\n\n"
         "Ground (overview read + authn skill load), validate with the "
         "authenticated-context oracle before sign-in, sign in or mint on a "
         "failed oracle, assert the outcome in the store, run the outer "
@@ -416,26 +437,38 @@ class ReconOrchestratorActor:
         response_format = structured_response_format(
             "job_orchestrator", GatewayVerdict, tools_bound=True)
         self._turn_settled = asyncio.Event()
-        self._task = asyncio.ensure_future(
-            run_session_agent(
-                self._address.role_id,
-                self._address.thread_id,
-                None,  # pure listener: the gateway brief arrives as an inbox message
-                checkpointer=self._checkpointer,
-                inbox=self._inbox,
-                on_message=self._on_message,
-                tools=[*binding.tools, *kali_tools],
-                response_format=response_format,
-                middleware=middleware_list,
-                context=binding.context,
-                on_turn_degraded=degraded_hook,
-                on_turn_complete=self._on_turn_complete,
-                system_prompt=_load_gateway_prompt(),
-                model_factory=self._model_factory,
-                observe=self._observe,
-                usage_scope=project_id,
+
+        async def run_actor() -> None:
+            # The gateway's three browser tools share ONE MCP session for the
+            # whole turn: the server keys the durable lease by that session.
+            # An absent or unreachable browser MCP yields no tools and the
+            # request path still runs.
+            from polymerhus.app.config import config as app_config  # noqa: PLC0415
+            from polymerhus.attack.hunting.browser_tools import (  # noqa: PLC0415
+                open_browser_tools,
             )
-        )
+
+            async with open_browser_tools(app_config.KALI_BROWSER_MCP_URL) as browser_tools:
+                await run_session_agent(
+                    self._address.role_id,
+                    self._address.thread_id,
+                    None,  # pure listener: the gateway brief arrives as an inbox message
+                    checkpointer=self._checkpointer,
+                    inbox=self._inbox,
+                    on_message=self._on_message,
+                    tools=[*binding.tools, *kali_tools, *browser_tools],
+                    response_format=response_format,
+                    middleware=middleware_list,
+                    context=binding.context,
+                    on_turn_degraded=degraded_hook,
+                    on_turn_complete=self._on_turn_complete,
+                    system_prompt=_load_gateway_prompt(),
+                    model_factory=self._model_factory,
+                    observe=self._observe,
+                    usage_scope=project_id,
+                )
+
+        self._task = asyncio.ensure_future(run_actor())
 
     def _on_turn_complete(self, turn_id: str | None) -> None:
         """Signal that the turn that produced a reply has fully returned.

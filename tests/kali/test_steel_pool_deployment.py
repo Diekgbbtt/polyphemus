@@ -163,6 +163,7 @@ def test_steel_worker_is_one_replicated_service():
     assert worker["environment"]["CDP_DOMAIN"] == "localhost:3000"
     assert worker["environment"]["ENABLE_COMMANDS_API"] == "false"
     assert worker["labels"]["polymerhus.steel-pool"] == "true"
+    assert worker["init"] is True
     assert worker["deploy"]["replicas"] == 2
     assert "polymerhus-net" in worker["networks"]
     assert not worker.get("ports")

@@ -252,11 +252,13 @@ def test_allowlist_is_idempotent_and_ipv4_ipv6_aware(tmp_path):
 def test_operator_guide_covers_deploy_reachability_teardown_move_and_boundary():
     text = OPERATOR.read_text(encoding="utf-8")
     for heading in (
-        "#### Deploy",
-        "#### Reachability",
+        "#### Topology",
+        "#### Build",
+        "#### Start and verify",
         "#### Agent path",
+        "#### State",
         "#### Teardown",
-        "#### Moving the stack to another host",
+        "#### Workers and the cloud",
         "#### The #245 portability boundary",
     ):
         assert heading in text
