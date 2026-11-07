@@ -105,13 +105,9 @@ It has no launch or settings form, so a run always starts through the API above.
     curl -s -X PUT localhost:8080/projects/<id>/settings -H 'Content-Type: application/json' \
       -d '{"recon":{"target_domain":"www.example.com"}}'
 
-    # 2.b. [OPTIONAL] feed an auth context (see "Project settings" below for the full shape)
-    e.g. authn cookies:
-    curl -s -X PUT localhost:8080/projects/<id>/settings -H 'Content-Type: application/json' \
-      -d '{"recon":{"auth_context":{"cookies":[{"name":"session","value":"..."}]}}}'
-    # or an arbitrary auth header (header-agnostic: any non-reserved key is a request header):
-    curl -s -X PUT localhost:8080/projects/<id>/settings -H 'Content-Type: application/json' \
-      -d '{"recon":{"auth_context":{"Authorization":"Bearer <token>"}}}'
+    # 2.b. [OPTIONAL] seed authentication through the auth store, not the
+    #      settings blob (see "Project settings" below):
+    #      PUT /projects/<id>/auth  (operator seed shape)
 
     # 3. launch a run (omit "jobs" to run the full phase plan)
     curl -s -X POST localhost:8080/projects/<id>/recon -H 'Content-Type: application/json' -d '{}'
@@ -127,48 +123,23 @@ It has no launch or settings form, so a run always starts through the API above.
 
 Settings are the `recon` object sent to `PUT /projects/{id}/settings` and persisted as the
 `settings.recon` JSONB blob. Writes are a **recursive (deep) merge**, so a PUT that sets only
-`auth_context` preserves a previously-set `target_domain`, and a PUT that sets only
-`auth_context.credentials` preserves a previously-set `auth_context.cookies` (nested items are
-independent at any depth; scalars and arrays like the cookies list are replaced wholesale).
-Everything below is optional except `target_domain`, which a run requires (a targetless
-`POST /recon` is rejected 400).
+`target_domain` preserves every other key. Everything below is optional except
+`target_domain`, which a run requires (a targetless `POST /recon` is rejected 400).
+
+Authentication is NOT a project setting. The retired `auth_context` key is refused loudly
+(#243): the settings blob carries no auth. The auth gateway reads and seeds the shared auth
+store through `PUT /projects/{id}/auth`; the Steel crawl mounts the stable pool key from
+`accounts.<account>.steel.state`.
 
 | Setting | Type | Purpose |
 |---|---|---|
 | `target_domain` | string | The recon target. `example.com` / `app.example.com` = exact host (discovery suppressed); `*.example.com` = wildcard/zone (subdomain discovery fans out). See "Exact vs wildcard seed hosts" below. **Required to launch.** |
-| `auth_context` | object | Request material for every `use_auth` request job (httpx, katana, ffuf, arjun). The Steel crawl does not consume it: the crawl mounts the stable browser key and receives only `auth_probe` and `login_url` through `browser_auth`. **Header-agnostic:** besides the reserved structural keys below (`cookies`, `scope`, `credentials`), any other key is an arbitrary HTTP request header. All sub-fields optional; omit `auth_context` entirely for an anonymous run. |
-| `auth_context.cookies` | list of `{name, value}` | Session cookies. Joined into the `Cookie: k=v; k2=v2` header for the **request-based** tools. The Steel crawl's cookies live in the pool store under its `steel.state` key. Each entry may also carry optional `domain`/`path`. This is the one source of the `Cookie` header; a literal `Cookie` header key is rejected. |
-| `auth_context.<Header-Name>` | string | Any other key is an **arbitrary request header** sent verbatim by the request-based tools, e.g. `"Authorization": "Bearer <token>"` or `"X-Api-Key": "<key>"`. Header names must be HTTP tokens (letters/digits/hyphen); values are non-empty strings with no CR/LF (header-injection guard). Applies to the request-based tools only. |
-| `auth_context.scope` | string | Optional auth scope hint. Reserved structural key, not sent as a header. |
-| `auth_context.credentials` | object | **Legacy login metadata.** The auth gateway signs in or mints before collection; the crawl never signs in. Only `login_url` reaches the crawl, through `browser_auth`. |
-| `auth_context.credentials.username` | string | Login username/email. The gateway uses the account's stored credentials; this legacy field is not the crawl's sign-in path. |
-| `auth_context.credentials.password` | string | Login password. The gateway uses the account's stored credentials; the crawl never reads it. |
-| `auth_context.credentials.login_url` | string | Sign-in page URL. The crawl receives it as `browser_auth.login_url` for the legacy surface gate. |
-| `auth_context.credentials.domain` | string | Optional legacy scope hint. |
-| `auth_context.credentials.username_selector` | string | Optional CSS selector override for the username field (else auto-detected). |
-| `auth_context.credentials.password_selector` | string | Optional CSS selector override for the password field (else `input[type=password]`). |
-| `auth_context.credentials.submit_selector` | string | Optional CSS selector override for the submit control (else the form's submit). |
 
 Launch-time (not persisted, sent to `POST /projects/{id}/recon`):
 
 | Field | Type | Purpose |
 |---|---|---|
 | `jobs` | list of strings | Optional job subset, e.g. `{"jobs": ["httpx", "naabu"]}`. Omit to run the full phase plan. Rejected 400 if a selected job's input type isn't produced by an earlier selected job. |
-
-Example with credentials:
-
-    curl -s -X PUT localhost:8080/projects/<id>/settings -H 'Content-Type: application/json' -d '{
-      "recon": {
-        "target_domain": "*.example.com",
-        "auth_context": {
-          "cookies": [{"name": "session", "value": "..."}],
-          "credentials": {
-            "username": "user@example.com", "password": "...",
-            "login_url": "https://login.example.com/", "domain": "example.com"
-          }
-        }
-      }
-    }'
 
 > Note: deployment-level knobs (`MAX_PODS`, `MAX_JOB_ASSETS`, `CRAWL_*`, `STEEL_API_KEY`,
 > `DISCORD_WEBHOOK_URL`, `LANGFUSE_*`, ...) are **environment variables**, not project settings -
@@ -237,8 +208,9 @@ the pipeline is unaffected.
 
 ### Tool status
 
-The pipeline schedules 17 tools (`src/polymerhus/recon/control/jobs.py::JOBS`). `auth` tools receive the
-`auth_context` cookies/headers; gated tools consume only a matching upstream asset.
+The pipeline schedules 17 tools (`src/polymerhus/recon/control/jobs.py::JOBS`). Request-based
+`auth` tools receive the store-projected cookies/headers; the Steel crawl mounts the stable pool
+key; gated tools consume only a matching upstream asset.
 
 | Tool | Phase | Status | Gating / notes |
 |---|---|---|---|

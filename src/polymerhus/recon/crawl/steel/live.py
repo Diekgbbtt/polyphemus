@@ -3,21 +3,18 @@
 Spec: `docs/design/steel-crawl-spec.md` sections 2, 4, 9, 10.4, 11, and 12.
 
 This module is the production wiring between the pure crawl engine and the
-runtime. It owns three adapters:
+runtime. It owns two adapters and the run assembler:
 
-- `LiveCdpTransport` reads the browser-level CDP websocket the Steel API
-  returns, attaches to the session's page target, and satisfies the sidecar's
-  two-method transport seam. It never sends a browser action; the CLI owns
-  every action.
+- `LiveCdpTransport` reads the CDP endpoint the browser MCP returned, attaches
+  to the session's page target, and satisfies the sidecar's two-method
+  transport seam. It never sends a browser action; the CLI owns every action.
 - `LivePageFactory` navigates through the browser MCP, reads the compact
   snapshot, projects the live forms through one JS expression, and registers
   the page in `BrowserState`. The snapshot keeps the CLI refs; a synthetic
   form node names its CSS selector explicitly.
-- `session.cdp_endpoint` supplies the endpoint the start result returned; the
-  transport connects its socket to the worker address and presents the
-  worker's localhost Host.
-- `run_live_crawl` assembles `CrawlJob` and `CrawlRun` from those adapters and
-  returns the terminal job plus the durable paths the caller reads back.
+- `run_live_crawl` reads the session client's `cdp_endpoint`, assembles
+  `CrawlJob` and `CrawlRun`, and returns the terminal job plus the durable
+  paths the caller reads back.
 
 The engine remains the only decision maker. Nothing here chooses a candidate,
 executes an action, or rewrites a flow.

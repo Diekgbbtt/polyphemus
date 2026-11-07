@@ -158,6 +158,7 @@ def test_steel_worker_is_one_replicated_service():
     worker = rendered["services"]["steel-worker"]
 
     assert worker["image"] == "steel-browser-api:v0.5.5-beta"
+    assert worker["pull_policy"] == "never"
     assert worker["command"] == ["--no-nginx"]
     assert worker["environment"]["DOMAIN"] == "localhost:3000"
     assert worker["environment"]["CDP_DOMAIN"] == "localhost:3000"

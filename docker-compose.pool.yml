@@ -15,6 +15,9 @@
 services:
   steel-worker:
     image: steel-browser-api:v0.5.5-beta
+    # Build this image locally for the host architecture; never let Compose
+    # fetch a wrong-architecture tag from a registry.
+    pull_policy: never
     command: ["--no-nginx"]
     restart: unless-stopped
     # Node is PID 1 in the API and never reaps the Chromium children it
