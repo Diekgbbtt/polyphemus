@@ -294,7 +294,7 @@ def test_shape_violation_refuses_naming_the_field_leaving_state(tmp_path):
 
 def test_agent_refresh_of_an_operator_account_lands_keeping_origin(tmp_path):
     """D220-12: the operator section is writable. An agent merges tokens,
-    status, snapshot, and steel into an operator-seeded account, the
+    status, snapshot, and browser_context into an operator-seeded account, the
     `origin: operator` provenance stamp is preserved, and `updated_at`
     refreshes."""
     store = AuthStore(tmp_path)
@@ -306,14 +306,14 @@ def test_agent_refresh_of_an_operator_account_lands_keeping_origin(tmp_path):
     store.write(PROJECT, "accounts.bob.snapshot",
                 {"headers": {"Accept": "text/html"}, "cookies": [],
                  "captured_at": "2026-09-20T00:00:00Z"})
-    store.write(PROJECT, "accounts.bob.steel", {"state": "proj-bob"})
+    store.write(PROJECT, "accounts.bob.browser_context", {"ref": "steel-auth-proj-bob"})
     record = store.read(PROJECT, "accounts.bob")
     assert isinstance(record.pop("updated_at"), str)
     assert record["origin"] == "operator"
     assert record["credentials"] == _credentials("bob")
     assert record["tokens"]["session"]["value"] == "tok-1"
     assert record["status"] == "valid"
-    assert record["steel"] == {"state": "proj-bob"}
+    assert record["browser_context"] == {"ref": "steel-auth-proj-bob"}
     assert record["snapshot"]["captured_at"] == "2026-09-20T00:00:00Z"
 
 

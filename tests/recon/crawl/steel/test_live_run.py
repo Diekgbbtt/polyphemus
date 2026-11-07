@@ -91,19 +91,23 @@ def test_the_pod_passes_the_pool_url_stable_name_and_budget(monkeypatch):
             "project_id": "proj-1",
             "run_id": "run-1",
             "auth_account": "alice-first_authn_bootstrap",
+            "browser_context_ref": "steel-auth-proj-1-alice",
         },
     )
 
     context = captured[0]
     assert manifest["schema_version"] == "steel-crawl/v2"
     assert context.browser_mcp_url == "http://kali:8003/mcp"
-    assert context.session_name == "steel-proj-1-alice-first_authn_bootstrap"
+    assert context.session_name == (
+        "steel-proj-1-alice-first_authn_bootstrap-crawl-run-1"
+    )
+    assert context.browser_context_ref == "steel-auth-proj-1-alice"
     assert context.max_duration_s == 600
     assert not hasattr(context, "max_actions")
     assert not hasattr(context, "cli_prefix")
 
 
-def test_the_pod_uses_the_explicit_steel_session_name(monkeypatch):
+def test_the_pod_derives_the_ephemeral_session_name(monkeypatch):
     captured: list[LiveRunContext] = []
 
     def fake_run(context: LiveRunContext) -> LiveRunResult:
@@ -143,4 +147,4 @@ def test_the_pod_uses_the_explicit_steel_session_name(monkeypatch):
         },
     )
 
-    assert captured[0].session_name == "steel-operator-pinned"
+    assert captured[0].session_name == "steel-proj-1-crawl-run-1"

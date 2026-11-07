@@ -22,6 +22,7 @@ C5's per-agent-spec wording "infeasibility-asserted" is the amended
 """
 import asyncio
 import inspect
+import json
 
 import pytest
 from langchain_core.language_models import BaseChatModel
@@ -525,8 +526,8 @@ def test_minted_variant_persists_to_its_variants_file(tmp_path):
 
 def test_tool_contract_rejects_foreign_params(tmp_path):
     """A `note` write carrying a parameter outside `NoteToolSpec` is REJECTED by
-    the args schema (`extra="forbid"`, D84-22) - a ValueError at the schema
-    boundary - and `_run` provably never executes. The harness does not
+    the args schema (`extra="forbid"`, D84-22) with the coded teaching
+    rejection, and `_run` provably never executes. The harness does not
     re-validate: the tool's OWN contract is the validator."""
     store = PodMemoryStore(tmp_path)
     calls = []
@@ -537,10 +538,14 @@ def test_tool_contract_rejects_foreign_params(tmp_path):
             return super()._run(**kwargs)
 
     tool = SpyTool(store=store, spec_id="spec-x")
-    with pytest.raises(ValueError):
-        tool.invoke({"operation": "write", "order": 0,
-                     "note_name": "x", "kind": "experiment_summary",
-                     "body": "consolidation", "surprise_field": "oops"})
+    rejected = json.loads(tool.invoke({"operation": "write", "order": 0,
+                                       "note_name": "x",
+                                       "kind": "experiment_summary",
+                                       "body": "consolidation",
+                                       "surprise_field": "oops"}))
+    assert rejected["ok"] is False
+    assert rejected["error"] == "note_args_rejected"
+    assert rejected["fields"] == ["surprise_field"]
     assert calls == []                              # never reached _run
 
 

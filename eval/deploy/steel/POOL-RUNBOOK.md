@@ -108,7 +108,10 @@ asyncio.run(main())
 PY
 ```
 
-The tool list is exactly `browser_start`, `browser_exec`, and `browser_end`.
+The MCP server's tool list is exactly `browser_start`, `browser_exec`, and
+`browser_end`.
+The agent binds ONE `browser` tool with the `start`, `exec`, and `end` commands;
+the session key is derived by the binding.
 `browser_start` returns `cdp_url` and `cdp_host`; the normal browser tool strips
 both before the model sees them.
 `browser_end` reports `stopped`, `released`, `captured`, and `saved`.

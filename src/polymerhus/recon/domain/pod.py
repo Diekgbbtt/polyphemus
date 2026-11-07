@@ -826,13 +826,26 @@ def default_triage_fn(exec_result: ExecResult, assets: list[AssetDelta], job: Jo
         from polymerhus.app.auth.seams import auth_capable_binding  # noqa: PLC0415
 
         binding = auth_capable_binding("triager")
-        result = stateful_turn("triager", ctx.address, messages,
-                               checkpointer=ctx.checkpointer, schema=_ObservationBatch,
-                               tools=binding.tools,
-                               middleware=[C.cached_role_compaction_middleware("triager")]
-                               + binding.middleware,
-                               context=binding.context,
-                               usage_scope=ctx.project_id)
+        from polymerhus.app.config import config  # noqa: PLC0415
+        from polymerhus.app.llm.browser_tools import build_browser_tool  # noqa: PLC0415
+
+        browser_tool = build_browser_tool(
+            project_id=ctx.project_id,
+            role="triager",
+            instance_id=ctx.address.thread_id,
+            mcp_url=config.KALI_BROWSER_MCP_URL,
+        )
+        try:
+            result = stateful_turn("triager", ctx.address, messages,
+                                   checkpointer=ctx.checkpointer,
+                                   schema=_ObservationBatch,
+                                   tools=[*binding.tools, browser_tool],
+                                   middleware=[C.cached_role_compaction_middleware("triager")]
+                                   + binding.middleware,
+                                   context=binding.context,
+                                   usage_scope=ctx.project_id)
+        finally:
+            browser_tool.close()
     else:
         result = invoke_role("triager", messages, schema=_ObservationBatch)
     return result.observations if result else []  # None = exhausted generation -> no observations

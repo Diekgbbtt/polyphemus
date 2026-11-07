@@ -27,7 +27,7 @@ Transition table (spec, D223-15):
 |            |                                                                 |                                        | usable account                         |
 | RETRIEVED  | `accounts` read holding a usable account (the empty       | validate the selected account          | VALIDATION on the first probe          |
 |            | full-state read retrieves too, recording grounding alongside)   |                                        |                                        |
-| VALIDATION | first probe (`execute_command`, `steel_exec`, or `replay_http_request`) after RETRIEVED; the browser probe is the oracle | conclude from the oracle: 2xx valid, 401/403/3xx not_valid, else indeterminate | GENERATION on the `not_valid` write; |
+| VALIDATION | first probe (`browser` exec, `execute_command`, `steel_exec`, or `replay_http_request`) after RETRIEVED; the browser exec is the oracle | conclude from the oracle: 2xx valid, 401/403/3xx not_valid, else indeterminate | GENERATION on the `not_valid` write; |
 |            |                                                                 |                                        | FINISH on the `valid` write            |
 | GENERATION | `not_valid` write, or a no-usable-account read                  | run the sign-in procedure              | DEBUG at the second attempt call;      |
 |            |                                                                 |                                        | FINISH when sign-in persists state     |
@@ -106,11 +106,11 @@ GROUNDED_HINT = (
 """Injected when grounding completes: retrieve and select the account."""
 
 RETRIEVED_HINT = (
-    "Account selected. Mount the stable browser session with `browser_start` "
-    "and validate it with the authenticated-context oracle at "
-    "`overview.auth_probe.url`: a browser request in the mounted session. A "
-    "name mounted elsewhere answers `session_in_use`; reuse it, never twin "
-    "it. A 2xx passes; 401, 403, or any 3xx fails; anything else is indeterminate "
+    "Account selected. Mount the web browser with "
+    "`browser(command=\"start\", account=<account>)` and validate it with "
+    "the authenticated-context oracle at `overview.auth_probe.url`: a browser "
+    "request in the mounted session. A mount while the same execution unit "
+    "holds it answers `session_in_use`; reuse it, never twin it. A 2xx passes; 401, 403, or any 3xx fails; anything else is indeterminate "
     "and does not pass. The in-process auth-store view is redacted: never "
     "read or paste token, cookie, or credential values. Conclude by asserting "
     "the account status valid or not_valid in the store before any sign-in."
@@ -143,8 +143,9 @@ GENERATION_SIGNIN_HINT = (
     "credentials and status valid, then re-run the oracle. If the skill has "
     "no mint path, stop with the terminal failed verdict (missing bootstrap "
     "data dependency); do not fail open and do not mint an unauthenticated "
-    "browser session. Call `browser_end()` after the flow and record the "
-    "stable browser key as the account's `steel.state`."
+    "browser session. Call `browser(command=\"end\", persist_context=true)` "
+    "after the flow and record the context reference as the account's "
+    "`browser_context.ref`."
 )
 """Injected when the accounts read holds no usable account: mint one."""
 
@@ -195,8 +196,8 @@ result only, inside this tag, and is consumed immediately."""
 PROBE_TOOLS = frozenset({"execute_command", "steel_exec", "replay_http_request"})
 """The probe surface: the Kali exec capability, the Steel exec gateway, and the
 server-side recorded HTTP replay (D223-13). The replay is the validation probe
-that keeps the raw material out of the model. Any other tool call is never a
-probe."""
+that keeps the raw material out of the model. The one `browser` tool is a probe
+only for its `exec` command (the oracle); `start` and `end` are lifecycle."""
 
 
 def wrap_hint(hint: str) -> str:
@@ -242,6 +243,19 @@ def _detect_store(args: Mapping[str, Any]) -> AuthnTransition:
     return "none"
 
 
+def _detect_browser(args: Mapping[str, Any]) -> AuthnTransition:
+    """Only the browser `exec` command is an oracle probe.
+
+    `start` and `end` mount and release the context; they are not evidence
+    about the authenticated state.
+    """
+    if args.get("command") != "exec":
+        return "none"
+    if not isinstance(args.get("input"), str) or not args["input"].strip():
+        return "none"
+    return "probe"
+
+
 def _detect_skill(args: Mapping[str, Any], result: Any) -> AuthnTransition:
     if args.get("name") != "authn":
         return "none"
@@ -280,6 +294,8 @@ def detect_transition(observation: Any) -> AuthnTransition:
             return _detect_store(args)
         if tool == "load_skill":
             return _detect_skill(args, observation.get("result"))
+        if tool == "browser":
+            return _detect_browser(args)
         if tool in PROBE_TOOLS:
             return "probe"
         return "none"

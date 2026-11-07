@@ -516,3 +516,61 @@ def test_production_runner_node_binds_the_harness_context(monkeypatch, tmp_path)
     assert seen[0].spec_id == "sqli_blind"             # the #164 handoff keys memory
     assert seen[0].variant_ref == "v0"
     assert seen[0].log is not None
+
+def _browser_tool():
+    from langchain_core.tools import tool
+
+    @tool
+    def browser(command: str, input: str | None = None) -> str:
+        """One browser command."""
+        return "ok"
+
+    return browser
+
+
+def test_runner_turn_binds_the_one_browser_tool(tmp_path):
+    log = ExperimentLog()
+    store = PodMemoryStore(tmp_path)
+    seen: list = []
+    hc = PodHarnessContext(
+        exec_fn=_exec(_OK), memory_store=store, spec_id=SPEC_ID,
+        log=log, variant_ref="v0",
+        browser_tool=_browser_tool(),
+        model_factory=_tool_recording_factory(
+            [AIMessage(content="stretch concluded")], seen))
+
+    _run(_drive_runner(SPEC, hc))
+
+    assert "browser" in seen
+
+
+def test_triager_turn_binds_the_read_only_browser_tool(tmp_path, monkeypatch):
+    log = ExperimentLog()
+    store = PodMemoryStore(tmp_path)
+    store.write_experiment_log(SPEC_ID, 0, {"order": 0, "variant_ref": "v0",
+                                            "raw_observations": [], "interpretations": [],
+                                            "executed": []})
+    store.write_variant_summary(SPEC_ID, 0, "the verbatim consolidation")
+    seen: list = []
+    monkeypatch.setenv("LLM_POD_TRIAGER", "openrouter:some/model")
+    import polymerhus.app.llm.session as S
+
+    monkeypatch.setattr(
+        S, "resolve_capability",
+        lambda provider, model: type("_P", (), {
+            "supports_structured_output": False, "supports_tool_calling": True})())
+    replies = [AIMessage(content="", tool_calls=[
+        {"name": "TriagerDecision", "id": "c1", "args": {
+            "classification": "noise", "action": "terminate",
+            "verdict": "unsuccessful", "terminal_reason": "no-symptom-evidence",
+            "clean": False, "note": "n"}}])]
+    hc = PodHarnessContext(
+        exec_fn=_exec(_OK), memory_store=store, spec_id=SPEC_ID,
+        log=log, variant_ref="v0",
+        browser_tool=_browser_tool(),
+        model_factory=_tool_recording_factory(replies, seen))
+
+    _run(_drive_triager(SPEC, hc, log))
+
+    assert "browser" in seen
+    assert "exec" not in seen

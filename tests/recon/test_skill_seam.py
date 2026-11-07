@@ -46,20 +46,17 @@ from polymerhus.app.llm.skills import (
 # and in `ROLE_SKILLS`.
 EXEMPT_ROLES = {
     "configurator",
-    "job_orchestrator",
     "assigner",
-    "mechanism_typist",
-    # The threat modeller (S1 5.5): no catalogue skill bears - its class
-    # material is the web-vulnerability suite, and the actor arms the read-only
-    # skill + auth surface explicitly.
-    "hunting_threat_modeller",
 }
 
 BOUND_ROLES = {
-    "triager": ("webpage-analysis", "webpage-profile"),
+    "triager": ("webpage-analysis", "webpage-profile", "steel-browser"),
+    "job_orchestrator": ("steel-browser",),
+    "mechanism_typist": ("steel-browser",),
     "hunting_hunter": ("lightrag-query", "steel-browser"),
     "pod_runner": ("lightrag-query", "steel-browser"),
-    "pod_triager": ("lightrag-query",),
+    "pod_triager": ("lightrag-query", "steel-browser"),
+    "hunting_threat_modeller": ("steel-browser",),
     # #232 D232-7: the SkillEvolver is a bound role - its authoring discipline
     # is the meta-write-skill procedure; its pass arms its own write capability.
     "skill_evolver": ("meta/meta-write-skill",),
@@ -267,13 +264,7 @@ def test_every_tool_calling_role_declares_its_skill_set() -> None:
     tool_calling = {
         r.role_id for r in ROLES + HUNTING_ROLES if r.agent_mode == "session"
     }
-    # `crawler` is the one known gap, recorded in `ROLE_SKILLS`: its loop is a
-    # manual `bind_tools` ReAct loop, not `create_agent`, so no index middleware
-    # renders for it (its delivery is the outstanding work item).
-    known_gap = {"crawler"}
-
-    assert tool_calling - known_gap <= set(ROLE_SKILLS)
-    assert "crawler" not in ROLE_SKILLS
+    assert tool_calling <= set(ROLE_SKILLS)
 
 
 def test_the_meta_skills_are_never_advertised_outside_the_evolver() -> None:

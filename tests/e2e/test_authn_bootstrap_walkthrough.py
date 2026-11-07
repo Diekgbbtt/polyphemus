@@ -20,24 +20,20 @@ The catalogue (see the ticket report for the full predicate list):
       leaks no secret value (it cites names only)
   E3  the read face returns the two typed facts with the right types
   E4  the store account carries the verified facts (credentials, an optional
-      `steel.state` reference, located tokens, procedure label)
-  E5  when a `steel.state` reference is present, its file exists, is
-      owner-only, and carries only the four durable state fields; the CLI has
-      no restore flag, so this checks the stored artifact, not a mount
+      `browser_context.ref` reference, located tokens, procedure label)
+  E5  when a `browser_context.ref` reference is present, it is a safe pool
+      store key; the object itself lives in the pool store, not the auth store
 """
 from __future__ import annotations
 
 import json
 import os
 import re
-import stat
 from pathlib import Path
 
 import httpx
 import pytest
 import yaml
-
-from polymerhus.app.steel_session_state import state_path
 
 REPO = Path(__file__).resolve().parents[2]
 PROJECT_ID = os.environ.get("AUTHN_E2E_PROJECT_ID", "authn-e2e")
@@ -187,17 +183,15 @@ def test_e4_account_carries_credentials_steel_tokens_and_procedure():
         assert credentials.get("login_url"), f"account {name} needs a login_url"
         # The steel reference is conditional on the browser path: a request-only
         # run persists no state reference, and the assertion must not invent one.
-        steel = record.get("steel")
-        if steel is not None:
-            assert isinstance(steel, dict), (
-                f"account {name}: the steel reference must be a mapping"
+        context = record.get("browser_context")
+        if context is not None:
+            assert isinstance(context, dict), (
+                f"account {name}: the browser_context reference must be a mapping"
             )
-            assert "profile" not in steel, (
-                f"account {name}: profiles are retired; use steel.state"
-            )
-            assert isinstance(steel.get("state"), str) and steel["state"], (
-                f"account {name}: a persisted steel reference must carry a "
-                "state key"
+            ref = context.get("ref")
+            assert isinstance(ref, str) and ref.startswith("steel-auth-"), (
+                f"account {name}: a persisted browser_context reference must "
+                "carry a safe context key"
             )
         assert isinstance(record.get("procedure"), str) and record["procedure"], (
             f"account {name} must carry the procedure label (the store<->skill join)"
@@ -246,32 +240,21 @@ def test_e6_signup_is_a_separate_verified_flow_when_expected():
 
 # --- E5: a persisted state reference backs an owner-only field file ----------
 
-def test_e5_state_reference_backs_an_owner_only_state_file():
+def test_e5_browser_context_reference_is_a_safe_pool_key():
     accounts = _accounts()
     found = None
     for name, record in accounts.items():
-        candidate = (record.get("steel") or {}).get("state")
+        candidate = (record.get("browser_context") or {}).get("ref")
         if candidate:
             found = (name, candidate)
             break
     if not found:
-        pytest.skip("no steel state reference was persisted (request-only run)")
+        pytest.skip("no browser_context reference was persisted (request-only run)")
     name, ref = found
 
-    path = state_path(PROJECT_ID, ref, root=REPO / "data")
-    assert path.is_file(), (
-        f"account {name}: steel.state {ref!r} must resolve to a state file "
-        f"at {path}"
+    assert re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", ref), (
+        f"account {name}: browser_context.ref {ref!r} must be a safe pool key"
     )
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600, (
-        f"account {name}: the state file must be owner-only (0600)"
+    assert ref.startswith("steel-auth-"), (
+        f"account {name}: browser_context.ref {ref!r} must be a context key"
     )
-    body = json.loads(path.read_text(encoding="utf-8"))
-    assert isinstance(body, dict) and body, "the state file must hold a JSON object"
-    assert set(body) <= _STATE_FIELDS, (
-        f"account {name}: the state file carries non-durable fields "
-        f"{sorted(set(body) - _STATE_FIELDS)}"
-    )
-    # The pinned CLI has no `--session-state` flag, so a CLI mount cannot
-    # restore this file; only the programmatic crawl provider restores it.
-    # This predicate therefore checks the stored artifact, not a live mount.

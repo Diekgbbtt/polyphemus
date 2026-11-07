@@ -227,7 +227,7 @@ def test_default_pod_invoke_routes_agent_configurator_mode_jobs_to_crawl_pod(mon
     monkeypatch.setattr(crawl_pod_module, "crawl_pod_invoke", fake_crawl_pod_invoke)
 
     agent_job = JobSpec(
-        tool="steel_crawl", skill="agentic_crawl", command_template="",
+        tool="steel_crawl", skill="steel_crawl", command_template="",
         produces=["BaseURL"], consumes="BaseURL", configurator_mode="agent",
     )
     pod_input = {"input_asset": {"url": "https://app.example.com"}, "extra": {}}

@@ -29,10 +29,9 @@ def test_gateway_prompt_teaches_mounted_sessions_and_no_profile() -> None:
     assert "profile" not in lower
     assert "--update-profile" not in text
     assert "fingerprint replay" not in lower
-    assert "browser session" in lower
-    assert "browser_start" in text
-    assert "browser_end" in text
-    assert "steel.state" in lower
+    assert "web browser" in lower
+    assert "browser(command" in text
+    assert "browser_context" in lower
 
 
 def test_gateway_branch_manner_teaches_mounted_sessions_and_no_profile() -> None:
@@ -46,8 +45,8 @@ def test_gateway_branch_manner_teaches_mounted_sessions_and_no_profile() -> None
         assert "profile" not in lower, directive
         assert "--update-profile" not in manner, directive
         assert "fingerprint replay" not in lower, directive
-    assert "browser session" in _BRANCH_MANNER["browser_only"].lower()
-    assert "steel.state" in _BRANCH_MANNER["browser_only"].lower()
+    assert "web browser" in _BRANCH_MANNER["browser_only"].lower()
+    assert "browser_context" in _BRANCH_MANNER["browser_only"].lower()
 
 
 def test_gateway_prompt_names_the_oracle_and_fails_closed() -> None:
@@ -73,7 +72,7 @@ def test_gateway_prompt_names_the_crawl_phase_and_the_job() -> None:
     assert "`steel_crawl`" in text
     assert "`katana`" in text and "`ffuf`" in text
     assert "`JOBS`" in text and "`PHASES`" in text
-    assert "mounts the same stable browser session" in lower
+    assert "mounts the same decoupled auth context" in lower
     assert "browser_only" in lower
     assert "d-jobset" in lower
 
@@ -106,7 +105,7 @@ def test_gateway_prompt_uses_the_redacted_store_and_recorded_replay() -> None:
     assert "stored request state" not in lower
     assert "extracted tokens" not in lower
     assert "session_in_use" in text
-    assert "session_missing" in text
+    assert "no_session" in text
 
 
 def test_gateway_manner_and_hints_do_not_teach_raw_secret_reads() -> None:
@@ -128,7 +127,7 @@ def test_gateway_manner_and_hints_do_not_teach_raw_secret_reads() -> None:
     assert "redacted" in lower
     assert "replay_http_request" in text
     assert "session_in_use" in text
-    assert "session_missing" in text
+    assert "no_session" in text
 
 
 def test_authn_meta_skill_sizes_the_session_and_handles_typed_loss() -> None:
@@ -138,10 +137,10 @@ def test_authn_meta_skill_sizes_the_session_and_handles_typed_loss() -> None:
         "bootstrap-workflow.md",
     )
     for name, text in (("SKILL.md", skill), ("bootstrap-workflow.md", prompt)):
-        assert "browser_start" in text, name
-        assert "browser_end" in text, name
+        assert 'browser(command="start", account=<account>)' in text, name
+        assert 'browser(command="end", persist_context=true)' in text, name
         assert "session_in_use" in text, name
-        assert "session_missing" in text, name
+        assert "no_session" in text, name
         assert "--inactivity-timeout" not in text, name
         assert "start or reuse" not in text.lower(), name
     assert "never a twin" in skill
@@ -162,30 +161,16 @@ def test_authn_loop_hints_teach_live_sessions_and_no_profile() -> None:
         assert "profile" not in lower
         assert "fingerprint replay" not in lower
     assert "mounted session" in authn_loop.RETRIEVED_HINT.lower()
-    assert "browser_end" in authn_loop.GENERATION_SIGNIN_HINT.lower()
-
-
-def test_crawl_prompt_is_runtime_blind_and_single_retry() -> None:
-    text = _read(
-        "src", "polymerhus", "recon", "crawl", "prompts", "steel-crawl.md"
-    )
-    lower = text.lower()
-    assert "cloud" not in lower
-    assert "mcp" not in lower
-    assert "fingerprint" not in lower
-    assert "region" not in lower
-    assert not re.search(r"\bip\b", lower), "no IP claim belongs in the prompt"
-    assert "3 fresh sessions" not in lower
-    assert "at most one" in lower
-    assert "fresh context" in lower
+    assert "browser(command" in authn_loop.GENERATION_SIGNIN_HINT.lower()
+    assert "browser_context.ref" in authn_loop.GENERATION_SIGNIN_HINT.lower()
 
 
 def test_auth_store_contract_has_no_profile_vocabulary() -> None:
     from polymerhus.app.auth.tool import AUTH_STORE_CONTRACT
 
     assert "profile" not in AUTH_STORE_CONTRACT.lower()
-    assert "steel: {state}" in AUTH_STORE_CONTRACT
-    assert "session-state reference" in AUTH_STORE_CONTRACT
+    assert "browser_context: {ref}" in AUTH_STORE_CONTRACT
+    assert "browser auth-context reference" in AUTH_STORE_CONTRACT
 
 
 def test_authn_meta_skill_and_bootstrap_prompt_have_no_profile_vocabulary() -> None:
@@ -197,10 +182,10 @@ def test_authn_meta_skill_and_bootstrap_prompt_have_no_profile_vocabulary() -> N
     for name, text in (("SKILL.md", skill), ("bootstrap-workflow.md", prompt)):
         assert "profile" not in text.lower(), name
         assert "--profile" not in text, name
-    assert "steel: {state}" in skill
-    assert "browser_end" in skill
-    assert "browser_start(<stable-key>)" in skill
-    assert "browser_start(<session_key>)" in prompt
+    assert "browser_context: {ref}" in skill
+    assert 'browser(command="end"' in skill
+    assert 'browser(command="start", account=<account>)' in skill
+    assert 'browser(command="start", account=<account>)' in prompt
 
 
 def test_external_bootstrapper_prompt_uses_a_state_reference() -> None:

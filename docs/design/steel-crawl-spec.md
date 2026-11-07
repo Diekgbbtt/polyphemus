@@ -32,8 +32,8 @@ The Steel session is the bound.
 
 | ID | Requirement | Acceptance |
 | - | - | - |
-| A1 | Mount exactly one durable Steel session by its stable pool key. | `browser_start(<key>)` returns the runtime id, `restored`, and the CDP endpoint. |
-| A2 | Never start a twin. A name mounted elsewhere is `session_in_use`. | The crawl has no raw `start` command; the browser MCP owns the lease. |
+| A1 | Mount exactly one browser session per execution unit. | `browser(command="start", account=<account>)` returns the runtime id, `restored`, and the CDP endpoint. |
+| A2 | Never start a twin. A session mounted by the same execution unit is `session_in_use`. | The crawl has no session-name parameter; the browser tool derives the key and the browser MCP owns the lease. |
 | A3 | Run the authenticated-context oracle once before traversal. | The oracle outcome is `authenticated`. |
 | A4 | The oracle is a browser fetch to `overview.auth_probe.url`. | `2xx` with `redirected: false` passes. |
 | A5 | `401`, `403`, any `3xx`, or `redirected: true` fails. | The run returns `auth_precondition_failed`. |
@@ -42,17 +42,18 @@ The Steel session is the bound.
 | A8 | The legacy gate rejects login redirects, `401`, `403`, and any `3xx`. | No anonymous continuation. |
 | A9 | On failure, return a typed failure and let the orchestrator resurrect. | One bounded retry through the authn skill and the auth store. |
 | A10 | A known loss is `session_missing` or `no_session`, not a typo. | The next stable-key start restores the saved state. |
-| A11 | The pool store is the only browser-state store. | Cookies and localStorage restore; all four fields are captured. |
-| A12 | The gateway records the stable key in `accounts.<account>.steel.state`. | The crawl mounts the same key. |
+| A11 | The pool store is the only browser-state store. | The decoupled auth-context object lives there; cookies and localStorage restore; all four fields are captured. |
+| A12 | The gateway records the context reference in `accounts.<account>.browser_context.ref`. | The crawl mounts the same context reference. |
 | A13 | The crawl budget is 600 seconds; time is the only bound. | No action cap exists. |
 | A14 | An incomplete stop carries `manifest.run.partial`. | A partial manifest routes to reduced coverage. |
 
 The oracle is never a navigation envelope.
 `navigate` follows a `302` and reports success with the final `200` URL.
 The fetch exposes `redirected` and the true status.
-The stable key is `steel-<project_slug>` without an account and
-`steel-<project_slug>-<account_slug>` with one.
-The key is deterministic across runs; the run id never enters it.
+The auth-context reference is `steel-auth-<project_slug>-<account_slug>`.
+The reference is deterministic across runs; the run id never enters it.
+The browser session key is ephemeral and derived from the execution unit; the
+agent never passes it.
 
 ### 2.2 Traversal
 
@@ -228,8 +229,9 @@ src/polymerhus/recon/crawl/steel/
 ## 4. Steel interaction contract
 
 The crawl addresses the browser MCP at `KALI_BROWSER_MCP_URL`.
-The MCP exposes exactly three tools: `browser_start`, `browser_exec`, and
-`browser_end`.
+The MCP exposes three internal tools (`browser_start`, `browser_exec`, and
+`browser_end`) and the agent binds ONE `browser` tool with the `start`, `exec`,
+and `end` commands.
 The browser MCP runs in Kali and owns the Steel CLI, the worker lease, the
 pool store, the heartbeat, and the TTL.
 The crawl never runs the CLI and never sees the worker's HTTP origin.
@@ -248,12 +250,13 @@ inactivity_timeout_ms, source
 ```
 
 The session id and the name are the stable identity pair.
-The name is the stable pool key and can be reused after a release.
+The name is the ephemeral execution-unit key; the durable auth context is a
+separate object referenced by the auth store.
 The runtime id is the tiebreaker.
 `websocket_url` is the CDP URL the sidecar connects to; it is secret and stays
 in memory.
 `cdp_host` is the Host the CDP handshake presents (`localhost:<port>`).
-The browser MCP returns both from `browser_start`.
+The browser MCP returns both from the `start` command.
 
 `SteelSessionRegistry` observes start, catalogue, API, and stop.
 The registry never starts, stops, or releases a session.
@@ -274,29 +277,32 @@ It marks the shared player `addressable=false`.
 
 ### 4.3 Lifecycle
 
-- The gateway mounts the stable key with `browser_start`.
+- The gateway mounts the account's auth context with
+  `browser(command="start", account=<account>)`.
   It validates the oracle in that session, signs in or mints on failure, and
-  calls `browser_end`.
-  A successful end captures and saves the state under the key.
-  The gateway then writes `accounts.<account>.steel.state = <key>`.
-- The crawl mounts the same key with `browser_start` and calls `browser_end`
-  in its finalize close.
-- `browser_start` restores cookies and localStorage from the pool store; all
-  four captured fields are evidence on the end record.
+  calls `browser(command="end", persist_context=true)`.
+  A successful end captures and saves the state under the context reference.
+  The gateway then writes
+  `accounts.<account>.browser_context.ref = <context-ref>`.
+- The crawl mounts the same context reference and calls
+  `browser(command="end")` in its finalize close.
+- The `start` command restores cookies and localStorage from the pool store;
+  all four captured fields are evidence on the end record.
 - One MCP session is one lease.
-  A name mounted elsewhere answers `session_in_use`.
+  A mount by the same execution unit answers `session_in_use`.
   A missing lease answers `no_session`, which maps to `SessionMissing`.
 - A mount failure is `restore_failed`, `pool_exhausted`, or
   `browser_unavailable`; none of them is a silent anonymous continuation.
-- The MCP TTL, MCP close, and `browser_end` release the lease.
+- The MCP TTL, MCP close, and `browser(command="end")` release the lease.
   The heartbeat keeps an idle lease alive; it is never a release signal.
 - `remaining_ms` on the start result sits below the requested window.
 - A foreign `default` is untouchable.
 
 ### 4.4 Envelope and errors
 
-`browser_exec` returns the CLI's own command envelope for a command-level
-result: `data`, `error`, `warning`, and the optional `steel_events`.
+`browser(command="exec", input=...)` returns the CLI's own command envelope
+for a command-level result: `data`, `error`, `warning`, and the optional
+`steel_events`.
 A refusal, a missing lease, a pool failure, or a capture failure returns the
 MCP's typed error envelope instead.
 
@@ -316,7 +322,7 @@ The crawl's typed errors are:
 | CLI code | Meaning | Recovery |
 | - | - | - |
 | `unknown_session` | The name was never live. | Choose a live name. |
-| `session_missing` | The name was live and is gone. | Remount the stable key with state restore. |
+| `session_missing` | The name was live and is gone. | Remount the context reference with state restore. |
 | `session_taken` | A start named a live session. | Reuse the live session. |
 | `target_lost` | The CDP target disappeared. | Open a tab, then retry the read. |
 | `browser_stuck` | The command exceeded its browser budget. | End the session and remount. |
@@ -821,7 +827,7 @@ pattern, min, max
 
 ### 9.1 Raw CDP endpoint
 
-The browser MCP returns the CDP endpoint on `browser_start`:
+The browser MCP returns the CDP endpoint on the `start` command:
 `cdp_url = ws://<worker-container-ip>:3000/` and
 `cdp_host = localhost:3000`.
 
@@ -1011,8 +1017,8 @@ The v2 parser is additive.
 | Code | Stage | Recovery |
 | - | - | - |
 | `auth_precondition_failed` | Auth | Orchestrator resurrection, one retry. |
-| `session_missing` | Session | Remount the stable key; restore the saved state. |
-| `no_session` | Session | Map to `session_missing`; remount the stable key. |
+| `session_missing` | Session | Remount the context reference; restore the saved state. |
+| `no_session` | Session | Map to `session_missing`; remount the context reference. |
 | `session_in_use` | Session | Reuse the mounted name; never twin it. |
 | `unknown_session` | Session | Choose a live name. |
 | `session_taken` | Session | Reuse the live name. |
@@ -1021,7 +1027,7 @@ The v2 parser is additive.
 | `pool_unavailable` | Pool | Surface the pool failure; retry the run. |
 | `browser_unavailable` | Pool or MCP | Surface the transport failure; retry the run. |
 | `target_lost` | Browser | Open a tab, retry the read. |
-| `browser_stuck` | Browser | End the session; remount the stable key. |
+| `browser_stuck` | Browser | End the session; remount the context reference. |
 | `capture_unavailable` | Capture | Fail the run; do not produce a false success. |
 | `session_close_failed` | Finalize | Record the failure; the run is partial. |
 | `stale_element` | Executor | Consume the candidate; record the gap. |
@@ -1120,7 +1126,7 @@ The deterministic gate is `tests/recon/crawl/steel`.
 The crawl's production executor is the browser MCP, not an agent-side CLI.
 The crawl closes the session before the manifest is built, and a failed save
 makes the run partial.
-The stable pool key is the only browser-state key.
+The decoupled auth-context reference is the only durable browser-state key.
 The pool deployment, proxy, CDP transport, MCP client, and error mapping have
 unit and contract coverage:
 `tests/kali/test_steel_pool_proxy.py`,
@@ -1159,8 +1165,13 @@ The authz residual risk and the coarse effect signal remain accepted as recorded
 - The eval `.env` carries no `STEEL_API_KEY` and no `STEEL_BROWSER_API_URL`.
   `STEEL_API_KEY` remains accepted; when present both Steel clients use the
   cloud.
-- The stable key is `steel-<project_slug>[-<account_slug>]`.
-  `accounts.<account>.steel.state` holds it.
+- The auth-context reference is
+  `steel-auth-<project_slug>-<account_slug>`.
+  `accounts.<account>.browser_context.ref` holds it.
+- The agent surface is one `browser` tool with the `start`, `exec`, and `end`
+  commands. The session key is never an agent parameter.
+- The legacy six-tool agentic crawler is removed; see
+  `docs/design/legacy-crawler-eol.md`.
 - Keep the HTTP-history addon and the read tools compatible.
 - Keep the v1 manifest parser.
 - Keep the v2 manifest parser.

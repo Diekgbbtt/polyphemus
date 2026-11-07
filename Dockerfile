@@ -39,10 +39,9 @@ RUN pip install --no-cache-dir -r /srv/requirements-app.txt
 # baking it in lets operators enable tracing purely via LANGFUSE_* env vars.
 # Owned by the observability module (`app/observability/`).
 RUN pip install --no-cache-dir -r /srv/src/polymerhus/app/observability/requirements.txt
-# Agentic-crawl (Steel) client libs - the base image was assumed to provide
-# these but does not, so steel_crawl degraded to empty manifests. Cloud browser
-# over CDP, so no `playwright install` (local browsers) is needed. Owned by the
-# crawl module (`recon/crawl/`).
+# Steel crawl CDP client - the deterministic engine drives the pool's browser
+# over the CDP websocket. No `playwright install` (local browsers) is needed.
+# Owned by the crawl module (`recon/crawl/`).
 RUN pip install --no-cache-dir -r /srv/src/polymerhus/recon/crawl/requirements.txt
 # LLM API gateway (#100) - the co-located litellm proxy (#104 T1) layered on
 # top of the base image like the observability/crawl layers. A litellm version

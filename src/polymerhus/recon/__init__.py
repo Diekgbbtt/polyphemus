@@ -12,7 +12,7 @@ Internal layering:
   it decides *when and whether* to run.
 - `recon.domain`   - the model and the L0 sole-writer (curator, types, findings,
   pod, graph_read, selectors, noise_filter, skills, parsers): pure where possible.
-- `recon.crawl`    - the agentic-crawl subpackage.
+- `recon.crawl`    - the deterministic Steel crawl subpackage.
 """
 from __future__ import annotations
 

@@ -660,7 +660,7 @@ def render_skill_index(names, project_id: str | None = None, store=None) -> str:
 # established tool-bounding pattern. A role's cognitive job declares, in ONE
 # place, the catalogue skills whose discipline bears on its turns - never the
 # whole catalogue, the same minimal-high-signal rule every tool surface
-# follows (`runner_react_tools`, `CRAWL_TOOL_NAMES`). The names travel to the
+# follows (`runner_react_tools`, the hunter tool builder). The names travel to the
 # agent through the native invocation context (`context={"skills": [...]}`) and
 # the shared index middleware renders each one's frontmatter `description`
 # verbatim into the turn's system message, so the agent reads WHAT it may load
@@ -691,49 +691,44 @@ ROLE_SKILLS: dict[str, tuple[str, ...]] = {
     # The pod triager reads a delivered job's web artefacts into anchored
     # observations; classifying a page's rendering and architectural shape is
     # exactly what the two anatomy skills state.
-    "triager": ("webpage-analysis", "webpage-profile"),
+    "triager": ("webpage-analysis", "webpage-profile", "steel-browser"),
     # The configurator role is reserved for the #238 profile-driven
     # rate-limit configuration (its steering-fed throttle turn retired with
     # the mid-run steering machinery, #243), and the control-plane
     # orchestrator routes jobs over assets and phases - both are coverage
     # bookkeeping over signals, not target knowledge.
     "configurator": (),
-    "job_orchestrator": (),
-    # -- analysis (exempt: local-context reasoning only) ------------------------
-    # The proposers reason over the published L0/L1 substrate into typed model
-    # deltas; the catalogue carries no modelling discipline for that job, and
-    # their turns never touch an external environment.
+    # The recon orchestrator's gateway stretch mounts the one browser tool;
+    # the browser skill is its optional mechanics surface. The write-capable
+    # auth arming still rides `with_write_skill` at the binding.
+    "job_orchestrator": ("steel-browser",),
+    # -- analysis --------------------------------------------------------------
+    # The assigner reasons over the published L0/L1 substrate into typed model
+    # deltas and stays local-context only. The mechanism typist may render a
+    # client-side surface in its verify/falsify phase, so it carries the
+    # browser mechanics skill.
     "assigner": (),
-    "mechanism_typist": (),
+    # The mechanism typist's verify/falsify phase may render a client-side
+    # surface; the browser skill is its optional mechanics surface.
+    "mechanism_typist": ("steel-browser",),
     # -- hunting ---------------------------------------------------------------
     # The agent that touches the live target: the KB guide is its retrieval
     # discipline, the browser skill is how a JS-rendered or bot-gated target is
     # actually driven (through its own exec surface).
     "hunting_hunter": ("lightrag-query", "steel-browser"),
     "pod_runner": ("lightrag-query", "steel-browser"),
-    # The critic never touches the target: its KB reads are context reads
-    # (D84-27), so only the retrieval discipline bears.
-    "pod_triager": ("lightrag-query",),
-    # The threat modeller (S1 5.5): no catalogue skill bears on the job - its
-    # class material is the web-vulnerability SUITE, bound through the
-    # modeller's own `skill_list` / `skill_load` pair - so the roster declares it
-    # exempt and the actor arms the read-only skill surface + `auth_store`
-    # explicitly (the recon-orchestrator coupling, `app/auth/seams.py`).
-    "hunting_threat_modeller": (),
+    # The critic never mutates the target. Its KB reads are context reads
+    # (D84-27); the browser skill is its optional read-only rendering surface.
+    "pod_triager": ("lightrag-query", "steel-browser"),
+    # The threat modeller's class material is the web-vulnerability SUITE,
+    # bound through its own `skill_list` / `skill_load` pair; the browser skill
+    # is its optional live-probe mechanics surface.
+    "hunting_threat_modeller": ("steel-browser",),
     # -- app (the skill-evolution loop) -----------------------------------------
     # The SkillEvolver authors revisions of project bundles; its discipline is
     # the authoring meta-skill (#232 D232-7). It is a BOUND role whose pass arms
     # its own binding with the write capability (`with_write_skill=True`).
     "skill_evolver": ("meta/meta-write-skill",),
-    # `crawler` is deliberately ABSENT, not forgotten: it is a tool-calling role
-    # (`agent_mode == "session"`) whose loop is a manual `bind_tools` ReAct loop
-    # (`recon/crawl/crawl_agentic.py`), not `create_agent`, so no
-    # `dynamic_prompt` middleware runs to render an index. Its delivery - the
-    # rendered index prepended by direct read plus the load tool in its bound set
-    # (the spec's non-`create_agent` clause) - is the known gap; the day it is
-    # closed the crawler declares `("steel-browser",)` here and nothing else
-    # changes.
-    #
     # FORWARD (operator instruction, 2026-09-17): when #223 lands (the recon
     # job-specific agents refactored into stateful entities), those agents take
     # the session seam and MUST be wired to the skill primitives here - declare

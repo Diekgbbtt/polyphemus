@@ -813,3 +813,70 @@ def test_a_shutdown_during_mount_stops_the_cli(harness):
     assert "stop" in cli.verbs()
     assert harness.manager.active_count() == 0
 
+
+
+def test_start_mounts_the_decoupled_context_over_the_session_cache(tmp_path):
+    harness = Harness(tmp_path)
+    harness.store.save(
+        BrowserSessionRecord(
+            name="steel-auth-proj-alice",
+            cookies=[{"name": "sid", "value": "context"}],
+        )
+    )
+    harness.store.save(
+        BrowserSessionRecord(
+            name="hunt",
+            cookies=[{"name": "sid", "value": "cache"}],
+        )
+    )
+
+    harness.manager.start("mcp-1", "hunt", context_ref="steel-auth-proj-alice")
+
+    restored = harness.cli().calls[1][2]
+    assert restored.name == "steel-auth-proj-alice"
+    assert restored.cookies == [{"name": "sid", "value": "context"}]
+    assert harness.lease().context_ref == "steel-auth-proj-alice"
+
+
+def test_end_does_not_persist_the_context_by_default(tmp_path):
+    harness = Harness(tmp_path)
+    harness.store.save(
+        BrowserSessionRecord(
+            name="steel-auth-proj-alice",
+            cookies=[{"name": "sid", "value": "old"}],
+        )
+    )
+    harness.manager.start("mcp-1", "hunt", context_ref="steel-auth-proj-alice")
+
+    report = harness.manager.end("mcp-1")
+
+    assert report.context_saved is False
+    assert harness.store.load("steel-auth-proj-alice").cookies == [
+        {"name": "sid", "value": "old"}
+    ]
+    assert harness.store.load("hunt").cookies == [
+        {"name": "sid", "value": "new"}
+    ]
+
+
+def test_end_persist_context_writes_the_captured_state(tmp_path):
+    harness = Harness(tmp_path)
+    harness.manager.start("mcp-1", "hunt", context_ref="steel-auth-proj-alice")
+
+    report = harness.manager.end("mcp-1", persist_context=True)
+
+    assert report.context_saved is True
+    assert report.context_ref == "steel-auth-proj-alice"
+    saved = harness.store.load("steel-auth-proj-alice")
+    assert saved.cookies == [{"name": "sid", "value": "new"}]
+    assert saved.name == "steel-auth-proj-alice"
+
+
+def test_end_without_a_context_ref_never_persists_a_context(tmp_path):
+    harness = Harness(tmp_path)
+    harness.manager.start("mcp-1", "hunt")
+
+    report = harness.manager.end("mcp-1", persist_context=True)
+
+    assert report.context_saved is False
+    assert report.context_ref is None

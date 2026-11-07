@@ -19,6 +19,14 @@ Pass the JSON payload as the tool arguments.
 Do not write the payload as message text.
 The workflow reads the tool call, not the message text.
 
+## The browser tool (read-only)
+
+When a judgement hinges on what a client-side rendered page actually contains and the recorded parser output cannot settle it, use the `browser` tool read-only: `command` is `start` (optional `url`, optional `account` for the authenticated context), `exec` (the bare browser command grammar in `input`), or `end`.
+Use `navigate`, `snapshot`, `get`, `eval` reads, and `wait` only; never `click`, `fill`, `type`, `select`, `upload`, `press`, or a form submit.
+Open it only for a client-side rendered page, a JS-heavy target, or a native client-side primitive; a plain HTTP read belongs to the recorded assets.
+End the session when the browser is not needed anymore.
+The full mechanics are the `steel-browser` skill.
+
 ## The anchor rule (this is the one that silently loses your work)
 
 Every Observation MUST anchor on exactly one of these five broad node types:

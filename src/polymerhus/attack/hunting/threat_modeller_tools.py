@@ -638,6 +638,8 @@ class ModellerTools:
     # HTTP-history reads): the surface builder attaches it to those tools and
     # the pass folds the unit's slice into the outcome's `context_gaps`.
     seam_gaps: ToolSeamGaps | None = None
+    # The one agent-facing browser tool, bound by the actor for its run.
+    browser_tool: Any = None
 
 
 def build_grounding_provider(project_id: str, *, read_fn=None):
@@ -700,6 +702,8 @@ def build_modeller_tool_surface(
                            project_id=project_id, gap_sink=tools.seam_gaps),
         ExecTool(exec_fn=tools.exec_fn, gap_sink=tools.seam_gaps),
     ]
+    if tools.browser_tool is not None:
+        surface.append(tools.browser_tool)
     if tools.suite_tools:
         surface.extend(tools.suite_tools)
         if tools.suite is None:

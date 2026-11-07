@@ -192,7 +192,7 @@ def _no_live_gateway_in_unit_tier(request, monkeypatch):
     """Keep the unit tier off the OPERATOR'S LOCAL LLM CONFIGURATION.
 
     The checkout's `.env` selects the dev stack's models
-    (`LLM_CRAWLER=opencode:step-5-preview-free`, ...) and its gateway
+    (`LLM_TRIAGER=opencode:step-5-preview-free`, ...) and its gateway
     (`LLM_GATEWAY_URL=http://localhost:4000`). None of that is reachable in a
     plain unit run, and none of it should decide what a unit test asserts.
 
@@ -200,11 +200,10 @@ def _no_live_gateway_in_unit_tier(request, monkeypatch):
     `load_dotenv()`, which loads the `.env` into the process environment. One
     test module that imports litellm therefore leaks the whole configuration into
     every later test in the process. Observed live: `tests/recon/crawl/
-    test_crawl_agent.py` passed alone and failed after a litellm-importing
-    module - the leak configured the `crawler` role, so `resolve_capability`
-    reached the unreachable gateway, cached the DEGRADED profile (the reader is
-    resolve-and-hold), and the crawl refused its tool loop, returning the empty
-    manifest.
+    test_llm_session.py` passed alone and failed after a litellm-importing
+    module - the leak configured a role, so `resolve_capability` reached the
+    unreachable gateway and cached the DEGRADED profile (the reader is
+    resolve-and-hold).
 
     The unit tier therefore clears the ambient LLM configuration and restores it
     afterwards - the same discipline it already applies to `NEO4J_URI` /

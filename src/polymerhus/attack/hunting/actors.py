@@ -271,6 +271,7 @@ class ThreatModellerActor(_TurnActor):
         self._compaction = compaction  # #95 D9/H: None auto-wires, False disables
         self.tools = tools
         self.project_id = project_id
+        self._browser_tool = None
 
     @property
     def compaction_manager(self):
@@ -305,6 +306,20 @@ class ThreatModellerActor(_TurnActor):
             middleware_extra = [self._compaction]
         surface: list = []
         if self.tools is not None:
+            from polymerhus.app.config import config  # noqa: PLC0415
+            from polymerhus.app.llm.browser_tools import (  # noqa: PLC0415
+                build_browser_tool,
+            )
+
+            self._browser_tool = build_browser_tool(
+                project_id=self.project_id
+                or getattr(self.tools, "project_id", "")
+                or "",
+                role="hunting_threat_modeller",
+                instance_id=self._run_id,
+                mcp_url=config.KALI_BROWSER_MCP_URL,
+            )
+            self.tools.browser_tool = self._browser_tool
             cell = getattr(self.tools, "unit_cell", None)
             surface = list(build_modeller_tool_surface(
                 self.project_id or getattr(self.tools, "project_id", "") or "",
@@ -350,7 +365,12 @@ class ThreatModellerActor(_TurnActor):
             return None
 
     async def stop(self) -> None:
-        await self._stop()
+        try:
+            await self._stop()
+        finally:
+            if self._browser_tool is not None:
+                self._browser_tool.close()
+                self._browser_tool = None
 
 
 class HuntingHunterActor(_TurnActor):

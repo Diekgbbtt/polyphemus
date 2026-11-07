@@ -253,3 +253,36 @@ def test_harness_dedupes_a_repeated_baseline_replay():
         AIMessage(content="concluded"),
     ], [replay], [harness])
     assert calls == ["http_new"]
+
+
+def test_harness_dedupes_a_repeated_browser_command():
+    from types import SimpleNamespace
+
+    from langchain_core.tools import tool
+
+    from polymerhus.attack.hunting.pod.tools import browser_signature
+
+    calls: list = []
+    log = ExperimentLog()
+    harness = build_harness_middleware(log=log, variant_ref="v0", cap=10)
+
+    @tool
+    def browser(command: str, input: str | None = None) -> str:
+        """One browser command."""
+        signature = browser_signature("v0", {"command": command, "input": input})
+        log.mark_executed(signature)
+        calls.append((command, input))
+        return "ok"
+
+    _run_loop([
+        AIMessage(content="", tool_calls=[
+            {"name": "browser", "args": {"command": "start", "input": None}, "id": "b1"},
+        ]),
+        AIMessage(content="", tool_calls=[
+            {"name": "browser", "args": {"command": "start", "input": None}, "id": "b2"},
+        ]),
+        AIMessage(content="concluded"),
+    ], [browser], [harness])
+
+    assert calls == [("start", None)]
+    assert len(log.executed) == 1

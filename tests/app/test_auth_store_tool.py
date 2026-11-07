@@ -90,7 +90,7 @@ def test_description_carries_the_full_contract(tmp_path):
 def test_contract_teaches_the_domain_model():
     for marker in ("auth store", "account record", "operator section",
                    "agent section", "technical condition",
-                   "browser session-state reference", "concrete snapshot",
+                   "browser auth-context reference", "concrete snapshot",
                    "operator seed", "procedure label"):
         assert marker in AUTH_STORE_CONTRACT, f"contract missing {marker!r}"
 
@@ -109,18 +109,17 @@ def test_contract_carries_the_account_identity_rule():
 def test_contract_carries_the_overall_schema():
     for marker in ("login_endpoint", "required_headers", "mechanism",
                    "defences", "fingerprinting", "technical_conditions",
-                   "credentials", "tokens", "steel", "snapshot",
+                   "credentials", "tokens", "browser_context", "snapshot",
                    "procedure", "origin", "status", "updated_at",
                    "roles", "default_role"):
         assert marker in AUTH_STORE_CONTRACT, f"contract missing {marker!r}"
 
 
-def test_contract_has_no_profile_compatibility_vocabulary():
-    """#395 Q5: a retired `steel.profile` is silently disregarded. The
-    agent-facing contract teaches only `steel: {state}` - it must not mention
-    the retired key at all, so no agent learns a compatibility path."""
+def test_contract_has_no_legacy_state_vocabulary():
+    """The contract teaches only the decoupled browser-context reference."""
     assert "profile" not in AUTH_STORE_CONTRACT.lower()
-    assert "steel: {state}" in AUTH_STORE_CONTRACT
+    assert "browser_context: {ref}" in AUTH_STORE_CONTRACT
+    assert "steel: {state}" not in AUTH_STORE_CONTRACT
 
 
 def test_contract_carries_the_read_write_rules():

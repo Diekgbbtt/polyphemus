@@ -396,7 +396,8 @@ def _spec_task_skills(state: PodState) -> tuple:
 
 def _harness_ctx(state: PodState, *, exec_fn, memory_store,
                  model_factory, spec_id, graph_view_fn=None,
-                 project_id=None, replay_fn=None) -> PodHarnessContext:
+                 project_id=None, replay_fn=None,
+                 browser_tool=None) -> PodHarnessContext:
     """The run-scoped harness the production seams read (T7): exec/store/log/
     variant/model factory, with the memory key on the #164 spec id (D84-34) -
     resolved through `_mem_key`, the SAME value `bind_pod_session` threads as
@@ -426,14 +427,15 @@ def _harness_ctx(state: PodState, *, exec_fn, memory_store,
         variant_ref=state.get("current_variant_ref", "v0"),
         model_factory=model_factory, cap=HUNT_POD_MAX_TOOL_CALLS,
         graph_view_fn=graph_view_fn, capture_context=capture_context,
-        replay_fn=replay_fn, task_skills=_spec_task_skills(state))
+        replay_fn=replay_fn, task_skills=_spec_task_skills(state),
+        browser_tool=browser_tool)
 
 
 def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
                     runner_middleware=(), triager_middleware=(),
                     memory_store=None, model_factory=None,
                     project_id=None, spec_id=None, graph_view_fn=None,
-                    replay_fn=None):
+                    replay_fn=None, browser_tool=None):
     """Compile the pod subgraph, injecting the side-effecting collaborators:
 
     - `exec_fn(command, timeout_s) -> ExecResult` - the terminal (required).
@@ -542,7 +544,8 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
                                       spec_id=spec_id,
                                       graph_view_fn=graph_view_fn,
                                       project_id=project_id,
-                                      replay_fn=replay_fn)):
+                                      replay_fn=replay_fn,
+                                      browser_tool=browser_tool)):
                 step = await _await_seam(runner_step_fn, spec, delta,
                                          state.get("tool_calls", 0))
             if not isinstance(step, RunnerStep):
@@ -743,7 +746,8 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
                                       model_factory=model_factory,
                                       spec_id=spec_id,
                                       graph_view_fn=graph_view_fn,
-                                      project_id=project_id)):
+                                      project_id=project_id,
+                                      browser_tool=browser_tool)):
                 raw = await _await_seam(triager_fn, spec, obs, seam_view, log)
             decision = raw if isinstance(raw, dict) else {}
             if decision.get("action") == "terminate":

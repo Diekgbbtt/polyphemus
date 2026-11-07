@@ -153,54 +153,62 @@ def build_authn_loop_middleware():
 # static discipline lives in the prompt file; only the run facts vary here).
 _BRANCH_MANNER = {
     "request": (
-        "No blocking defence recorded. Mount the stable browser session with "
-        "`browser_start(<key>)`; the pool restores its cookies and "
-        "localStorage. Validate it with the authenticated-context oracle at "
-        "`overview.auth_probe.url` using `browser_exec(\"eval ...\")`: 2xx "
-        "passes; 401, 403, or any 3xx fails; anything else is indeterminate "
-        "and stops the run. Call `browser_end()` when the turn is done and "
-        "write `accounts.<account>.steel.state = <key>`. Then validate the "
-        "request material with the recorded HTTP history replay "
+        "No blocking defence recorded. Mount the web browser with "
+        "`browser(command=\"start\", account=<account>)`; the pool mounts the "
+        "decoupled auth context and restores its cookies and localStorage. "
+        "Validate it with the authenticated-context oracle at "
+        "`overview.auth_probe.url` using "
+        "`browser(command=\"exec\", input=\"eval ...\")`: 2xx passes; 401, "
+        "403, or any 3xx fails; anything else is indeterminate and stops the "
+        "run. Call `browser(command=\"end\", persist_context=true)` when the "
+        "authenticated state should be saved, then write "
+        "`accounts.<account>.browser_context.ref = <context-ref>`. Then "
+        "validate the request material with the recorded HTTP history replay "
         "(`search_http_history`, then `replay_http_request`); the in-process "
         "auth-store view is redacted, so never read or paste token values. "
         "The request material is applied server-side. Request phases stay "
         "released."),
     "browser_only": (
         "Browser-only target (the defence is not HTTP-replayable). Validate "
-        "EXCLUSIVELY through the oracle in the mounted browser session. "
-        "`browser_start(<key>)` mounts the durable session; the pool restores "
-        "its cookies and localStorage. Do not start a twin: the name is the "
-        "durable handle. A name mounted elsewhere answers `session_in_use`; a "
-        "name that was mounted and disappeared answers `session_missing`. Run "
-        "the oracle with `browser_exec(\"eval ...\")`; a "
+        "EXCLUSIVELY through the oracle in the mounted web browser. "
+        "`browser(command=\"start\", account=<account>)` mounts the durable "
+        "auth context; the pool restores its cookies and localStorage. Do not "
+        "start a twin: the browser tool derives the session key. A mount "
+        "while the same execution unit holds it answers `session_in_use`; a "
+        "mount with no live lease answers `no_session`, so call `start` "
+        "first. Run "
+        "the oracle with `browser(command=\"exec\", input=\"eval ...\")`; a "
         "2xx passes, 401, 403, or 3xx fails. On a failure, sign in or mint a "
         "new account through the authn skill's sign-up procedure with "
-        "synthetic identity data in the same session, then prove the oracle "
-        "again. Call `browser_end()` on every path; it captures, saves, stops, "
-        "and releases. Write `accounts.<account>.steel.state = <key>` after a "
-        "successful end. A failed or indeterminate oracle stops the run. "
+        "synthetic identity data in the same browser, then prove the oracle "
+        "again. Call `browser(command=\"end\", persist_context=true)` on "
+        "every successful path; it captures, saves, stops, and releases. "
+        "Write `accounts.<account>.browser_context.ref = <context-ref>` after "
+        "a successful end. A failed or indeterminate oracle stops the run. "
         "Never use request tools. Request phases will be pruned; only the "
         "Steel crawl runs."),
     "request_browser_first": (
-        "Replayable defence. Mount the stable browser session with "
-        "`browser_start(<key>)` and validate the oracle at "
-        "`overview.auth_probe.url` first. The request material is applied "
-        "server-side by the pipeline. Do not read or compare token values. On "
-        "a failed oracle, sign in or mint a new account through the authn "
-        "skill's sign-up procedure with synthetic identity data, then prove "
-        "the oracle again. Call `browser_end()` and write "
-        "`accounts.<account>.steel.state = <key>`. Then release request "
-        "collection."),
+        "Replayable defence. Mount the web browser with "
+        "`browser(command=\"start\", account=<account>)` and validate the "
+        "oracle at `overview.auth_probe.url` first. The request material is "
+        "applied server-side by the pipeline. Do not read or compare token "
+        "values. On a failed oracle, sign in or mint a new account through "
+        "the authn skill's sign-up procedure with synthetic identity data, "
+        "then prove the oracle again. Call "
+        "`browser(command=\"end\", persist_context=true)` and write "
+        "`accounts.<account>.browser_context.ref = <context-ref>`. Then "
+        "release request collection."),
     "resolve_in_loop": (
         "Replayability UNKNOWN. Resolve it with the recorded HTTP history "
         "replay: replayable releases the request branch (record replayability "
         "true), not replayable prunes to browser-only (record false). If no "
         "captured artifact exists, do not read secrets and do not invent a "
         "result; record the fact as unresolved and loud. The oracle still "
-        "decides whether the session is authenticated. Mount the stable "
-        "browser session with `browser_start(<key>)` for the oracle, call "
-        "`browser_end()`, and write `accounts.<account>.steel.state = <key>`. "
-        "An unresolved request fact never forces a fail-open. Persist any "
+        "decides whether the session is authenticated. Mount the web browser "
+        "with `browser(command=\"start\", account=<account>)` for the oracle, "
+        "call `browser(command=\"end\", persist_context=true)`, and write "
+        "`accounts.<account>.browser_context.ref = <context-ref>`. An "
+        "unresolved request fact never forces a fail-open. Persist any "
         "resolved fact to the overview with an auth_store write (your write "
         "merges; the operator stamp stays), and record it in the rationale "
         "and verdict."),
@@ -214,12 +222,14 @@ def _gateway_human(*, project_id: str, directive: str, candidate: str | None) ->
     reads, which is what the loop tracker observes."""
     from langchain_core.messages import HumanMessage  # noqa: PLC0415
 
-    from polymerhus.app.steel_session_state import (  # noqa: PLC0415
-        browser_session_name,
+    from polymerhus.app.llm.browser_tools import (  # noqa: PLC0415
+        browser_context_ref,
     )
 
     manner = _BRANCH_MANNER.get(directive, _BRANCH_MANNER["request"])
-    session_key = browser_session_name(project_id, candidate)
+    context_ref = (
+        browser_context_ref(project_id, candidate) if candidate else None
+    )
     selection = (
         f"Candidate account (most recently updated usable): {candidate}."
         if candidate else
@@ -230,9 +240,11 @@ def _gateway_human(*, project_id: str, directive: str, candidate: str | None) ->
         f"Auth gateway for project {project_id}.\n\n"
         f"Branch directive: {directive}.\n{manner}\n\n"
         f"{selection}\n"
-        f"Stable browser session key: `{session_key}`. Mount exactly this "
-        "name. If you mint a different account, its key is "
-        "`steel-<project_slug>-<account_slug>` with the same slug rule "
+        f"Browser context reference: `{context_ref or 'derived from the selected account'}`.\n"
+        "The browser tool derives the session key; never pass a session name. "
+        "Mount with `browser(command=\"start\", account=<account>)`. If you "
+        "mint a different account, its context reference is "
+        "`steel-auth-<project_slug>-<account_slug>` with the same slug rule "
         "(lowercase; runs outside [a-z0-9_-] become `-`).\n\n"
         "Ground (overview read + authn skill load), validate with the "
         "authenticated-context oracle before sign-in, sign in or mint on a "
@@ -439,16 +451,22 @@ class ReconOrchestratorActor:
         self._turn_settled = asyncio.Event()
 
         async def run_actor() -> None:
-            # The gateway's three browser tools share ONE MCP session for the
-            # whole turn: the server keys the durable lease by that session.
-            # An absent or unreachable browser MCP yields no tools and the
+            # One browser tool, one MCP session, for the actor's whole life.
+            # An absent or unreachable pool is a fail-open capability: the
             # request path still runs.
             from polymerhus.app.config import config as app_config  # noqa: PLC0415
-            from polymerhus.attack.hunting.browser_tools import (  # noqa: PLC0415
-                open_browser_tools,
+            from polymerhus.app.llm.browser_tools import (  # noqa: PLC0415
+                build_browser_tool,
             )
 
-            async with open_browser_tools(app_config.KALI_BROWSER_MCP_URL) as browser_tools:
+            browser_tool = build_browser_tool(
+                project_id=project_id,
+                role="job_orchestrator",
+                instance_id=self._run_id,
+                mcp_url=app_config.KALI_BROWSER_MCP_URL,
+                auth_store=self._auth_store,
+            )
+            try:
                 await run_session_agent(
                     self._address.role_id,
                     self._address.thread_id,
@@ -456,7 +474,7 @@ class ReconOrchestratorActor:
                     checkpointer=self._checkpointer,
                     inbox=self._inbox,
                     on_message=self._on_message,
-                    tools=[*binding.tools, *kali_tools, *browser_tools],
+                    tools=[*binding.tools, *kali_tools, browser_tool],
                     response_format=response_format,
                     middleware=middleware_list,
                     context=binding.context,
@@ -467,6 +485,8 @@ class ReconOrchestratorActor:
                     observe=self._observe,
                     usage_scope=project_id,
                 )
+            finally:
+                browser_tool.close()
 
         self._task = asyncio.ensure_future(run_actor())
 

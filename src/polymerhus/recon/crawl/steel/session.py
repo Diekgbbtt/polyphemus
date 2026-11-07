@@ -225,7 +225,9 @@ class BrowserBackend(Protocol):
     @property
     def registry(self) -> "SteelSessionRegistry": ...
 
-    def start(self, name: str) -> StartResult: ...
+    def start(
+        self, name: str, *, context_ref: str | None = None
+    ) -> StartResult: ...
 
     def command(self, verb: str, *args: str) -> list[str]: ...
 
@@ -311,14 +313,25 @@ class SteelSessionClient:
         self._start: StartResult | None = None
 
     @classmethod
-    def from_mcp(cls, url: str, **client_kwargs: Any) -> "SteelSessionClient":
+    def from_mcp(
+        cls,
+        url: str,
+        *,
+        context_ref: str | None = None,
+        **client_kwargs: Any,
+    ) -> "SteelSessionClient":
         """Mount the browser MCP as this client's backend."""
         from polymerhus.recon.crawl.steel.mcp_client import (  # noqa: PLC0415
             McpBackend,
             McpBrowserClient,
         )
 
-        return cls(backend=McpBackend(McpBrowserClient(url, **client_kwargs)))
+        return cls(
+            backend=McpBackend(
+                McpBrowserClient(url, **client_kwargs),
+                context_ref=context_ref,
+            )
+        )
 
     @property
     def attached(self) -> SteelSession | None:
@@ -345,16 +358,20 @@ class SteelSessionClient:
             )
         return catalogue()
 
-    def attach(self, name: str) -> SteelSession:
-        """Mount one durable session by name (the engine's start)."""
-        result = self._backend.start(name)
+    def attach(
+        self, name: str, *, context_ref: str | None = None
+    ) -> SteelSession:
+        """Mount one session by name and mount the auth-context reference."""
+        result = self._backend.start(name, context_ref=context_ref)
         self._start = result
         self._attached = result.session
         return result.session
 
-    def start(self, name: str) -> SteelSession:
+    def start(
+        self, name: str, *, context_ref: str | None = None
+    ) -> SteelSession:
         """Alias of `attach` for callers that name the lifecycle verb."""
-        return self.attach(name)
+        return self.attach(name, context_ref=context_ref)
 
     def command(self, verb: str, *args: str) -> list[str]:
         """Build one command in the backend's grammar."""
@@ -445,7 +462,9 @@ class CliBackend:
         self._registry.observe_catalogue(sessions)
         return sessions
 
-    def start(self, name: str) -> StartResult:
+    def start(
+        self, name: str, *, context_ref: str | None = None
+    ) -> StartResult:
         """Attach to one live pre-authenticated session by name.
 
         The filtered catalogue read proves the name is live and binds the

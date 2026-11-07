@@ -1,3 +1,9 @@
+> 2026-11-07: the agent browser integration is complete. The agent surface
+> is one `browser` tool; the auth context is a decoupled pool-store object
+> referenced by `accounts.<account>.browser_context.ref`; the legacy six-tool
+> crawler is removed. See `docs/design/agent-browser-integration-plan.md` and
+> `docs/design/legacy-crawler-eol.md`.
+
 # steel_crawl integration impact map
 
 **Status:** convergence record, 2026-11-03.

@@ -48,7 +48,6 @@ services:
       LLM_CONFIGURATOR: ${LLM_CONFIGURATOR:?LLM_CONFIGURATOR is required - '<provider>:<model>' in the instance .env}
       LLM_TRIAGER: ${LLM_TRIAGER:?LLM_TRIAGER is required - '<provider>:<model>' in the instance .env}
       LLM_JOB_ORCHESTRATOR: ${LLM_JOB_ORCHESTRATOR:?LLM_JOB_ORCHESTRATOR is required - '<provider>:<model>' in the instance .env}
-      LLM_CRAWLER: ${LLM_CRAWLER:?LLM_CRAWLER is required - '<provider>:<model>' in the instance .env}
       LLM_ANALYSER: ${LLM_ANALYSER:?LLM_ANALYSER is required - '<provider>:<model>' in the instance .env}
       LLM_HUNTING_THREAT_MODELLER: ${LLM_HUNTING_THREAT_MODELLER:?LLM_HUNTING_THREAT_MODELLER is required - '<provider>:<model>' in the instance .env}
       LLM_HUNTING_HUNTER: ${LLM_HUNTING_HUNTER:?LLM_HUNTING_HUNTER is required - '<provider>:<model>' in the instance .env}

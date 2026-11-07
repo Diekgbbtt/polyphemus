@@ -10,8 +10,8 @@ pure: no I/O, no retry axis, no timeout, no live model/gateway).
 Ratified rung table (ADR A1, authoritative):
 
 1. **Tools bound** (a session/crawl tool loop): `function_calling` is the
-   tool-loop option - there is no silent method-swap inside a tool loop (the
-   T5 gate, `crawl_agentic.py`, refuses crawl on unsupported/unknown and stays)
+   tool-loop option - there is no silent method-swap inside a tool loop (a
+   role whose model cannot tool-call stays on its declared rung)
    - UNLESS the profile declares the A6 forced-choice constraint
    (`supports_forced_tool_choice is False`), which picks the voluntary rung
    `voluntary_function_calling` (the schema tool bound, the choice not forced).

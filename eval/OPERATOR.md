@@ -1076,7 +1076,8 @@ The agent reaches it at `http://kali:8003/mcp`.
 
 #### Agent path
 
-The agent calls `browser_start`, `browser_exec`, and `browser_end`.
+The agent binds one `browser` tool with the `start`, `exec`, and `end` commands.
+The MCP server keeps its three internal tools behind that one agent surface.
 The MCP owns the worker choice and the lease.
 The crawl's `steel_crawl` consumes the CDP endpoint the start result returns;
 the generic browser tool strips `cdp_url` and `cdp_host` before the model sees
@@ -1087,12 +1088,14 @@ No worker HTTP origin, port, or container name reaches the model.
 
 The pool store is `/var/lib/steel/sessions`, one owner-only JSON file per
 stable key.
-The key is `steel-<project_slug>` without an account and
-`steel-<project_slug>-<account_slug>` with one.
-`accounts.<account>.steel.state` holds the key, not a file path.
-`browser_end` captures cookies, localStorage, sessionStorage, and indexedDB,
-saves them under the key, stops the browser, and releases the session.
-`browser_start` restores cookies and localStorage.
+The context reference is `steel-auth-<project_slug>-<account_slug>`.
+`accounts.<account>.browser_context.ref` holds the reference, not a file path.
+`browser(command="end", persist_context=true)` captures cookies, localStorage,
+sessionStorage, and indexedDB, saves them under the context reference, stops the
+browser, and releases the session.
+`browser(command="start", account=<account>)` restores cookies and localStorage.
+The session key is ephemeral and derived from the execution unit; the agent never
+passes it.
 The auth feed carries only `auth_probe` and `login_url` to the crawl.
 
 #### Teardown

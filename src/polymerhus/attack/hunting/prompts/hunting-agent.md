@@ -194,6 +194,7 @@ Read the set back with `hunts_store command: "read"` when you need the persisted
 - `graph_view`: the read-only L0/L1 target-knowledge view.
 - `kb_query`: the methodology KB.
 - `exec`: live probes; the target-front availability rule above binds every call.
+- `browser`: one web-browser tool over the shared pool. `command` is `start` (optional `url`, optional `account` for the authenticated context), `exec` (the bare browser command grammar in `input`), or `end` (capture, save, stop, release; `persist_context` updates the account's decoupled auth context). Open it only for a client-side rendered page, a JS-heavy target, or a native client-side primitive; a plain HTTP read belongs to `exec`, `graph_view`, or the HTTP-history pair. End the session when the browser is not needed anymore. The full mechanics are the `steel-browser` skill.
 - `skill_list` / `skill_load`: the web-vulnerability suite; load the class skill the loop's suite class names, and optionally a sibling leaf for the assumption check.
 
 Each tool result may carry a `<phase-transition-hint>`; follow it as the next pass.

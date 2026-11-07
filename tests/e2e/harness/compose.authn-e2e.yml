@@ -57,7 +57,6 @@ services:
       LLM_TRIAGER: ${LLM_MODEL_TRIAGER:-opencode-go:opencode-go/deepseek-v4.1-flash}
       LLM_CONFIGURATOR: ${LLM_MODEL_CONFIGURATOR:-opencode-go:opencode-go/deepseek-v4.1-flash}
       LLM_JOB_ORCHESTRATOR: ${LLM_MODEL_JOB_ORCHESTRATOR:-opencode-go:opencode-go/deepseek-v4.1-flash}
-      LLM_CRAWLER: ${LLM_MODEL_CRAWLER:-opencode-go:opencode-go/deepseek-v4.1-flash}
       LLM_ANALYSER: ${LLM_MODEL_ANALYSER:-opencode-go:opencode-go/deepseek-v4.1-flash}
       LLM_HUNTING_HUNTER: ${LLM_MODEL_HUNTING_HUNTER:-opencode-go:opencode-go/deepseek-v4.1-flash}
       LLM_HUNTING_THREAT_MODELLER: ${LLM_MODEL_HUNTING_THREAT_MODELLER:-opencode-go:opencode-go/deepseek-v4.1-flash}

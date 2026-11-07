@@ -55,6 +55,17 @@ def command_signature(variant_ref: str, command: str) -> str:
     return hashlib.sha256(blob).hexdigest()[:16]
 
 
+def browser_signature(variant_ref: str, arguments: dict) -> str:
+    """The O7/C10 dedup key for one browser command within a variant."""
+    blob = (
+        f"{variant_ref}\x00browser\x00"
+        f"{arguments.get('command') or ''}\x00"
+        f"{arguments.get('url') or ''}\x00"
+        f"{arguments.get('input') or ''}"
+    ).encode("utf-8")
+    return hashlib.sha256(blob).hexdigest()[:16]
+
+
 def replay_signature(variant_ref: str, artifact_id: str, overrides: dict) -> str:
     """The O7/C10 dedup key for a baseline replay (S5 8.5): a replay is a probe
     execution like any other, keyed by the artifact pointer + the closed

@@ -62,7 +62,6 @@ def _bridge_env_to_localhost() -> None:
     have frozen dummy values at collection)."""
     key = os.environ.get("API_KEY_OPENROUTER") or os.environ.get("OPENAI_API_KEY")
     os.environ["API_KEY_OPENROUTER"] = key
-    os.environ["LLM_CRAWLER"] = f"openrouter:{TOOLCALL_MODEL}"
     os.environ["LLM_CONFIGURATOR"] = f"openrouter:{TOOLCALL_MODEL}"
     os.environ["LLM_JOB_ORCHESTRATOR"] = f"openrouter:{REASONING_MODEL}"
     os.environ["LLM_TRIAGER"] = f"openrouter:{REASONING_MODEL}"

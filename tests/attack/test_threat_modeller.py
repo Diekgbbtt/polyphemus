@@ -15,6 +15,7 @@ whole contract.
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -62,6 +63,7 @@ from tests.hunting_fixtures import (  # noqa: E402
 
 
 def _tools(store, **kwargs) -> ModellerTools:
+    kwargs.setdefault("browser_tool", SimpleNamespace(name="browser"))
     return ModellerTools(threat_store=store, project_id=PROJECT, run_id=RUN,
                          **kwargs)
 

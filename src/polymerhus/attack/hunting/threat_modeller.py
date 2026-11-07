@@ -89,7 +89,7 @@ MODELLER_MODEL_KEY = "LLM_HUNTING_THREAT_MODELLER"
 # copied from an outside repository.
 TOOL_SURFACE: tuple[str, ...] = (
     "hunts_store", "notes", "search_http_history", "get_http_artifact", "exec",
-    "skill_list", "skill_load",
+    "browser", "skill_list", "skill_load",
 )
 
 # The gate hints (S1 9.3): module constants injected in the gate write's tool

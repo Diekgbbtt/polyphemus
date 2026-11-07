@@ -63,7 +63,7 @@ def test_orchestrator_arms_the_write_capable_auth_surface() -> None:
         "write_skill",
         "auth_store",
     ]
-    assert binding.context["skills"] == [AUTHN_SKILL]
+    assert binding.context["skills"] == ["steel-browser", AUTHN_SKILL]
     assert binding.context["project_id"] == "p1"
     assert len(binding.middleware) == 1  # the L1 index middleware
 
@@ -125,7 +125,7 @@ def test_the_authn_bounding_never_mints_a_write_capability(tmp_path) -> None:
     assert out["error"] == "auth_readonly"
     names = {t.name for t in binding.tools}
     assert "write_skill" not in names
-    assert binding.context["skills"] == [AUTHN_SKILL]
+    assert binding.context["skills"] == ["steel-browser", AUTHN_SKILL]
 
 
 def test_the_read_only_arming_stays_read_only_on_a_bound_role() -> None:

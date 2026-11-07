@@ -99,12 +99,12 @@ def test_names_the_parametrizable_project_skill_write_location():
 
 def test_session_discipline_names_the_state_reference_and_has_no_profile():
     body = _body()
-    assert "steel: {state}" in body
+    assert "browser_context: {ref}" in body
     assert "profile" not in body.lower()
     assert "--profile" not in body
     assert "profile-mount.sh" not in body
-    assert "stable pool key" in body
-    assert "browser_end" in body
+    assert "browser_context.ref" in body
+    assert "browser(command" in body
 
 
 def test_account_identity_is_the_credential_not_the_procedure():
@@ -196,12 +196,12 @@ def test_bootstrap_prompt_cites_the_mechanics_skill():
     assert "do not re-derive the command grammar from `--help`" in prompt
 
 
-def test_browser_discipline_mounts_the_stable_key_and_logs_in_only_on_failure():
+def test_browser_discipline_mounts_the_auth_context_and_logs_in_only_on_failure():
     body = _body()
-    assert "browser_start(<stable-key>)" in body
-    assert "browser_end()" in body
+    assert 'browser(command="start", account=<account>)' in body
+    assert 'browser(command="end", persist_context=true)' in body
     assert "session_in_use" in body
-    assert "session_missing" in body
+    assert "no_session" in body
     assert "Log in when the mounted session does not pass the oracle" in body
     assert "pool store is the only durable browser-state store" in body
     assert "profile" not in body.lower()
@@ -211,10 +211,10 @@ def test_bootstrap_prompt_mounts_the_stable_key_and_restores_state():
     prompt = (SKILL_DIR / "references" / "bootstrap-workflow.md").read_text(
         encoding="utf-8"
     )
-    assert "browser_start(<session_key>)" in prompt
-    assert "browser_end()" in prompt
+    assert 'browser(command="start", account=<account>)' in prompt
+    assert 'browser(command="end", persist_context=true)' in prompt
     assert "session_in_use" in prompt
-    assert "session_missing" in prompt
+    assert "no_session" in prompt
     assert "restores its cookies and localStorage" in prompt
     assert "profile" not in prompt.lower()
     assert "--profile" not in prompt
@@ -249,7 +249,7 @@ def test_generated_procedure_uses_the_redacted_material_path():
     assert "search_http_history" in body
     assert "replay_http_request" in body
     assert "never instructs a model-facing follower to read or paste a value" in body
-    assert "mount the stable key" in body
+    assert "mount the account's auth context" in body
     assert "never start a twin" in body
 
 
@@ -258,5 +258,5 @@ def test_mechanics_skill_paces_the_login_and_names_the_end_path():
     pool owns the session clocks; the mechanics skill names the explicit end."""
     body = skills.skill_for("steel-browser")
     assert "Submit once, then wait on the condition" in body
-    assert "browser_end()" in body
+    assert 'browser(command="end"' in body
     assert "conversation close" in body

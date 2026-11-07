@@ -213,8 +213,10 @@ data/<project_id>/test-executor-pod/
 
 ### 7. The pure-log invariant (operator directive)
 
-- The LLM is granted NO toolcapability to write the experiment log. The tool surface stays
-  `exec` / `note` (+ the config-gated `query_lightrag` KB tool); none writes the log directly.
+- The LLM is granted NO toolcapability to write the experiment log. The tool surface is
+  `exec` / `note` / `browser` (+ the always-bound `query_lightrag` KB tool); none
+  writes the log directly. The browser tool's deterministic recorder writes a
+  `RawObservation` per call, exactly like the exec tool.
 - All log writes remain in deterministic stages:
   - `init` records the v0 variant (`graph.py`).
   - `mint_variant` records the derived variant.

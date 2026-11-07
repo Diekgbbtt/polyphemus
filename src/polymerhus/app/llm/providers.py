@@ -496,7 +496,6 @@ ROLES: tuple[Role, ...] = (
     Role("configurator",     "LLM_CONFIGURATOR",     "session"),
     Role("triager",          "LLM_TRIAGER",          "session",  "low"),
     Role("job_orchestrator", "LLM_JOB_ORCHESTRATOR", "session",  "medium"),
-    Role("crawler",          "LLM_CRAWLER",          "session"),
     Role("bootstrapper",     "LLM_ANALYSER",         "one_shot"),
     Role("assigner",         "LLM_ANALYSER",         "session",  "medium"),
     Role("mechanism_typist", "LLM_ANALYSER",         "session",  "medium"),

@@ -401,7 +401,7 @@ JOBS: dict[str, JobSpec] = {
     ),
     "steel_crawl": JobSpec(
         tool="steel_crawl",
-        skill="agentic_crawl",
+        skill="steel_crawl",
         command_template="",
         produces=["BaseURL", "Endpoint", "Parameter"],
         consumes="BaseURL",

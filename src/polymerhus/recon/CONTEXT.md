@@ -4,6 +4,13 @@ Layer-0 descriptive attack-surface discovery.
 This context observes a target from the outside and records what tools witnessed as a graph of typed L0 nodes; it never judges what any of it means (that is [Analysis](../analysis/CONTEXT.md)).
 It also owns the pipeline that orchestrates discovery - Run, Job, Phase, Pod - which by operator ruling are elements of the recon pipeline and live here, not in a separate context.
 
+**2026-11-07 agent browser integration:** the recon orchestrator's gateway
+stretch and the recon triager bind the one `browser` tool. The deterministic
+`steel_crawl` engine mounts the decoupled auth-context reference
+(`accounts.<account>.browser_context.ref`) through the browser MCP. `steel.state`
+is removed, and the legacy six-tool agentic crawler is removed; see
+`docs/design/legacy-crawler-eol.md`.
+
 Vocabulary derived from `docs/design/domain-model.md` (esp. §2.1-2.2, §5, §7); see also `docs/design/recon-pipeline-design.md`.
 
 ## The surface and its atoms

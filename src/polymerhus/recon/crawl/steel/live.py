@@ -369,6 +369,7 @@ class LiveRunContext:
     edge_url: str | None = None
     edge_token: str | None = None
     browser_mcp_url: str = ""
+    browser_context_ref: str | None = None
     max_duration_s: float = MAX_DURATION_S_DEFAULT
     cancel: Callable[[], bool] | None = None
     coverage: Mapping[str, Any] = field(default_factory=dict)
@@ -541,7 +542,9 @@ def run_live_crawl(ctx: LiveRunContext) -> LiveRunResult:
         raise LiveCrawlError(
             "KALI_BROWSER_MCP_URL is unset; the browser pool is unavailable"
         )
-    session = SteelSessionClient.from_mcp(ctx.browser_mcp_url)
+    session = SteelSessionClient.from_mcp(
+        ctx.browser_mcp_url, context_ref=ctx.browser_context_ref
+    )
     # The transport opens lazily, after the job has mounted the lease and the
     # start result has supplied the container address and the localhost Host.
     transport = LiveCdpTransport(lambda: session.cdp_endpoint)

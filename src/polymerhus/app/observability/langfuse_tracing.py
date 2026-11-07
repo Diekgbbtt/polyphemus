@@ -6,11 +6,10 @@ Design goals (deliberately minimal - see the Stream A observability brief):
   standard LangChain `CallbackHandler` and let the LangGraph structure give us
   the trace tree for free: passing a single handler into `run_pipeline` /
   `graph.invoke` / `llm.invoke(config={"callbacks": [...]})` captures, per run,
-  (a) every tool call + its response (the Kali MCP `execute_command` calls in
-  pods and the `steel_*` tools in the crawl ReAct loop), (b) each role LLM's
-  inputs/outputs (configurator / triager / job_orchestrator / crawler
-  reasoning dumps), and (c) the phase DAG / job fan-out as the nested-span
-  overview of the plan.
+  (a) every tool call + its response (the Kali MCP `execute_command` calls and
+  the agent-facing `browser` tool), (b) each role LLM's inputs/outputs
+  (configurator / triager / job_orchestrator reasoning dumps), and (c) the
+  phase DAG / job fan-out as the nested-span overview of the plan.
 
 - **Env-driven + fail-open.** Tracing is enabled only when both of
   `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are present, plus at least one

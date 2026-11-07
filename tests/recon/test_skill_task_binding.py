@@ -173,7 +173,7 @@ def test_a_declaration_against_an_exempt_role_is_refused_loudly(caplog) -> None:
     """The roster's exemption is a considered capability-minimalism decision,
     not artifact-overridable: the declaration is warned and ignored."""
     with caplog.at_level(logging.WARNING, logger="polymerhus.app.llm.skills"):
-        binding = skill_agent_binding("hunting_threat_modeller", task_skills=["ssrf"])
+        binding = skill_agent_binding("assigner", task_skills=["ssrf"])
 
     assert binding.tools == []
     assert binding.middleware == []
@@ -276,7 +276,9 @@ def test_the_auth_wrapper_forwards_the_artifact_declaration() -> None:
 
     assert "ssrf" in binding.context["skills"]
     # The auth wrapper appends its own `authn` skill to the union it received.
-    assert binding.context["skills"] == ["lightrag-query", "ssrf", "authn"]
+    assert binding.context["skills"] == [
+        "lightrag-query", "ssrf", "steel-browser", "authn",
+    ]
     assert [t.name for t in binding.tools][:2] == [
         "load_skill", "record_skill_lesson",
     ]

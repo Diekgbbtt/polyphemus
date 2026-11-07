@@ -43,8 +43,8 @@ from polymerhus.app.config import config
 from polymerhus.app.clients.pg import touch_run_heartbeat as _touch_heartbeat
 from polymerhus.recon.control.auth_feed import (
     project_browser_auth,
+    project_browser_context,
     project_request_auth,
-    project_steel_state,
     resolve_account,
     resolve_overview,
 )
@@ -622,13 +622,13 @@ async def run_pipeline(
                             overview = resolve_overview(
                                 project_id, store=auth_store)
                             if job.configurator_mode == "agent":
-                                state_key = project_steel_state(
+                                context_ref = project_browser_context(
                                     account,
                                     project_id=project_id,
                                     account_name=auth_account,
                                 )
-                                if state_key:
-                                    extra["steel_session"] = state_key
+                                if context_ref:
+                                    extra["browser_context_ref"] = context_ref
                                 browser_auth = project_browser_auth(
                                     account, overview,
                                     origin=target_origin(settings))

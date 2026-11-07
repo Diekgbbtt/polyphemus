@@ -215,10 +215,6 @@ Collaborators to the graphs, but not graphs themselves.
 | `async_bridge.py` | `run_coro_blocking` | Run an async coroutine to completion from a sync node, loop-safe. |
 | `steering.py` | retired | Mid-run steering retired (D223-12). |
 | `crawl/steel/` | `CrawlJob`, `CrawlRun`, `SteelSessionClient`, `AuthOracle`, `CaptureSidecar`, `JevPolicy`, `RunLedger`, `Manifest` | The live authenticated crawl engine. |
-| `crawl/crawl_agent.py` | `run_crawl` | Legacy ReAct adapter (compatibility). |
-| `crawl/crawl_agentic.py` | `_run_agentic_crawl`, `CRAWL_TOOL_NAMES` | Legacy ReAct loop (compatibility). |
-| `crawl/steel_client.py` | `get_crawl_tools`, `steel_configured` | Legacy provider factory (compatibility). |
-| `crawl/steel_provider.py` | `SteelCrawlProvider` | Legacy in-process Playwright provider (compatibility). |
 
 ### Diagram 1 — LangGraph nesting
 
@@ -440,8 +436,9 @@ browser material, and the crawl attaches to the operator-owned live session.
 It never starts a session and never signs in.
 The retired four channels (anonymous, cookie-seeded, credentialed, interactive)
 and the `steel_await_auth` viewer flow are not the live path.
-The legacy ReAct loop (`crawl_agentic.py`, `steel_client.py`,
-`steel_provider.py`) remains as a compatibility path but is not the default.
+The legacy ReAct loop and its six-tool provider were removed on 2026-11-07;
+see `docs/design/legacy-crawler-eol.md`. The deterministic engine and the one
+`browser` tool are the only crawl executors.
 
 **The output.** The crawl writes a `steel-crawl/v2` manifest and a durable JSONL
 ledger, flushes normalized `http-artifact/v1` records to the HTTP-history edge,

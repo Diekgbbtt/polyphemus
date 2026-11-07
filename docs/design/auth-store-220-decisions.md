@@ -176,3 +176,12 @@ Existing `steel.profile` values are silently disregarded.
 There is no warning, alias, or migration branch, and the old field may remain stale on disk.
 A profile-only record behaves as a record with no browser state.
 The `steel` field validates `state` when present and ignores `profile`.
+
+
+## Amendment 2026-11-07 - the decoupled browser context
+
+`steel.state` is removed. The account holds
+`browser_context: {ref: <safe context key>}`. The pool store holds the
+decoupled auth-context object; the auth store holds only the reference. The
+browser tool mounts the object with `browser(command="start", account=...)`.
+There is no fallback and no compatibility read of `steel.state`.

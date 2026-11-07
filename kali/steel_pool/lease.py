@@ -27,7 +27,7 @@ The module is stdlib-only and performs no I/O at import.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import math
 import threading
 import time
@@ -165,6 +165,7 @@ class LeaseView:
     cdp_url: str = ""
     cdp_host: str = ""
     remaining_ms: int | None = None
+    context_ref: str | None = None
 
 
 @dataclass(frozen=True)
@@ -178,6 +179,8 @@ class EndReport:
     stopped: bool = False
     released: bool | None = None
     warnings: tuple[str, ...] = ()
+    context_ref: str | None = None
+    context_saved: bool = False
 
 
 @dataclass
@@ -199,6 +202,7 @@ class Lease:
     restore_warnings: tuple[str, ...] = ()
     restored: RestoreReport | None = None
     proxy: Proxy | None = None
+    context_ref: str | None = None
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def view(self) -> LeaseView:
@@ -213,6 +217,7 @@ class Lease:
             ),
             cdp_host=f"localhost:{self.worker.api_port}",
             remaining_ms=self.cli_session.remaining_ms,
+            context_ref=self.context_ref,
         )
 
 
@@ -357,17 +362,25 @@ class LeaseManager:
         mcp_session_id: str,
         name: str,
         url: str | None = None,
+        context_ref: str | None = None,
     ) -> LeaseView:
         """Mount one named browser session on a free worker.
 
         A repeated start on the same MCP session returns the existing lease.
         A second MCP session cannot mount the same name: the CLI start would
         replace the first daemon and orphan its API session.
+
+        `context_ref` names the decoupled auth-context record in the same
+        store. The session name is the ephemeral browser key; the context ref
+        is the durable authentication object. The context record wins over the
+        session cache when both exist.
         """
         _validate_id(mcp_session_id, "the MCP session id")
         validate_name(name)
         if url is not None and (not isinstance(url, str) or not url.strip()):
             raise ValueError("the start URL must be a non-empty string")
+        if context_ref is not None:
+            validate_name(context_ref)
 
         with self._lock:
             self._ensure_open()
@@ -399,7 +412,13 @@ class LeaseManager:
             if self._proxy_factory is not None:
                 proxy = self._proxy_factory(worker)
                 proxy.start()
-            previous = self._store.load(name)
+            # The decoupled auth context is authoritative when supplied; the
+            # session record is the resume cache for the ephemeral key.
+            previous = (
+                self._store.load(context_ref)
+                if context_ref is not None
+                else self._store.load(name)
+            )
             cli = self._cli_factory(worker)
             cli_session = cli.start(name)
             now = self._clock()
@@ -416,6 +435,7 @@ class LeaseManager:
                 last_heartbeat=now,
                 state="mounting",
                 proxy=proxy,
+                context_ref=context_ref,
             )
             restored = cli.restore(
                 cli_session,
@@ -482,18 +502,28 @@ class LeaseManager:
             lease.last_activity = self._clock()
             return payload
 
-    def end(self, mcp_session_id: str, *, reason: str = "explicit") -> EndReport:
+    def end(
+        self,
+        mcp_session_id: str,
+        *,
+        reason: str = "explicit",
+        persist_context: bool = False,
+    ) -> EndReport:
         """Capture, save, stop, and release one lease.
 
         Capture and store failures are reported but never block the stop or
-        the release. An end with no lease is a no-op.
+        the release. An end with no lease is a no-op. `persist_context` also
+        writes the captured state under the lease's context ref; the default
+        never overwrites the decoupled auth context.
         """
         _validate_id(mcp_session_id, "the MCP session id")
         with self._lock:
             lease = self._leases.get(mcp_session_id)
         if lease is None:
             return EndReport(ended=False, reason=reason)
-        return self._end_lease(lease, reason=reason)
+        return self._end_lease(
+            lease, reason=reason, persist_context=persist_context
+        )
 
     def close_mcp_session(self, mcp_session_id: str) -> EndReport:
         """The MCP session close hook."""
@@ -669,7 +699,13 @@ class LeaseManager:
             quarantined=not healthy,
         )
 
-    def _end_lease(self, lease: Lease, *, reason: str) -> EndReport:
+    def _end_lease(
+        self,
+        lease: Lease,
+        *,
+        reason: str,
+        persist_context: bool = False,
+    ) -> EndReport:
         with lease.lock:
             with self._lock:
                 if lease.state == "released":
@@ -679,6 +715,7 @@ class LeaseManager:
             warnings: list[str] = []
             captured = False
             saved = False
+            context_saved = False
             try:
                 try:
                     captured_context = lease.cli.capture(
@@ -689,6 +726,11 @@ class LeaseManager:
                     record = self._record_from_capture(lease, captured_context)
                     self._store.save(record)
                     saved = True
+                    if persist_context and lease.context_ref is not None:
+                        self._store.save(
+                            replace(record, name=lease.context_ref)
+                        )
+                        context_saved = True
                 except (
                     CaptureError,
                     CliError,
@@ -712,6 +754,7 @@ class LeaseManager:
                     reason=reason,
                     captured=captured,
                     saved=saved,
+                    context_saved=context_saved,
                     stopped=stopped,
                     released=released,
                     quarantined=not healthy,
@@ -724,6 +767,8 @@ class LeaseManager:
                     stopped=stopped,
                     released=released,
                     warnings=tuple(warnings),
+                    context_ref=lease.context_ref,
+                    context_saved=context_saved,
                 )
             finally:
                 if lease.proxy is not None:

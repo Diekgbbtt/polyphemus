@@ -48,7 +48,7 @@ def _full_account() -> dict:
             "api": {"value": "Bearer xyz", "location": "header", "expiry": "2026-10-01"},
             "vault": {"value": "v1", "location": "storage"},
         },
-        "steel": {"state": "ops-state-1"},
+        "browser_context": {"ref": "steel-auth-ops-1"},
         "snapshot": {
             "headers": {"Authorization": "Bearer xyz"},
             "cookies": [{"name": "sessionid", "value": "abc123"}],
@@ -273,34 +273,51 @@ def test_token_target_and_expiry_must_be_strings():
     assert exc.value.field == "account.tokens.s.target"
 
 
-# --- steel: session-state reference; profile silently disregarded ---
+# --- browser_context: the decoupled auth-context reference ---
 
-def test_steel_reference_accepts_a_state_key():
-    good = {"origin": "agent", "steel": {"state": "alice"}}
+def test_browser_context_accepts_a_safe_reference():
+    good = {
+        "origin": "agent",
+        "browser_context": {"ref": "steel-auth-proj-alice"},
+    }
     assert validate_account(good) == good
 
 
-def test_steel_reference_requires_a_nonempty_string_state_when_present():
-    for bad in ("", 5, None, ["alice"]):
+def test_browser_context_requires_a_nonempty_safe_reference():
+    for bad in ("", "../escape", "steel auth", 5, None, ["alice"]):
         with pytest.raises(AuthInvalidError) as exc:
-            validate_account({"origin": "agent", "steel": {"state": bad}})
-        assert exc.value.field == "account.steel.state"
+            validate_account(
+                {"origin": "agent", "browser_context": {"ref": bad}}
+            )
+        assert exc.value.field == "account.browser_context.ref"
 
 
-def test_steel_reference_non_object_is_refused_at_state():
+def test_browser_context_non_object_is_refused():
     with pytest.raises(AuthInvalidError) as exc:
-        validate_account({"origin": "agent", "steel": ["alice"]})
-    assert exc.value.field == "account.steel.state"
+        validate_account(
+            {"origin": "agent", "browser_context": ["alice"]}
+        )
+    assert exc.value.field == "account.browser_context"
 
 
-def test_old_profile_reference_is_silently_accepted_and_left_stale():
-    record = {"origin": "agent", "steel": {"profile": "prof-1"}}
-    assert validate_account(record) == record
+def test_browser_context_rejects_unknown_fields():
+    with pytest.raises(AuthInvalidError) as exc:
+        validate_account(
+            {
+                "origin": "agent",
+                "browser_context": {
+                    "ref": "steel-auth-proj-alice",
+                    "cookies": [],
+                },
+            }
+        )
+    assert exc.value.field == "account.browser_context.cookies"
 
 
-def test_empty_steel_object_is_a_record_with_no_browser_state():
-    record = {"origin": "agent", "steel": {}}
-    assert validate_account(record) == record
+def test_the_retired_steel_key_is_refused():
+    with pytest.raises(AuthInvalidError) as exc:
+        validate_account({"origin": "agent", "steel": {"state": "alice"}})
+    assert exc.value.field == "account.steel"
 
 
 # --- snapshot shape corners ---

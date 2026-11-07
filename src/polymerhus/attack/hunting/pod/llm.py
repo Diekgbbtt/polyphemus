@@ -21,10 +21,38 @@ resolve lazily on call.
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Iterator, Sequence
 
 logger = logging.getLogger(__name__)
+
+_POD_BROWSER_TOOL = None
+
+
+def _browser_ctx():
+    """The pod browser-tool ContextVar, created lazily (no import-time vars)."""
+    global _POD_BROWSER_TOOL
+    if _POD_BROWSER_TOOL is None:
+        from contextvars import ContextVar  # noqa: PLC0415
+
+        _POD_BROWSER_TOOL = ContextVar("pod-browser-tool", default=None)
+    return _POD_BROWSER_TOOL
+
+
+@contextmanager
+def bind_pod_browser_tool(tool) -> Iterator[None]:
+    """Bind the pod session's one browser tool around the pod builder."""
+    token = _browser_ctx().set(tool)
+    try:
+        yield
+    finally:
+        _browser_ctx().reset(token)
+
+
+def pod_browser_tool():
+    """The browser tool bound for the current pod session, or None."""
+    return _browser_ctx().get()
 
 # The pod's two roles (D84-1): single point of truth so neither the graph nor a
 # caller hard-codes a role_id string.
@@ -82,6 +110,9 @@ class PodHarnessContext:
     # `pod_runner` / `pod_triager` baseline. Default `()` (an existing pod is
     # unchanged).
     task_skills: tuple = ()
+    # The one agent-facing browser tool, bound by the pod session for the
+    # runner and the triager. Absent -> no browser capability.
+    browser_tool: Any = None
 
 
 def _pod_ctx():

@@ -184,7 +184,9 @@ def _auth_binding(role_id: str, project_id: str, auth_store) -> Any:
         return None
 
 
-def _surface_tools(role_id: str, project_id: str | None) -> tuple:
+def _surface_tools(
+    role_id: str, project_id: str | None, run_id: str = ""
+) -> tuple:
     """The adjacent-surface read/probe tools bound on a proposer turn.
 
     The mechanism-typist's turn binds the read-only `graph_view`, the
@@ -212,11 +214,20 @@ def _surface_tools(role_id: str, project_id: str | None) -> tuple:
             return ()
     try:
         from polymerhus.analysis.graph_tools import build_surface_tools
+        from polymerhus.app.config import config
+        from polymerhus.app.llm.browser_tools import build_browser_tool
 
-        return tuple(build_surface_tools(
+        surface = tuple(build_surface_tools(
             role_id, project_id=project_id, with_http=True,
             with_exec=(role_id == "mechanism_typist"),
         ))
+        browser = build_browser_tool(
+            project_id=project_id,
+            role=role_id,
+            instance_id=run_id or "analysis",
+            mcp_url=config.KALI_BROWSER_MCP_URL,
+        )
+        return surface + (browser,)
     except Exception:  # noqa: BLE001 - fail-open: no surface tools bound
         logger.warning("proposer_turn: surface tools unbuildable; binding none",
                        exc_info=True)
@@ -328,7 +339,7 @@ def session_invoke_fn(role_id: str, run_id: str, checkpointer, project_id: str |
         # role with no surface tools stays byte-identical to the pre-change requests.
         auth = _auth_binding(role_id, project_id, auth_store)
         auth_tools = tuple(auth.tools) if auth is not None else ()
-        surface = _surface_tools(role_id, project_id)
+        surface = _surface_tools(role_id, project_id, run_id)
         tools = (surface + auth_tools if resolved_schema is not None
                  else surface + auth_tools
                  + _prose_tools(role_id, tools_bound=bool(surface or auth_tools)))
@@ -359,14 +370,22 @@ def session_invoke_fn(role_id: str, run_id: str, checkpointer, project_id: str |
             kwargs["tools"] = tools
         turn_middleware = middleware + (
             list(auth.middleware) if auth is not None else [])
-        return stateful_turn(role_id, address, messages,
-                             checkpointer=checkpointer,
-                             schema=resolved_schema,
-                             system_prompt=_served_prompt(role_id, system_prompt),
-                             middleware=turn_middleware,
-                             context=auth.context if auth is not None else None,
-                             extra_tags=[run_id],
-                             usage_scope=project_id, **kwargs)
+        try:
+            return stateful_turn(role_id, address, messages,
+                                 checkpointer=checkpointer,
+                                 schema=resolved_schema,
+                                 system_prompt=_served_prompt(role_id, system_prompt),
+                                 middleware=turn_middleware,
+                                 context=auth.context if auth is not None else None,
+                                 extra_tags=[run_id],
+                                 usage_scope=project_id, **kwargs)
+        finally:
+            for tool in surface:
+                if getattr(tool, "name", "") == "browser" and hasattr(tool, "close"):
+                    try:
+                        tool.close()
+                    except Exception:  # noqa: BLE001 - the TTL is the backstop
+                        pass
 
     return invoke
 

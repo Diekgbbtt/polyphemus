@@ -189,13 +189,13 @@ def build_memory_store(tmp_path) -> HunterMemoryStore:
 
 def build_hunter_agent(memory_store, *, run_id="run-1", project_id=PROJECT,
                        steps=None, seen=None, kb_fn=None, overview=None,
-                       browser_tools_fn=None):
+                       browser_tool_factory=None):
     """The REAL turn-by-turn harness with a scripted model - the memory
     walkthroughs' entry seam. The live edge (the LLM session) is driven by the
     scripted `model_factory`; the real store, the real five-tool surface, and
     the real compiled graph ride. `overview` is the value the injected
     settings-only Overview seam returns (None -> no Overview message, so the
-    walkthroughs never touch the settings store). `browser_tools_fn` injects
+    walkthroughs never touch the settings store). `browser_tool_factory` injects
     the per-hunt browser tool binding; None means the production default."""
     return build_sync_hunting_agent(
         run_id=run_id,
@@ -207,7 +207,7 @@ def build_hunter_agent(memory_store, *, run_id="run-1", project_id=PROJECT,
         middleware=[],
         observe=False,
         overview_fn=lambda project_id: overview,
-        browser_tools_fn=browser_tools_fn,
+        browser_tool_factory=browser_tool_factory,
     )
 
 

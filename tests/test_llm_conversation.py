@@ -18,11 +18,11 @@ def test_the_fallback_is_stable_within_the_process():
 
 def test_the_scope_binds_and_restores():
     fallback = current_conversation_id()
-    with conversation_scope("run-1:crawler"):
-        assert current_conversation_id() == "run-1:crawler"
+    with conversation_scope("run-1:steel-crawl"):
+        assert current_conversation_id() == "run-1:steel-crawl"
         with conversation_scope("run-1:triager"):
             assert current_conversation_id() == "run-1:triager"
-        assert current_conversation_id() == "run-1:crawler"
+        assert current_conversation_id() == "run-1:steel-crawl"
     assert current_conversation_id() == fallback
 
 

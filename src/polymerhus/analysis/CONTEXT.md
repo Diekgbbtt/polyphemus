@@ -4,6 +4,11 @@ Layer-1 interpretive abstraction.
 This context reconstructs, from the observed L0 attack surface, a judged model of what the target *is* - its business targets (Service) and its shared mechanisms (System) - and anchors every judgment back onto the L0 evidence that licenses it.
 Nothing here is witnessed; every node is an analyst-role LLM's proposal that the L1 sole-writer turns into a fact.
 (The logical-data plane - `DataItem`, `SURFACES_AT`, `CONSUMES`/`PRODUCES` - was REMOVED 2026-10-15; see the RETIRED entries below and `docs/design/drop-data-modeller.md`.)
+**2026-11-07 agent browser integration:** the mechanism typist binds the one
+`browser` tool for its verify/falsify phase. The assigner stays local-context
+only and does not bind it. The browser skill is optional, and the binding
+derives the session key from the execution unit.
+
 This context is a physically independent module at `src/polymerhus/analysis/` (extracted from under `recon/` in the 2026-07 `src/` restructure). Its only structural tie to recon is the published L0 vocabulary in `recon.domain.types` - the anti-corruption seam.
 
 Vocabulary derived from `docs/design/domain-model.md` (esp. §2.2-2.6, §4, §6); see also `docs/design/l1-domain-model-catalogue.md`.

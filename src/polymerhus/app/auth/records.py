@@ -5,7 +5,7 @@ needs no env var (CODING_STANDARD section 6). The record rules mirror the
 retired settings-blob validator's shape rules (credential fields,
 `{name, value}` cookies, the header-name token rule, no literal `Cookie`
 header, no CR/LF, role-shape discipline) plus the new closed origin/location
-enums and the steel-reference / request-snapshot shapes - mirrored, never
+enums and the browser-context / request-snapshot shapes - mirrored, never
 imported upward, since the shared bottom must not point at the operator
 surface (D220-7). The blob validator itself is retired (#223 T4 #243, D223-4).
 
@@ -59,7 +59,7 @@ _ACCOUNT_KEYS = frozenset(
         "procedure",
         "credentials",
         "tokens",
-        "steel",
+        "browser_context",
         "snapshot",
         "notes",
         "roles",
@@ -215,17 +215,35 @@ def _check_auth_probe(probe: object) -> None:
         )
 
 
-def _check_steel(steel: object) -> None:
-    # The durable reference is the per-account session-state key (#395, D20).
-    # `state` is validated only when present; a retired `profile` key is
-    # silently ignored, never warned about, aliased, or migrated (Q5). An
-    # empty object is a record with no browser state.
-    if not isinstance(steel, dict):
-        _fail("account.steel.state", "must be an object carrying a state key")
-    if "state" in steel:
-        state = steel.get("state")
-        if not isinstance(state, str) or not state:
-            _fail("account.steel.state", "must be a non-empty string")
+_BROWSER_CONTEXT_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
+
+
+def _check_browser_context(value: object) -> None:
+    """Validate the decoupled auth-context reference.
+
+    The account holds only the reference; the pool store holds the browser
+    state object. The reference is a safe store key. No state values and no
+    legacy `steel` key are accepted.
+    """
+    if not isinstance(value, dict):
+        _fail(
+            "account.browser_context",
+            "must be an object carrying a ref key",
+        )
+    for key in value:
+        if key != "ref":
+            _fail(
+                f"account.browser_context.{key}",
+                "is not a known browser_context field",
+            )
+    ref = value.get("ref")
+    if not isinstance(ref, str) or not ref:
+        _fail("account.browser_context.ref", "must be a non-empty string")
+    if not _BROWSER_CONTEXT_REF.fullmatch(ref):
+        _fail(
+            "account.browser_context.ref",
+            "must be a safe store key",
+        )
 
 
 def validate_overview(record: object) -> dict:
@@ -309,9 +327,9 @@ def validate_account(record: object) -> dict:
     tokens = record.get("tokens")
     if tokens is not None:
         _check_tokens(tokens)
-    steel = record.get("steel")
-    if steel is not None:
-        _check_steel(steel)
+    browser_context = record.get("browser_context")
+    if browser_context is not None:
+        _check_browser_context(browser_context)
     snapshot = record.get("snapshot")
     if snapshot is not None:
         _check_snapshot(snapshot)

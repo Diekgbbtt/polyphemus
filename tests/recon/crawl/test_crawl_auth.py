@@ -8,20 +8,19 @@ Fully mocked - no live Steel/LLM. Covers three seams:
   no precreate, no viewer URL, no operator prompt: a `use_auth` job with feed
   material crawls authenticated, a non-auth crawl (or an auth job with no
   material) crawls anonymously.
-* `crawl_agent.run_crawl` forwards state and browser auth to
-  `get_crawl_tools` (the provider seam), unchanged.
-* `pipeline.run_pipeline` binds `steel.state` and the browser material onto
-  the crawl job's extra, and carries no `viewer_url` into the job status row.
+* `pipeline.run_pipeline` binds the decoupled browser-context reference and
+  the browser material onto the crawl job's extra, and carries no
+  `viewer_url` into the job status row.
 """
 import asyncio
 
 from polymerhus.recon.control import pipeline
-from polymerhus.recon.crawl import crawl_agent, crawl_pod
+from polymerhus.recon.crawl import crawl_pod
 from polymerhus.recon.domain.types import JobSpec, PodExport
 
 AUTH_JOB = JobSpec(
     tool="steel_crawl",
-    skill="agentic_crawl",
+    skill="steel_crawl",
     command_template="",
     produces=["BaseURL", "Endpoint", "Parameter"],
     consumes="BaseURL",
@@ -31,7 +30,7 @@ AUTH_JOB = JobSpec(
 
 NON_AUTH_JOB = JobSpec(
     tool="steel_crawl",
-    skill="agentic_crawl",
+    skill="steel_crawl",
     command_template="",
     produces=["BaseURL", "Endpoint", "Parameter"],
     consumes="BaseURL",
@@ -191,7 +190,7 @@ class FakeRegistry:
         )
 
 
-def test_pipeline_binds_steel_state_and_browser_auth_to_crawl(tmp_path):
+def test_pipeline_binds_browser_context_ref_and_browser_auth_to_crawl(tmp_path):
     from polymerhus.app.auth.store import AuthStore
     from polymerhus.recon.control.authn_loop import GatewayVerdict
 
@@ -201,7 +200,7 @@ def test_pipeline_binds_steel_state_and_browser_auth_to_crawl(tmp_path):
         accounts={"alice": {
             "credentials": {"username": "u", "password": "p",
                             "login_url": "https://x/login"},
-            "steel": {"state": "steel-proj1-alice"},
+            "browser_context": {"ref": "steel-auth-proj1-alice"},
             "snapshot": {"cookies": COOKIES},
         }})
 
@@ -232,8 +231,8 @@ def test_pipeline_binds_steel_state_and_browser_auth_to_crawl(tmp_path):
         )
     )
 
-    assert seen["steel_crawl"]["steel_session"] == "steel-proj1-alice"
-    assert "steel_state" not in seen["steel_crawl"]
+    assert seen["steel_crawl"]["browser_context_ref"] == "steel-auth-proj1-alice"
+    assert "steel_session" not in seen["steel_crawl"]
     assert seen["steel_crawl"]["browser_auth"] == {
         "login_url": "https://x/login",
     }

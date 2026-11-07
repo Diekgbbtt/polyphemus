@@ -274,9 +274,12 @@ class BrowserService:
         mcp_session_id: str,
         name: str,
         url: str | None = None,
+        context_ref: str | None = None,
     ) -> dict:
         try:
-            view = self._manager.start(mcp_session_id, name, url)
+            view = self._manager.start(
+                mcp_session_id, name, url, context_ref=context_ref
+            )
         except PoolExhausted as exc:
             return error_envelope(
                 "pool_exhausted",
@@ -330,6 +333,7 @@ class BrowserService:
             "cdp_url": view.cdp_url,
             "cdp_host": view.cdp_host,
             "remaining_ms": view.remaining_ms,
+            "context_ref": view.context_ref,
         }
 
     def exec(self, mcp_session_id: str, command: object) -> dict:
@@ -372,9 +376,11 @@ class BrowserService:
             )
         return payload
 
-    def end(self, mcp_session_id: str) -> dict:
+    def end(self, mcp_session_id: str, *, persist_context: bool = False) -> dict:
         try:
-            report = self._manager.end(mcp_session_id)
+            report = self._manager.end(
+                mcp_session_id, persist_context=persist_context
+            )
         except LeaseError as exc:
             return error_envelope("lease_error", str(exc), retryable=False)
         except Exception as exc:  # noqa: BLE001 - never take the server down
@@ -399,6 +405,8 @@ class BrowserService:
             "stopped": report.stopped,
             "released": report.released,
             "warnings": list(report.warnings),
+            "context_ref": report.context_ref,
+            "context_saved": report.context_saved,
         }
         if not success:
             result["error"] = {
@@ -666,18 +674,27 @@ def create_browser_mcp(
 
     @mcp.tool()
     async def browser_start(
-        name: str, url: str | None = None, ctx: Context = None
+        name: str,
+        url: str | None = None,
+        context_ref: str | None = None,
+        ctx: Context = None,
     ) -> dict:
-        """Mount a durable named browser session for this MCP session.
+        """Mount one browser session for this MCP session.
 
-        The name is the durable handle. A later ``browser_start`` with the
-        same name restores its cookies and localStorage. The result carries
-        the name and the Steel session id; the worker stays internal. Call
-        ``browser_end`` when the flow is done.
+        ``name`` is the ephemeral session key. ``context_ref`` optionally names
+        the decoupled auth-context record in the same store; when supplied it
+        is authoritative over the session-name cache. ``url`` optionally loads
+        the first page. The result carries the name, the Steel session id, and
+        the restore counts; the worker stays internal. Call ``browser_end``
+        when the browser is not needed anymore.
         """
         return await anyio.to_thread.run_sync(
             functools.partial(
-                service.start, _mcp_session_id(ctx), name, url
+                service.start,
+                _mcp_session_id(ctx),
+                name,
+                url,
+                context_ref=context_ref,
             )
         )
 
@@ -697,14 +714,22 @@ def create_browser_mcp(
         )
 
     @mcp.tool()
-    async def browser_end(ctx: Context = None) -> dict:
+    async def browser_end(
+        persist_context: bool = False, ctx: Context = None
+    ) -> dict:
         """Capture the browser state, save it, and release this lease.
 
-        The state is saved under the session name, so a later
-        ``browser_start`` with that name restores it. The call is idempotent.
+        The call is idempotent. ``persist_context`` additionally writes the
+        captured state under the lease's decoupled auth-context reference; the
+        default never overwrites that context, so a resume session cannot
+        clobber the authenticated state by accident.
         """
         return await anyio.to_thread.run_sync(
-            functools.partial(service.end, _mcp_session_id(ctx))
+            functools.partial(
+                service.end,
+                _mcp_session_id(ctx),
+                persist_context=persist_context,
+            )
         )
 
     # The path is consumed by the ASGI app, not by the tool registrations.

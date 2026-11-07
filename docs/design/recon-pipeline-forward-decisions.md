@@ -60,6 +60,7 @@ See `recon-pipeline-design.md` §9.5 for the full designed-not-built L3 writeup,
 
 **Superseded for the live path (2026-11-02).** The production `steel_crawl` is now the deterministic engine in `crawl/steel/`: it drives the Steel CLI, attaches to a pre-authenticated session, observes the session through a passive raw-CDP sidecar, and lets the Jev policy choose actions.
 The ReAct provider described below is retired from the crawl path by the pool convergence; the browser MCP is the only executor.
+The six-tool provider and its files were removed on 2026-11-07; see `docs/design/legacy-crawler-eol.md`. The entries below are historical context, not the current contract.
 See `steel-crawl-spec.md` and `steel-crawl-integration-impact-map.md`.
 
 `steel_helpers.merge_steel_into_by_base_url` is only a **merge adapter** over a crawl manifest (`{endpoints:[...], js_urls:[...]}`).

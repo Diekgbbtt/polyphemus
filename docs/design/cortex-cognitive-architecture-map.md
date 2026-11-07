@@ -55,9 +55,13 @@ Six domains. The target context is ONE domain that groups the target's authentic
 | Role | Bound tools |
 |---|---|
 | hunt-orchestrator | `hunts_store`, `notes`, `graph_view` |
-| hunter | `hunts_store`, `notes`, `graph_view`, `kb_query`, `exec`, `search_http_history`, `get_http_artifact`, `load_skill`, `record_skill_lesson`, `auth_store` |
-| pod runner | `exec`, `note`, `query_lightrag`, `graph_view`, `replay`, `load_skill`, `record_skill_lesson`, `auth_store` |
-| pod triager | `note`, `query_lightrag`, `graph_view`, `load_skill`, `record_skill_lesson`, `auth_store` |
+| hunter | `hunts_store`, `notes`, `graph_view`, `kb_query`, `exec`, `browser`, `search_http_history`, `get_http_artifact`, `load_skill`, `record_skill_lesson`, `auth_store` |
+| pod runner | `exec`, `note`, `query_lightrag`, `graph_view`, `replay`, `browser`, `load_skill`, `record_skill_lesson`, `auth_store` |
+| pod triager | `note`, `query_lightrag`, `graph_view`, `browser` (read-only), `load_skill`, `record_skill_lesson`, `auth_store` |
+
+The recon orchestrator, the recon triager, and the mechanism typist bind the
+same one `browser` tool; the browser capability is one agent surface, not a
+per-role fork.
 
 ## 4. The coupling paths (question -> entity -> tool)
 

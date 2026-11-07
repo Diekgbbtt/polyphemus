@@ -187,7 +187,7 @@ def test_feed_projects_store_material_only_to_use_auth_jobs(tmp_path):
                             "login_url": "https://x/login"},
             "tokens": {"Authorization": {"value": "Bearer T",
                                          "location": "header"}},
-            "steel": {"state": "steel-proj1-alice"},
+            "browser_context": {"ref": "steel-auth-proj1-alice"},
             "snapshot": {"cookies": [{"name": "sid", "value": "S"}]},
         }})
 
@@ -230,8 +230,8 @@ def test_feed_projects_store_material_only_to_use_auth_jobs(tmp_path):
     assert seen_extra["katana"]["auth_context"] == seen_extra["httpx"]["auth_context"]
     # the agent-driven crawl gets the stable pool key plus gate metadata only
     assert seen_extra["steel_crawl"]["auth_account"] == "alice"
-    assert seen_extra["steel_crawl"]["steel_session"] == "steel-proj1-alice"
-    assert "steel_state" not in seen_extra["steel_crawl"]
+    assert seen_extra["steel_crawl"]["browser_context_ref"] == "steel-auth-proj1-alice"
+    assert "steel_session" not in seen_extra["steel_crawl"]
     assert seen_extra["steel_crawl"]["browser_auth"] == {
         "login_url": "https://x/login"}
 

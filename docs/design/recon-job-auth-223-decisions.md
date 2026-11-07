@@ -1,3 +1,10 @@
+> 2026-11-07: the agent-facing browser surface is now one `browser`
+> tool with the `start`, `exec`, and `end` commands. The session name is
+> not an agent parameter. The durable auth context is a decoupled pool-store
+> object referenced by `accounts.<account>.browser_context.ref`; `steel.state`
+> is removed. See `docs/design/agent-browser-integration-plan.md` and
+> `docs/design/legacy-crawler-eol.md`.
+
 # Recon job auth phase (#223) - design decisions
 
 *Status: OPEN - living. Rebuilt 2026-09-18 (turn 3): the worktree was rolled back to `c126f86` and the open design decisions are being taken sequentially, each recorded here as it is ruled.*

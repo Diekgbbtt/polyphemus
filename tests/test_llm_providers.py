@@ -18,7 +18,6 @@ def test_validate_raises_when_key_missing(monkeypatch):
     monkeypatch.setenv("LLM_TRIAGER", "openrouter:some/model")
     monkeypatch.setenv("LLM_CONFIGURATOR", "openai:gpt-4o")
     monkeypatch.setenv("LLM_JOB_ORCHESTRATOR", "openai:gpt-4o")
-    monkeypatch.setenv("LLM_CRAWLER", "openai:gpt-4o")
     monkeypatch.delenv("API_KEY_OPENROUTER", raising=False)
     monkeypatch.setenv("API_KEY_OPENAI", "sk-x")
     with pytest.raises(P.LLMConfigError) as e:

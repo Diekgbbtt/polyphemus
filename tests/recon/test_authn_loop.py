@@ -60,6 +60,12 @@ def test_detect_skill_loads():
 def test_detect_probes():
     assert L.detect_transition(_obs("execute_command", {"command": "curl .."})) == "probe"
     assert L.detect_transition(_obs("steel_exec", {"command": "steel browser open"})) == "probe"
+    assert L.detect_transition(_obs(
+        "browser", {"command": "exec", "input": "eval 1+1"})) == "probe"
+    assert L.detect_transition(_obs("browser", {"command": "start"})) == "none"
+    assert L.detect_transition(_obs("browser", {"command": "end"})) == "none"
+    assert L.detect_transition(_obs(
+        "browser", {"command": "exec", "input": "  "})) == "none"
 
 
 def test_detect_validity_assertions():

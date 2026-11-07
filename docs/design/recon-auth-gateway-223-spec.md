@@ -1,3 +1,10 @@
+> 2026-11-07: the agent-facing browser surface is now one `browser`
+> tool with the `start`, `exec`, and `end` commands. The session name is
+> not an agent parameter. The durable auth context is a decoupled pool-store
+> object referenced by `accounts.<account>.browser_context.ref`; `steel.state`
+> is removed. See `docs/design/agent-browser-integration-plan.md` and
+> `docs/design/legacy-crawler-eol.md`.
+
 # Recon auth gateway - spec (the orchestrator's authn loop)
 
 *Status: accepted, published as tracker issue #223 (`ready-for-agent`). This is the persisted repo copy of that specification; the tracker issue remains the work authority.*

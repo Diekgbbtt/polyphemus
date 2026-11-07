@@ -93,7 +93,10 @@ def auth_capable_binding(
     )
 
     binding = skill_agent_binding(
-        role_id, store=skill_store, lesson_store=lesson_store,
+        role_id,
+        project_id=project_id,
+        store=skill_store,
+        lesson_store=lesson_store,
         task_skills=task_skills,
     )
     if not binding.tools:
@@ -165,7 +168,10 @@ def auth_capable_binding(
     return replace(
         binding,
         tools=[*tools, build_auth_store_tool(
-            store=store, read_only=with_readonly_auth_store)],
+            project_id=context.get("project_id"),
+            store=store,
+            read_only=with_readonly_auth_store and not with_write_skill,
+        )],
         context=context,
     )
 

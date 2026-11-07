@@ -1,43 +1,45 @@
 ---
 name: steel-browser
 description: >-
-  Operate a real browser through three tools bound to this conversation:
-  `browser_start`, `browser_exec`, and `browser_end`. Named durable sessions,
-  navigation, ref-based interaction, waiting, inline JS, cookie and storage
-  reads, and bounded multi-step flows.
+  Operate a real browser through one tool bound to this conversation:
+  `browser`, with the commands `start`, `exec`, and `end`. Durable
+  auth-context sessions, navigation, ref-based interaction, waiting, inline
+  JS, cookie and storage reads, and bounded multi-step flows.
   Use when a target needs JavaScript rendering, element-level interaction, a form
   or login flow driven end to end, session or token extraction, bot-gated
   navigation, or a live page read that plain HTTP cannot provide.
 metadata:
-  version: '3.0.0'
+  version: '4.0.0'
 ---
 
 # Steel browser operation
 
-Drive a real browser through three tools: `browser_start`, `browser_exec`, and `browser_end`.
-They are bound to this conversation, and the conversation supplies the browser session.
+Drive a real browser through one tool: `browser`.
+It is bound to this conversation, and the conversation supplies the browser session.
 This skill carries operation mechanics, not a goal: no login procedure, no scraping recipe, only the framework any browser task composes.
 Reach for it when a target needs JavaScript to render, an element driven, or client-side browser state read.
 
 ## The tool surface
 
-`browser_start(name, url=None)`
-- Mounts a durable named session and optionally opens `url` as the first page.
-- The name is the durable handle. A later start with the same name restores its cookies and localStorage.
-- The result carries the name, the runtime session id, and warnings.
-- A start while the name is already mounted answers `session_in_use`; reuse the mounted name instead.
+`browser(command="start", url=None, account=None)`
+- Mounts the execution unit's browser and the selected account's decoupled auth context.
+- `url` is optional: it loads the first page. If it is omitted, the first `exec` must be a `navigate`.
+- `account` optionally selects the auth context; the tool derives the session key and never accepts a session name.
+- A mount while the same execution unit already holds the session answers `session_in_use`; reuse the mounted session.
+- A mount with no live lease answers `no_session`; call `start` first.
 
-`browser_exec(command)`
+`browser(command="exec", input="...")`
 - Runs one browser command on the mounted session.
 - The grammar is the browser command grammar without the session: `navigate https://app.test`, `snapshot -i`, `get text body`, `fill '#user' -- value`, `wait --selector '#app'`, `eval 1+1`, `batch -- "snapshot -i" "click @e1"`.
 - `start`, `stop`, `sessions`, `live`, and `scrape` are refused, and so is every session or runtime flag.
 - The command string is split like a shell, but no shell runs. Quote a value that contains a space or a shell-significant character.
 
-`browser_end()`
-- Captures cookies, localStorage, sessionStorage, and indexedDB; saves them under the name; stops the browser; releases the session.
-- It is idempotent. Call it when the flow is done.
+`browser(command="end", persist_context=False)`
+- Captures cookies, localStorage, sessionStorage, and indexedDB; saves the session state; stops the browser; releases the session.
+- `persist_context=true` also writes the captured state back to the selected account's decoupled auth context. Use it only when the flow updates the stored authentication state.
+- It is idempotent. Call it when the browser is not needed anymore.
 
-There is no status or owner tool. Do not look for one.
+There is no status, owner, or session-management tool. Do not look for one.
 
 Every result is one envelope.
 A success carries `success: true` and the command's `data`.
@@ -45,9 +47,10 @@ A failure carries `success: false` and `error: {code, message, retryable, recove
 Read the error code; it is authoritative.
 `references/contract.md` carries the code and recovery table.
 
-The name is `[A-Za-z0-9][A-Za-z0-9_-]{0,127}`.
-Name a flow `polymerhus-<purpose>-<id>`.
-Reuse the name when the flow continues; do not twin it.
+The session key is internal and derived from the execution unit.
+Never pass a session name.
+A context reference is `steel-auth-<project_slug>-<account_slug>` and is recorded in the auth store, never passed to the browser tool.
+A start on an account with no stored context is a fresh browser context. It is not a new identity claim.
 
 ## The path: start, operate, end
 
@@ -57,11 +60,11 @@ start -> OPERATE ... -> end
         each operation takes a shape: single | batch | wait
 ```
 
-**Start.** `browser_start("polymerhus-<purpose>-<id>")`.
-Reuse the mounted name: call `browser_exec` rather than starting a twin.
-A name is durable. After `browser_end`, a dropped conversation, or a server restart, start it again to restore cookies and localStorage.
+**Start.** `browser(command="start", url=..., account=...)`.
+Reuse the mounted session: call `browser(command="exec", ...)` rather than starting a twin.
+The auth context is durable. After `browser(command="end")`, a dropped conversation, or a server restart, start it again to restore cookies and localStorage.
 sessionStorage and indexedDB are captured as evidence, not restored.
-A start on a new name is a fresh browser context. It is not a new identity claim.
+A start on an account with no stored context is a fresh browser context. It is not a new identity claim.
 
 **Operate.** Any web-interaction operation or client-side browser-state read: the command families below are the taught subset, not an allowlist.
 Choose each operation's shape:
@@ -70,10 +73,10 @@ Choose each operation's shape:
 - **wait** - when the page, not you, is the unknown; synchronise on an observable before reading it.
   Wait on the challenge's OWN marker (its iframe or selector) with a bounded `--timeout`, then escalate: an outcome gated by an out-of-band human action (a CAPTCHA solve, an operator click, a manual approval) cannot appear until the human acts, so a wait on it burns its whole timeout first.
 
-**End.** `browser_end()` when the flow is done.
+**End.** `browser(command="end", persist_context=...)` when the browser is not needed anymore.
 The conversation close, the server shutdown, and the idle TTL also end the session.
 An unended session is not a lost session: the end path captures it.
-Do not issue a command after `browser_end`; the next call answers `no_session`.
+Do not issue a command after `browser(command="end")`; the next call answers `no_session`.
 
 ## Rules a decision can violate
 
@@ -117,13 +120,13 @@ Do not issue a command after `browser_end`; the next call answers `no_session`.
 
 **Evidence**
 - `snapshot`, `screenshot`, and `diff` are the session record.
-  The `browser_start` result carries the runtime session id; the `browser_end` result carries `captured`, `saved`, and `stopped`.
+  The `start` result carries the runtime session id and the restore counts; the `end` result carries `captured`, `saved`, `stopped`, and `context_saved`.
 - There is no catalogue, status, live-view, logs, traces, or recording tool. Do not look for one.
   The stack keeps the records; this skill reads the page.
 
 ## Command families
 
-Every command runs through `browser_exec`.
+Every command runs through `browser(command="exec", ...)`.
 
 - Navigation: `navigate <url> [--wait-until load|domcontentloaded|networkidle]` (aliases `open`, `goto`), `back`, `forward`, `reload`. Settle on a condition (`wait --url`/`wait --text`) for a login or SPA page: `networkidle` never arrives on a continuously-active page and burns the whole timeout.
 - Page reading: `snapshot [-i] [-c] [-s css] [-d n] [-u]`, `get text|html|value|attr|url|title|count|box|styles`, `find <css>`, `content`, `is visible|enabled|checked`.

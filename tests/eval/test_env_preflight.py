@@ -444,7 +444,6 @@ def test_real_example_as_key_source(tmp_path: Path, preflight) -> None:
         "LLM_CONFIGURATOR=opencode:manual/test\n"
         "LLM_TRIAGER=opencode:manual/test\n"
         "LLM_JOB_ORCHESTRATOR=opencode:manual/test\n"
-        "LLM_CRAWLER=opencode:manual/test\n"
         "LLM_ANALYSER=opencode:manual/test\n"
         "LLM_HUNTING_THREAT_MODELLER=opencode:manual/test\n"
         "LLM_HUNTING_HUNTER=opencode:manual/test\n"

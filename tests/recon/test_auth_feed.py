@@ -5,8 +5,8 @@ The feed replaces the settings-blob auth path (D223-4): the gateway verdict
 binds only the account IDENTIFIER into the pipeline state, and each phase's
 tool configuration resolves that account from the auth store at the point of
 use, projecting only the subset its tools need - the flat request material
-(headers/cookies) for request-based auth-eligible jobs, the persisted Steel
-profile key for the crawler, nothing for non-auth jobs. Role/default_role
+(headers/cookies) for request-based auth-eligible jobs, the decoupled
+auth-context reference for the crawl, nothing for non-auth jobs. Role/default_role
 selection resolves over the account record, never the retired blob.
 
 Each test names the feed contract it pins.
@@ -18,7 +18,7 @@ from polymerhus.recon.control import auth_feed
 from polymerhus.recon.control.auth_feed import (
     project_browser_auth,
     project_request_auth,
-    project_steel_state,
+    project_browser_context,
     resolve_account,
     resolve_overview,
     select_account_role,
@@ -43,7 +43,7 @@ def _seeded_store(tmp_path):
                     "csrf-store": {"value": "C", "location": "storage",
                                    "target": "https://x.example"},
                 },
-                "steel": {"state": "alice"},
+                "browser_context": {"ref": "steel-auth-p1-alice"},
                 "snapshot": {
                     # Stale by design: snapshot headers are NEVER replayed -
                     # the header fact single-sources on overview.required_headers.
@@ -74,7 +74,7 @@ def _request_material(store, project="p1", name="alice"):
 def test_resolve_account_returns_the_named_record(tmp_path):
     store = _seeded_store(tmp_path)
     account = resolve_account("p1", "alice", store=store)
-    assert account["steel"] == {"state": "alice"}
+    assert account["browser_context"] == {"ref": "steel-auth-p1-alice"}
 
 
 def test_resolve_account_unknown_name_fails_open_to_empty(tmp_path):
@@ -261,51 +261,41 @@ def test_project_browser_auth_carries_a_login_url_alone():
     ) == {"login_url": "https://x/login"}
 
 
-def test_project_steel_state_reads_a_valid_pool_reference(tmp_path):
-    assert project_steel_state({"steel": {"state": "steel-p1-alice"}}) == (
-        "steel-p1-alice"
-    )
-    # A legacy per-project file reference is not a pool key.
-    assert project_steel_state({"steel": {"state": "alice"}}) is None
-    assert project_steel_state({}) is None
+def test_project_browser_context_reads_a_valid_reference():
+    assert project_browser_context(
+        {"browser_context": {"ref": "steel-auth-p1-alice"}}
+    ) == "steel-auth-p1-alice"
+    assert project_browser_context({}) is None
 
 
-def test_project_steel_state_falls_back_to_the_stable_key():
-    assert project_steel_state(
+def test_project_browser_context_computes_the_deterministic_key():
+    assert project_browser_context(
         {}, project_id="proj1", account_name="alice"
-    ) == "steel-proj1-alice"
+    ) == "steel-auth-proj1-alice"
 
 
 @pytest.mark.parametrize(
     "legacy",
     ["alice", "../escape", "a" * 200, "old-session-name", ""],
 )
-def test_project_steel_state_replaces_a_legacy_reference(legacy):
+def test_project_browser_context_replaces_a_legacy_reference(legacy):
     account = {"steel": {"state": legacy}}
 
-    assert project_steel_state(
+    assert project_browser_context(
         account, project_id="proj1", account_name="alice"
-    ) == "steel-proj1-alice"
+    ) == "steel-auth-proj1-alice"
 
 
-def test_project_steel_state_computes_the_stable_key_with_context():
-    account = {"steel": {"state": "steel-proj1-alice"}}
+def test_project_browser_context_does_not_trust_another_projects_reference():
+    account = {"browser_context": {"ref": "steel-auth-other-bob"}}
 
-    assert project_steel_state(
+    assert project_browser_context(
         account, project_id="proj1", account_name="alice"
-    ) == "steel-proj1-alice"
+    ) == "steel-auth-proj1-alice"
 
 
-def test_project_steel_state_does_not_trust_another_projects_key():
-    account = {"steel": {"state": "steel-other-bob"}}
-
-    assert project_steel_state(
-        account, project_id="proj1", account_name="alice"
-    ) == "steel-proj1-alice"
-
-
-def test_project_steel_state_silently_ignores_an_old_profile():
-    assert project_steel_state({"steel": {"profile": "old"}}) is None
+def test_project_browser_context_ignores_the_retired_steel_key():
+    assert project_browser_context({"steel": {"state": "steel-p1-alice"}}) is None
 
 
 # --- serialize_auth_flags: per-tool header serialisation, unchanged behaviour ---

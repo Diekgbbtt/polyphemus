@@ -24,7 +24,11 @@ from langchain.agents.middleware.types import hook_config
 from langchain_core.messages import ToolMessage
 
 from polymerhus.attack.hunting.pod.config import HUNT_POD_MAX_TOOL_CALLS
-from polymerhus.attack.hunting.pod.tools import command_signature, replay_signature
+from polymerhus.attack.hunting.pod.tools import (
+    browser_signature,
+    command_signature,
+    replay_signature,
+)
 
 
 class _HarnessMiddleware(AgentMiddleware):
@@ -66,6 +70,15 @@ class _HarnessMiddleware(AgentMiddleware):
                     content="TOOL RESULT: (already executed; deduped)",
                     tool_call_id=request.tool_call.get("id") or "", name="replay")
             return handler(request)
+        if name == "browser":
+            args = request.tool_call.get("args") or {}
+            sig = browser_signature(self.variant_ref, dict(args))
+            if self.log is not None and self.log.has_executed(sig):
+                return ToolMessage(
+                    content="TOOL RESULT: (already executed; deduped)",
+                    tool_call_id=request.tool_call.get("id") or "",
+                    name="browser")
+            return handler(request)
         if name != "exec":
             return handler(request)
         args = request.tool_call.get("args") or {}
@@ -98,6 +111,15 @@ class _HarnessMiddleware(AgentMiddleware):
                 return ToolMessage(
                     content="TOOL RESULT: (already executed; deduped)",
                     tool_call_id=request.tool_call.get("id") or "", name="replay")
+            return await handler(request)
+        if name == "browser":
+            args = request.tool_call.get("args") or {}
+            sig = browser_signature(self.variant_ref, dict(args))
+            if self.log is not None and self.log.has_executed(sig):
+                return ToolMessage(
+                    content="TOOL RESULT: (already executed; deduped)",
+                    tool_call_id=request.tool_call.get("id") or "",
+                    name="browser")
             return await handler(request)
         if name != "exec":
             return await handler(request)

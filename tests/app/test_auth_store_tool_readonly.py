@@ -94,7 +94,7 @@ def _seeded_store(tmp_path) -> AuthStore:
                     "target": "t.example",
                 },
             },
-            "steel": {"state": "proj-auth-read-1-alice"},
+            "browser_context": {"ref": "steel-auth-proj-auth-read-1-alice"},
             "snapshot": {
                 "headers": {"X-CSRF-Token": SNAPSHOT_HEADER_VALUE},
                 "cookies": [{"name": "JSESSIONID", "value": COOKIE_VALUE}],
@@ -300,7 +300,7 @@ def test_the_identity_and_the_request_shape_stay_visible(tmp_path):
     assert record["credentials"]["login_url"] == "https://t.example/login"
     assert record["status"] == "valid"
     assert record["procedure"] == "password-login"
-    assert record["steel"] == {"state": "proj-auth-read-1-alice"}
+    assert record["browser_context"] == {"ref": "steel-auth-proj-auth-read-1-alice"}
     overview = tool.invoke({"command": "read", "path": "overview"})["value"]
     assert overview["required_headers"] == ["X-CSRF-Token"]
     assert overview["mechanism"] == "form post plus a session cookie"

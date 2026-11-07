@@ -1,3 +1,10 @@
+> 2026-11-07: the agent-facing browser surface is now one `browser`
+> tool with the `start`, `exec`, and `end` commands. The session name is
+> not an agent parameter. The durable auth context is a decoupled pool-store
+> object referenced by `accounts.<account>.browser_context.ref`; `steel.state`
+> is removed. See `docs/design/agent-browser-integration-plan.md` and
+> `docs/design/legacy-crawler-eol.md`.
+
 # Pluggable Browser Capability via Steel CLI (#221) - Architectural Decision Records
 
 Decisions taken (self-grilled against the live CLI spike 2026-09-10, steel 0.4.4) for ticket #221: the lean pluggable browser capability any session agent can use, built on the `steel --json` exec surface.

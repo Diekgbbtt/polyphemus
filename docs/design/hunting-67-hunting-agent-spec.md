@@ -542,6 +542,11 @@ The hunter's tool surface is:
   - In collection it mines the axis instances.
 - `exec`: the Kali exec tool, unbounded at the harness level.
   - The target-front availability directive applies.
+- `browser`: the one web-browser tool (`start`, `exec`, `end`) over the shared
+  pool. It opens a client-side rendered page, a JS-heavy target, or a native
+  client-side primitive; a plain HTTP read stays on `exec`, `graph_view`, or the
+  HTTP-history pair. The binding derives the session key; the agent never
+  passes one. End the browser when it is not needed anymore.
 - `skill_list` / `skill_load`: the web-vulnerability suite.
   - The loop's suite class selects the class skill.
 

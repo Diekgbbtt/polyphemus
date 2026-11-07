@@ -1,8 +1,9 @@
-"""The steel-browser skill is one three-tool contract (#359, W7).
+"""The steel-browser skill is one one-tool contract.
 
 Seam under test: the skill text. The behaviour is pinned by the server, CLI,
-and lease tests. This file is a drift guard: the skill must teach the three
-bound tools, never a shell lifecycle and never a session-management verb.
+and lease tests. This file is a drift guard: the skill must teach the one
+bound `browser` tool, never a shell lifecycle and never a session-management
+verb.
 """
 import re
 from pathlib import Path
@@ -28,7 +29,8 @@ def _skill() -> str:
 
 def test_skill_has_no_runtime_branch_and_no_profile_language():
     text = _skill()
-    assert "browser_start" in text and "browser_exec" in text
+    assert 'browser(command="start"' in text
+    assert 'browser(command="exec"' in text
     assert "--profile" not in text
     assert "--local" not in text
     assert "STEEL_API_KEY" not in text
@@ -38,11 +40,14 @@ def test_skill_has_no_runtime_branch_and_no_profile_language():
     assert _FORBIDDEN_SKILL_WORDS.findall(scanned) == []
 
 
-def test_skill_teaches_only_the_three_bound_tools():
+def test_skill_teaches_only_the_one_bound_tool():
     text = _skill()
-    for name in ("browser_start", "browser_exec", "browser_end"):
-        assert name in text, name
+    for command in ('browser(command="start"', 'browser(command="exec"', 'browser(command="end"'):
+        assert command in text, command
     for absent in (
+        "browser_start",
+        "browser_exec",
+        "browser_end",
         "browser_status",
         "pool_status",
         "release_owner",
@@ -87,9 +92,9 @@ def test_skill_states_the_auth_gate_signals():
 
 def test_skill_pins_the_tool_contract_and_reference():
     text = _skill()
-    assert "version: '3.0.0'" in text
+    assert "version: '4.0.0'" in text
     assert "references/contract.md" in text
-    assert "no status or owner tool" in text.lower()
+    assert "no status, owner, or session-management tool" in text.lower()
     assert "--inactivity-timeout" not in text
     assert "steel-real" not in text
     assert CONTRACT.is_file()

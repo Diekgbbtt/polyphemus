@@ -16,11 +16,11 @@ terminal `fail` node that sets `verdict="failed"` and curates ONE
 Nothing from this node ever propagates as an unhandled exception.
 
 The crawl path is session-only (#395, D20): the node runs under the
-gateway-established auth state. The feed supplies the stable browser key
-(`extra["steel_session"]`) and the gate metadata
+gateway-established auth state. The feed supplies the decoupled auth-context
+reference (`extra["browser_context_ref"]`) and the gate metadata
 (`extra["browser_auth"]`: `auth_probe` and `login_url`). The browser MCP
-mounts the key, restores cookies and localStorage from the pool store, and
-gates the result. There is no interactive `steel_await_auth`
+mounts the context object from the pool store, restores cookies and
+localStorage, and gates the result. There is no interactive `steel_await_auth`
 human-in-the-loop path, no credentialed login, and no operator prompt -
 post-gateway, auth is already established and a mid-run prompt is strictly
 worse.
@@ -139,7 +139,7 @@ def live_run_crawl_fn(
             "the live steel crawl needs a project_id and a run_id in its extra"
         )
     from polymerhus.app.data_root import DATA_ROOT  # noqa: PLC0415
-    from polymerhus.app.steel_session_state import (  # noqa: PLC0415
+    from polymerhus.app.llm.browser_tools import (  # noqa: PLC0415
         browser_session_name,
     )
     from polymerhus.recon.crawl.steel.live import (  # noqa: PLC0415
@@ -147,9 +147,9 @@ def live_run_crawl_fn(
         run_live_crawl,
     )
 
-    session_name = str(
-        extra.get("steel_session")
-        or browser_session_name(project_id, extra.get("auth_account"))
+    account = extra.get("auth_account")
+    session_name = browser_session_name(
+        project_id, "crawl", run_id, account
     )
     browser_auth = browser_auth or {}
     context = LiveRunContext(
@@ -161,10 +161,11 @@ def live_run_crawl_fn(
         data_root=DATA_ROOT,
         auth_probe=browser_auth.get("auth_probe"),
         login_url=browser_auth.get("login_url"),
-        account=extra.get("auth_account"),
+        account=account,
         edge_url=os.environ.get("KALI_HTTP_HISTORY_EDGE_URL") or None,
         edge_token=os.environ.get("KALI_HTTP_HISTORY_EDGE_TOKEN") or None,
         browser_mcp_url=os.environ.get("KALI_BROWSER_MCP_URL", "").strip(),
+        browser_context_ref=extra.get("browser_context_ref"),
         max_duration_s=float(
             os.environ.get("STEEL_CRAWL_MAX_DURATION_S", "600")
         ),

@@ -1,44 +1,45 @@
 # Steel tool contract and recovery
 
 This reference is the lookup table behind the `steel-browser` skill.
-It describes the envelope the three tools return, the error codes, the durable
+It describes the one tool's envelope, the error codes, the decoupled durable
 state, and the authenticated-context oracle.
 It is not a runtime branch; every browser command keeps the same grammar.
 
 ## Tool envelope
 
-### `browser_start`
+### `browser(command="start", ...)`
 
 Success:
 
 ```json
-{"success": true, "session": {"name": "polymerhus-flow-1", "session_id": "<runtime id>"}, "warnings": []}
+{"success": true, "session": {"name": "<internal key>", "session_id": "<runtime id>"}, "restored": {"cookies": 0, "origins": 0, "storage_keys": 0, "warnings": []}, "warnings": [], "remaining_ms": 3600000, "context_ref": "steel-auth-<project>-<account>"}
 ```
 
-The name is the durable handle.
+The session key is internal; the agent never passes one.
 The runtime id is informational and never a command argument.
-A start on a name with a saved record restores its cookies and localStorage.
-A start on a mounted name answers `session_in_use`.
+An `account` with a stored auth context restores its cookies and localStorage.
+A mount while the same execution unit holds the session answers `session_in_use`.
 
-### `browser_exec`
+### `browser(command="exec", ...)`
 
 Success is the browser command's own envelope: `{"success": true, "data": ...}`.
 `batch` returns the results envelope described below.
 A command that ran and failed keeps its own failure envelope.
 A command the tool refused, or a session-level failure, returns the error envelope.
 
-### `browser_end`
+### `browser(command="end", ...)`
 
 Success:
 
 ```json
-{"success": true, "ended": true, "reason": "explicit", "captured": true, "saved": true, "stopped": true, "released": null, "warnings": []}
+{"success": true, "ended": true, "reason": "explicit", "captured": true, "saved": true, "stopped": true, "released": null, "context_ref": "steel-auth-<project>-<account>", "context_saved": true, "warnings": []}
 ```
 
 - `ended` is false when no session was mounted; the call still succeeds.
 - `reason` is `explicit`, `mcp_close`, `ttl`, or `shutdown`.
 - `released` is `null` when the stop was enough, `true` when the stop failed and the API release fallback ran, and `false` when that fallback failed.
-- `captured` and `saved` state whether the durable record was written.
+- `captured` and `saved` state whether the session record was written.
+- `context_saved` states whether `persist_context=true` updated the account's auth context.
 - A failed capture or store save is a warning; it never blocks the stop.
 
 ## Error and recovery
@@ -52,13 +53,13 @@ A failure is one envelope:
 | Code | Meaning | Retryable | Recovery |
 |---|---|---|---|
 | `pool_exhausted` | No browser slot is free. | Yes | Wait for another flow to end, then retry. |
-| `session_in_use` | The name is mounted by this conversation. | No | Use `browser_exec` on it, or `browser_end` and start again. |
-| `no_session` | No session is mounted. | No | Call `browser_start` first. |
+| `session_in_use` | The execution unit already holds the session. | No | Use `browser(command="exec", ...)` on it, or end and start again. |
+| `no_session` | No session is mounted. | No | Call `browser(command="start", ...)` first. |
 | `invalid_command` | The command grammar is wrong, or it names a refused verb or flag. | No | Fix the command; do not retry blindly. |
-| `invalid_argument` | A start value is invalid, such as a name outside the rule. | No | Fix the name or the URL. |
+| `invalid_argument` | A start value is invalid, such as a URL or account. | No | Fix the URL or the account. |
 | `browser_error` | The browser command raised. | Yes | Retry once, then end and start again; the end captures the state. |
 | `capture_failed` | A state capture failed. | Yes | Retry the command, then end; the stop still runs. |
-| `restore_failed` | The saved state could not be restored, so the session did not start. | No | Use a new name, or surface the defect; never claim the state was restored. |
+| `restore_failed` | The stored auth context could not be mounted, so the session did not start. | No | Surface the defect; never claim the context was restored. |
 | `store_error` | The durable store is unreadable or malformed. | No | Surface it; the operator fixes the store. |
 | `pool_unavailable` | The browser service cannot reach a browser. | Yes | Retry later; surface a persistent failure. |
 | `lease_error` | The session state machine rejected the call. | No | Surface it; do not patch around it. |
@@ -71,19 +72,20 @@ Never stop a session this conversation did not mount.
 
 ## Durable state
 
-- A session is a name, a runtime id, a clock, and browser state.
-- Cookies and localStorage are restored by a later start with the same name.
+- A session is an internal key, a runtime id, a clock, and browser state.
+- The decoupled auth context is the durable object. The auth store holds only its reference (`browser_context: {ref}`).
+- Cookies and localStorage are restored by a later start that selects the same account.
 - sessionStorage and indexedDB are captured as evidence and are not restored.
   Do not claim that a new start restored them.
-- The store is written at the end and read at the next start.
-  Never read, print, or paste a state file.
-- The name is the access key. The state of one name is not visible to another.
+- The pool store holds the context object. The auth store holds the reference.
+  Never read, print, or paste a state file or a context value.
+- The context reference is the access key. The context of one account is not visible to another.
 - The idle TTL is the backstop when a conversation disappears without an end.
 
 ## Tool results and platform records
 
-- `browser_start` returns the name, the runtime id, and warnings.
-- `browser_end` returns the capture, save, stop, and release flags.
+- `browser(command="start", ...)` returns the internal key, the runtime id, the restore counts, and warnings.
+- `browser(command="end", ...)` returns the capture, save, stop, release, and context-save flags.
 - `snapshot`, `screenshot`, and `diff` are the page evidence the tools return.
   A screenshot is a file path. A diff carries `changed`, `additions`, and a unified diff.
 - Multi-step results: `batch -- "cmd" "cmd"` returns `{"data":{"results":[{"command","data","success"}]}}`.

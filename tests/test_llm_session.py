@@ -358,7 +358,7 @@ def test_session_runs_the_tool_calling_loop_and_middleware_hooks_fire():
         AIMessage(content="final"),
     )
     turn = run_session_turn(
-        "crawler", "r:crawler", [HumanMessage(content="go")],
+        "worker", "r:worker", [HumanMessage(content="go")],
         checkpointer=InMemorySaver(), tools=[_echo], middleware=[Probe()],
         model_factory=_factory(*replies), observe=False,
     )

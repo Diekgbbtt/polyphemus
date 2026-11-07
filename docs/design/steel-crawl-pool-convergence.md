@@ -170,3 +170,38 @@ Evidence: `docs/design/evidence/steel-pool-mcp/convergence-e2e-2026-11-07.md`.
 - The manifest carries `partial=false` on a complete crawl and `partial=true` on an incomplete one.
 - The action ledger records every action with its true outcome.
 - The JEV engine diff against `feat/steel-crawl` is empty.
+
+## 12. Agent integration and the decoupled auth context (2026-11-07)
+
+The crawl convergence left the agent surface incomplete: the hunter bound the
+old three-tool wrapper, the pod runner carried the `steel-browser` skill
+without the tools, and the threat modeller had neither.
+
+The integration fixes that as one capability:
+
+- The agent-facing surface is ONE tool:
+  `browser(command="start"|"exec"|"end", url, input, account, persist_context)`.
+  The tool description carries the usage contract; each agent's Tools
+  paragraph carries one entry.
+- The session key is never an agent parameter. The binding derives it from the
+  execution unit (`steel-<project>[-<account>]-<role>-<instance>`).
+- The auth context is a decoupled object in the pool store. The auth store
+  holds only `accounts.<account>.browser_context.ref`.
+- `browser(command="start", account=...)` mounts the object; the default
+  `browser(command="end")` never overwrites it, and
+  `persist_context=true` is the explicit write-back.
+- `steel.state` is removed completely. There is no fallback.
+- `BrowserTool` is a sync `BaseTool` over the shared `McpBrowserClient`, so the
+  same one tool binds to the async agents and the sync `stateful_turn` agents.
+- Fail-open everywhere. The lease TTL is the backstop.
+- Actor-lifetime binding. End the browser when it is not needed anymore.
+- The pool baseline stays two workers.
+- The in-scope agents are the recon orchestrator, the threat modeller, the
+  hunter, the pod runner, the pod triager, the recon triager, and the
+  mechanism typist. The assigner, the skill evolver, the one-shot roles, and
+  the removed legacy crawler stay out.
+- The pod runner records every browser call as a `RawObservation` with a
+  command hash, its result envelope, and the error code. The pod harness
+  dedupes a repeated browser command.
+- The legacy six-tool crawler is removed; see
+  `docs/design/legacy-crawler-eol.md`.

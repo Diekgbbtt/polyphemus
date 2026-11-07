@@ -210,13 +210,12 @@ def test_the_session_segment_and_the_role_are_the_new_names():
 
 
 def test_the_role_binds_the_project_skill_and_the_auth_store_by_site_arming():
-    """S1 5.5: the auth store and the project skill arrive through the role
-    binding (the recon-orchestrator coupling) - the roster declares the role
-    exempt, the site arms the read-only surface."""
+    """The auth store and the project skill arrive through the role binding;
+    the browser mechanics skill is the role's optional live-probe surface."""
     from polymerhus.app.auth.seams import auth_capable_binding
     from polymerhus.app.llm.skills import ROLE_SKILLS
 
-    assert ROLE_SKILLS[MODELLER_ROLE] == ()
+    assert ROLE_SKILLS[MODELLER_ROLE] == ("steel-browser",)
     binding = auth_capable_binding(MODELLER_ROLE, project_id="proj-1",
                                    arm_exempt_surface=True)
     names = {tool.name for tool in binding.tools}
@@ -227,7 +226,7 @@ def test_the_role_binds_the_project_skill_and_the_auth_store_by_site_arming():
     assert binding.context["project_id"] == "proj-1"
     # the read-only arming still names a loadable skill, so the prompt's "load
     # the skill named in your context" is actionable
-    assert binding.context["skills"] == ["authn"]
+    assert binding.context["skills"] == ["steel-browser", "authn"]
 
 
 def test_the_modeller_actor_speaks_on_the_renamed_role_and_thread():

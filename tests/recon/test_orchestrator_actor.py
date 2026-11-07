@@ -139,8 +139,8 @@ def test_gateway_arming_binds_the_full_auth_surface(tmp_path):
     # shape); the turn's own surface is the six armed names (#232 added the
     # universally bound record_skill_lesson)
     assert [n for n in seen["bound"][0] if n != "GatewayVerdict"] == [
-        "auth_store", "execute_command", "load_skill", "record_skill_lesson",
-        "steel_exec", "write_skill"]
+        "auth_store", "browser", "execute_command", "load_skill",
+        "record_skill_lesson", "steel_exec", "write_skill"]
 
 
 # --- the gateway turn ------------------------------------------------------------

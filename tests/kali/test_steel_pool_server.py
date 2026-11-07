@@ -48,6 +48,7 @@ class FakeManager:
             cdp_url="ws://172.20.0.5:3000/",
             cdp_host="localhost:3000",
             remaining_ms=900_000,
+            context_ref="steel-auth-p-alice",
         )
         self.payload: dict = {"success": True, "data": {"title": "app"}}
         self.end_report = EndReport(
@@ -64,8 +65,15 @@ class FakeManager:
         self.close_error: Exception | None = None
         self.shutdown_error: Exception | None = None
 
-    def start(self, mcp_session_id: str, name: str, url: str | None = None):
-        self.started.append((mcp_session_id, name, url))
+    def start(
+        self,
+        mcp_session_id: str,
+        name: str,
+        url: str | None = None,
+        *,
+        context_ref: str | None = None,
+    ):
+        self.started.append((mcp_session_id, name, url, context_ref))
         if self.start_error is not None:
             raise self.start_error
         return LeaseView(
@@ -77,6 +85,7 @@ class FakeManager:
             cdp_url=self.view.cdp_url,
             cdp_host=self.view.cdp_host,
             remaining_ms=self.view.remaining_ms,
+            context_ref=context_ref,
         )
 
     def exec(self, mcp_session_id: str, args):
@@ -85,8 +94,14 @@ class FakeManager:
             raise self.exec_error
         return self.payload
 
-    def end(self, mcp_session_id: str, *, reason: str = "explicit"):
-        self.ends.append(mcp_session_id)
+    def end(
+        self,
+        mcp_session_id: str,
+        *,
+        reason: str = "explicit",
+        persist_context: bool = False,
+    ):
+        self.ends.append((mcp_session_id, persist_context))
         if self.end_error is not None:
             raise self.end_error
         return self.end_report
@@ -226,6 +241,7 @@ class TestBrowserService:
             "cdp_url": "ws://172.20.0.5:3000/",
             "cdp_host": "localhost:3000",
             "remaining_ms": 900_000,
+            "context_ref": None,
         }
 
     def test_start_hides_the_http_worker_origin(self):
@@ -372,6 +388,8 @@ class TestBrowserService:
             "stopped": True,
             "released": None,
             "warnings": [],
+            "context_ref": None,
+            "context_saved": False,
         }
 
     def test_end_is_idempotent(self):
@@ -548,7 +566,11 @@ class TestFastMcpSurface:
         assert started.data["success"] is True
         assert executed.data == {"success": True, "data": {"title": "app"}}
         assert ended.data["ended"] is True
-        mcp_ids = {manager.started[0][0], manager.execs[0][0], manager.ends[0]}
+        mcp_ids = {
+            manager.started[0][0],
+            manager.execs[0][0],
+            manager.ends[0][0],
+        }
         assert len(mcp_ids) == 1
         assert mcp_ids.pop()
 

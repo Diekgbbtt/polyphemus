@@ -85,7 +85,6 @@ from polymerhus.attack.hunting.hunter_tools import (
     KbQueryFn,
     build_hunter_tools,
 )
-from polymerhus.attack.hunting.browser_tools import open_browser_tools
 from polymerhus.attack.hunting.hunting_tracing import (
     flush_hunting_traces,
     trace_span,
@@ -494,7 +493,7 @@ def build_hunting_agent(
     middleware=None,
     model_factory=None,
     observe: bool = True,
-    browser_tools_fn: Callable[[], Any] | None = None,
+    browser_tool_factory: Callable[[str], Any] | None = None,
 ) -> Callable[[Mapping[str, Any]], Awaitable[dict[str, Any]]]:
     """Build the turn-by-turn hunting-agent dispatch seam (IA-2).
 
@@ -509,9 +508,9 @@ def build_hunting_agent(
     middleware (`build_hunter_compaction_middleware`, #95 D9) - capability
     (#99) negotiation attaches via the session seam itself. `model_factory`
     injects a fake model for tests; `observe` toggles session observability.
-    `browser_tools_fn` opens the per-hunt browser tool binding (a callable
-    returning an async context manager); absent, it is built from
-    `KALI_BROWSER_MCP_URL`, and an empty value yields no browser tools.
+    `browser_tool_factory(hunt_key)` builds the per-hunt browser tool;
+    absent, it is built from `KALI_BROWSER_MCP_URL` and an empty value yields
+    a fail-open tool that reports `browser_unavailable`.
     Returns `async dispatch_fn(payload: Mapping) -> dict` (the async-native
     harness; sync callers use `build_sync_hunting_agent`). The payload is the
     loop dispatch record materialised by the surfer (S2 8.2).
@@ -534,7 +533,7 @@ def build_hunting_agent(
         feedback: list[str],
         checkpointer,
         middleware,
-        browser_tools=(),
+        browser_tool=None,
     ) -> dict[str, Any]:
         hunt_key = str(payload.get("dispatch_id") or "")
         if not hunt_key:
@@ -570,7 +569,10 @@ def build_hunting_agent(
         # harness executor map, joined by the tool name; the index middleware
         # joins the turn middleware and carries the role's bounded skill set.
         binding = auth_capable_binding(_HUNTER_ROLE)
-        tools = list(tools) + list(browser_tools) + binding.tools
+        tools = list(tools)
+        if browser_tool is not None:
+            tools.append(browser_tool)
+        tools = tools + binding.tools
         tools_by_name = {tool.name: tool for tool in tools}
         middleware = list(middleware) + binding.middleware
 
@@ -747,26 +749,31 @@ def build_hunting_agent(
             module_context,
         )
 
-        browser_opener = browser_tools_fn
-        if browser_opener is None:
+        if browser_tool_factory is not None:
+            browser_tool = browser_tool_factory(hunt_key)
+        else:
             from polymerhus.app.config import config  # noqa: PLC0415
+            from polymerhus.app.llm.browser_tools import (  # noqa: PLC0415
+                build_browser_tool,
+            )
 
-            def browser_opener():
-                # One hunt holds one browser MCP session, so the three tools
-                # share the lease the start created.
-                return open_browser_tools(config.KALI_BROWSER_MCP_URL)
+            browser_tool = build_browser_tool(
+                project_id=project_id,
+                role=_HUNTER_ROLE,
+                instance_id=hunt_key,
+                mcp_url=config.KALI_BROWSER_MCP_URL,
+            )
 
         try:
-            async with browser_opener() as browser_tools:
-                # Convergence: no hand-written agent span - the dispatch trace
-                # rides the handler (attributed session turns, run tag for the
-                # join) while the step records below carry their own explicit
-                # run correlation.
-                with hunt_session(run_id, hunt_key, project_id=project_id):
-                    with module_context("hunting"):
-                        cp = checkpointer if checkpointer is not None else get_session_checkpointer()
-                        mw = middleware if middleware is not None else [build_hunter_compaction_middleware()]
-                        return await _run_hunt(payload, feedback, cp, mw, browser_tools)
+            # Convergence: no hand-written agent span - the dispatch trace
+            # rides the handler (attributed session turns, run tag for the
+            # join) while the step records below carry their own explicit
+            # run correlation.
+            with hunt_session(run_id, hunt_key, project_id=project_id):
+                with module_context("hunting"):
+                    cp = checkpointer if checkpointer is not None else get_session_checkpointer()
+                    mw = middleware if middleware is not None else [build_hunter_compaction_middleware()]
+                    return await _run_hunt(payload, feedback, cp, mw, browser_tool)
         except ProviderUnavailableError:
             # #329/#312: a provider failure is infrastructure, never a hunt
             # degrade - propagate it (mirroring the pod) so the run pauses
@@ -787,6 +794,10 @@ def build_hunting_agent(
             return {"state": "grounding",
                     "feedback": f"hunt {hunt_key} degraded: {exc}"}
         finally:
+            try:
+                browser_tool.close()
+            except Exception:  # noqa: BLE001 - the lease TTL is the backstop
+                pass
             flush_hunting_traces()
 
     return dispatch_fn

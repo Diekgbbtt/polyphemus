@@ -285,13 +285,19 @@ def test_only_the_surface_owners_bind_surface_tools():
     assigner = {getattr(t, "name", "") for t in _surface_tools("assigner", "proj-1")}
     assert assigner == {"search_http_history", "get_http_artifact"}
     typist = {getattr(t, "name", "") for t in _surface_tools("mechanism_typist", "proj-1")}
-    assert {"graph_view", "search_http_history", "get_http_artifact", "exec"} <= typist
+    assert {"graph_view", "search_http_history", "get_http_artifact", "exec", "browser"} <= typist
     for role in ("assigner", "mechanism_typist"):
         binding = _auth_binding(role, "proj-1", None)
         assert binding is not None, role
         assert {"load_skill", "record_skill_lesson", "auth_store"} <= {
             getattr(t, "name", "") for t in binding.tools}
-        assert binding.context == {"skills": ["authn"], "project_id": "proj-1"}
+        expected = ["authn"]
+        if role == "mechanism_typist":
+            expected = ["steel-browser", "authn"]
+        assert binding.context == {
+            "skills": expected,
+            "project_id": "proj-1",
+        }
     assert _surface_tools("some-other-role", "proj-1") == ()
     assert _surface_tools("assigner", None) == ()
     assert _auth_binding("some-other-role", "proj-1", None) is None

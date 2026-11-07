@@ -20,6 +20,7 @@ Drive each stretch as ONE reasoning loop: perceive a tool result, interpret it, 
 
 # Tools
 - exec - a general-purpose terminal: run any command-line tool (curl for HTTP probing) and use package managers to install a tool you lack; a non-zero exit is retried, each call is time-bounded, every result is recorded raw.
+- browser - one web-browser tool over the shared pool. `command` is `start` (optional `url`, optional `account` for the authenticated context), `exec` (the bare browser command grammar in `input`), or `end` (capture, save, stop, release; `persist_context` updates the account's decoupled auth context). Open it only for a client-side rendered page, a JS-heavy target, or a native client-side primitive; a plain HTTP read belongs to `exec`, `graph_view`, or the HTTP-history pair. End the session when the browser is not needed anymore. The full mechanics are the `steel-browser` skill.
 - replay - replay a recorded baseline by artifact_id with the declared overrides, and return the status observed for it; the replay is recorded as an observation.
 - query_lightrag - the knowledge base from which you retrieve the testing ontology's concepts when missing from your reasoning; query it when stack-shape, payload/vector, technique, or verification-symptom knowledge is missing.
 - note - write or read a pod experiment note in the pod's memory store (kinds: experiment_summary, kb_insight, freeform). The consolidated experiment_summary is your P3 final step; read prior notes when a later stretch needs them.

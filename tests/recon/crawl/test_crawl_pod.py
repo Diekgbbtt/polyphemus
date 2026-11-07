@@ -8,13 +8,12 @@ AssetDelta decomposition end to end.
 import json
 
 from polymerhus.recon.crawl import crawl_pod
-from polymerhus.recon.crawl.steel_client import SteelNotConfigured
 from polymerhus.recon.domain.parsers.steel_parser import parse as steel_parse
 from polymerhus.recon.domain.types import JobSpec
 
 STEEL_CRAWL_JOB = JobSpec(
     tool="steel_crawl",
-    skill="agentic_crawl",
+    skill="steel_crawl",
     command_template="",
     produces=["BaseURL", "Endpoint", "Parameter"],
     consumes="BaseURL",
@@ -82,31 +81,6 @@ def test_crawl_pod_success_merges_baseurl_endpoint_parameter():
     types = {a.type for a in assets}
     assert types == {"BaseURL", "Endpoint", "Parameter"}
     assert export.assets_merged == len(assets)
-
-
-def test_crawl_pod_steel_not_configured_yields_failed_export_and_coverage_observation():
-    def run_crawl_fn(target, *, scope, steel_state=None, browser_auth=None):
-        raise SteelNotConfigured("STEEL_API_KEY (steel.dev credential) must be set")
-
-    curate_fn = make_capturing_curate_fn()
-    pod = crawl_pod.build_crawl_pod(
-        run_crawl_fn=run_crawl_fn,
-        parse_fn=steel_parse,
-        triage_fn=lambda exec_result, assets, job: [],
-        curate_fn=curate_fn,
-    )
-
-    result = pod.invoke(base_pod_state())
-    export = result["export"]
-
-    assert export.verdict == "failed"
-    assert len(curate_fn.calls) == 1
-    observations = curate_fn.calls[0]["observations"]
-    assert len(observations) == 1
-    obs = observations[0]
-    assert obs.macro_kind == "reduced_crawl_coverage"
-    assert obs.severity == "info"
-    assert obs.anchor == {"type": "BaseURL", "identity": {"url": "https://app.example.com"}}
 
 
 def test_crawl_pod_generic_exception_yields_failed_export_no_crash():
@@ -254,7 +228,7 @@ def test_crawl_scope_folds_to_registrable_domain_of_seed_host():
         triage_fn=lambda e, a, j: [],
         curate_fn=lambda a, o, pid, **k: (0, 0, [], []),
     )
-    job = JobSpec(tool="steel_crawl", skill="agentic_crawl", command_template="",
+    job = JobSpec(tool="steel_crawl", skill="steel_crawl", command_template="",
                   produces=["BaseURL"], consumes="BaseURL", use_auth=False,
                   configurator_mode="agent")
     # Anonymous path: no auth_context signal.
@@ -310,7 +284,7 @@ def test_crawl_node_forwards_browser_auth():
         triage_fn=lambda e, a, j: [],
         curate_fn=lambda a, o, pid, **k: (0, 0, [], []),
     )
-    job = JobSpec(tool="steel_crawl", skill="agentic_crawl", command_template="",
+    job = JobSpec(tool="steel_crawl", skill="steel_crawl", command_template="",
                   produces=["BaseURL"], consumes="BaseURL", use_auth=True,
                   configurator_mode="agent")
     material = {"auth_probe": "https://app.test/api/me",

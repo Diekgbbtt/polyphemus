@@ -142,7 +142,8 @@ async def default_runner_step_fn(spec: dict, messages: list, tool_calls: int) ->
                                hc.variant_ref or "", graph_view_fn=hc.graph_view_fn,
                                capture_context=hc.capture_context,
                                replay_fn=hc.replay_fn,
-                               project_id=getattr(hc.capture_context, "project_id", "") or "")
+                               project_id=getattr(hc.capture_context, "project_id", "") or "",
+                               browser_tool=hc.browser_tool)
     harness_mw = build_harness_middleware(log=hc.log,
                                           variant_ref=hc.variant_ref or "",
                                           cap=hc.cap)
@@ -192,7 +193,8 @@ async def default_triager_fn(spec: dict, observation: RawObservation,
                 "no bound pod session/harness for the stateful triager turn (D84-14)")
         tools = triager_react_tools(hc.memory_store, hc.spec_id,
                                     log=hc.log, variant_ref=hc.variant_ref or "",
-                                    graph_view_fn=hc.graph_view_fn)
+                                    graph_view_fn=hc.graph_view_fn,
+                                    browser_tool=hc.browser_tool)
         delta = _dicts_to_lc(list(messages))
         from polymerhus.app.auth.seams import auth_capable_binding  # noqa: PLC0415
 
@@ -254,7 +256,8 @@ def triager_compaction_middleware(*, window=None, threshold=None, store=None):
 
 def runner_react_tools(exec_fn, memory_store, spec_id, log, variant_ref, *,
                        kb_fn=None, kb_lookup=None, graph_view_fn=None,
-                       capture_context=None, replay_fn=None, project_id=""):
+                       capture_context=None, replay_fn=None, project_id="",
+                       browser_tool=None):
     """The Runner's bound-tool set (D84-16/27): `exec` (raw-recording terminal),
     `note` (pod memory write/read), the single `query_lightrag` KB tool from the
     lightrag branch (always-bound as of #197 - the `HUNTING_LIGHTRAG_TOOL` gate
@@ -302,6 +305,8 @@ def runner_react_tools(exec_fn, memory_store, spec_id, log, variant_ref, *,
         except Exception:  # noqa: BLE001 - evidence recording never gates the tool
             pass
 
+    if browser_tool is not None:
+        tools.append(browser_tool)
     if replay_fn is not None:
         # The description is the canonical contract (#196) imported from
         # `http_history_contract` - the pod and the hunter's read pair teach the
@@ -318,7 +323,8 @@ def runner_react_tools(exec_fn, memory_store, spec_id, log, variant_ref, *,
 
 
 def triager_react_tools(memory_store, spec_id, *, kb_fn=None, kb_lookup=None,
-                        log=None, variant_ref="", graph_view_fn=None):
+                        log=None, variant_ref="", graph_view_fn=None,
+                        browser_tool=None):
     """The Triager's bound-tool set (D84-27): note read + the always-bound
     `query_lightrag` KB tool + the shared `graph_view` L0/L1 tool (#197) - NEVER
     exec (the critic never touches the target). The triager's KB reads are
@@ -331,6 +337,8 @@ def triager_react_tools(memory_store, spec_id, *, kb_fn=None, kb_lookup=None,
     tools = [PodNoteTool(store=memory_store, spec_id=spec_id)]
     tools += [KbQueryTool(log=log, variant_ref=variant_ref)]
     tools += _graph_view_tools(graph_view_fn)
+    if browser_tool is not None:
+        tools.append(browser_tool)
     return tools
 
 

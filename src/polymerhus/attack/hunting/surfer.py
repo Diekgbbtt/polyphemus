@@ -766,6 +766,70 @@ async def run_pod_session(
     it onto the reduced D4 (`d4_spec_body`), so the pod's INIT gate sees the
     spec contract and never the store's bookkeeping; a retired field still
     reaches the gate and rejects (S5 8.4/8.8)."""
+    from polymerhus.app.config import config  # noqa: PLC0415
+    from polymerhus.app.llm.browser_tools import build_browser_tool  # noqa: PLC0415
+    from polymerhus.attack.hunting.pod.llm import (  # noqa: PLC0415
+        bind_pod_browser_tool,
+    )
+    from polymerhus.attack.hunting.pod.tools import browser_signature  # noqa: PLC0415
+
+    def record_browser(arguments, result) -> None:
+        """Record one browser call in the pod's D6 trail (operator Q5 A)."""
+        try:
+            import json  # noqa: PLC0415
+
+            from polymerhus.attack.hunting.pod.llm import pod_harness  # noqa: PLC0415
+            from polymerhus.attack.hunting.pod.types import RawObservation  # noqa: PLC0415
+
+            hc = pod_harness()
+            if hc is None or hc.log is None:
+                return
+            log = hc.log
+            variant = hc.variant_ref or "v0"
+            signature = browser_signature(variant, dict(arguments))
+            log.mark_executed(signature)
+            error = (
+                result.get("error") if isinstance(result, dict) else None
+            )
+            success = not (
+                isinstance(result, dict) and result.get("success") is False
+            )
+            log.record_observation(
+                RawObservation(
+                    probe_ref=signature,
+                    variant_ref=variant,
+                    request={
+                        "browser_command": arguments.get("command"),
+                        "url": arguments.get("url"),
+                        "input": arguments.get("input"),
+                        "account": arguments.get("account"),
+                    },
+                    status=None,
+                    stdout=json.dumps(result, ensure_ascii=False)[:4000],
+                    returncode=0 if success else 1,
+                    error_code=(
+                        str(error.get("code") or "")
+                        if isinstance(error, dict)
+                        else ""
+                    ),
+                    error_message=(
+                        str(error.get("message") or "")
+                        if isinstance(error, dict)
+                        else ""
+                    ),
+                )
+            )
+        except Exception:  # noqa: BLE001 - evidence recording never gates a tool
+            return None
+
+    browser_tool = build_browser_tool(
+        project_id=project_id,
+        role="pod",
+        instance_id=f"{hunt_key}__{spec_id}",
+        mcp_url=config.KALI_BROWSER_MCP_URL,
+        record_fn=record_browser,
+    )
+
     async def _run() -> dict:
         try:
             return await pod_builder(
@@ -788,9 +852,16 @@ async def run_pod_session(
                 "error": str(exc),
             }
 
-    async with _gate_or_null(gate):
-        async with _gate_or_null(role_gate):
-            export = await _run()
+    try:
+        async with _gate_or_null(gate):
+            async with _gate_or_null(role_gate):
+                with bind_pod_browser_tool(browser_tool):
+                    export = await _run()
+    finally:
+        try:
+            browser_tool.close()
+        except Exception:  # noqa: BLE001 - the lease TTL is the backstop
+            pass
 
     source = pod_session_id(run_id, hunt_key, spec_id)
     # The DURABLE parent-keyed record: authored at pod completion, keyed by the

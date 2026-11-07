@@ -11,10 +11,10 @@ projects only the subset its tools need:
   the existing `extra["auth_context"]` transport, serialised per tool by
   `serialize_auth_flags` (the pod-side serialiser moved here unchanged -
   same flag tables, same reserved keys, same shell quoting);
-- the crawler and browser tools: the stable pool key
-  (`extra["steel_session"]`) plus the gate metadata
+- the crawl and browser tools: the decoupled auth-context reference
+  (`extra["browser_context_ref"]`) plus the gate metadata
   (`extra["browser_auth"]`: `auth_probe` and `login_url`; the pool store owns
-  cookies and localStorage);
+  the context object);
 - non-auth jobs: nothing - `use_auth` stays the single eligibility gate.
 
 Role/default_role selection resolves over the account record
@@ -224,40 +224,33 @@ def project_browser_auth(account: dict | None,
     return material
 
 
-def project_steel_state(
+def project_browser_context(
     account: dict | None,
     *,
     project_id: str | None = None,
     account_name: str | None = None,
 ) -> str | None:
-    """The account's stable pool key, or None.
+    """The account's decoupled auth-context reference, or None.
 
-    When the project and account are known, the deterministic key is
-    authoritative: a legacy file reference or another project's key is never
-    mounted. Without that context, a stored `steel-...` reference is returned
-    only when it is a valid pool name. The retired `steel.profile` key is
-    ignored (Q5).
+    The reference points to the browser-state object in the pool store. The
+    auth store never holds the object. A stored reference wins; without one,
+    the deterministic context key for the project and account is the contract.
+    The retired `steel.state` key is not read.
     """
     if not isinstance(account, dict):
         return None
-    steel = account.get("steel") or {}
-    state = steel.get("state") if isinstance(steel, dict) else None
+    stored = account.get("browser_context")
+    ref = stored.get("ref") if isinstance(stored, dict) else None
     if project_id and account_name:
-        from polymerhus.app.steel_session_state import (  # noqa: PLC0415
-            browser_session_name,
+        from polymerhus.app.llm.browser_tools import (  # noqa: PLC0415
+            browser_context_ref,
         )
 
-        # The deterministic key is the contract. A legacy value was a
-        # per-project file reference (`alice`), and a stale value may name
-        # another project's key; neither is a safe pool mount.
-        return browser_session_name(project_id, account_name)
-    if isinstance(state, str) and state.startswith("steel-"):
-        from polymerhus.app.steel_session_state import (  # noqa: PLC0415
-            is_browser_session_name,
-        )
-
-        if is_browser_session_name(state):
-            return state
+        # The deterministic key is the contract. A stale value may name
+        # another project's context; the project and account are the truth.
+        return browser_context_ref(project_id, account_name)
+    if isinstance(ref, str) and ref.startswith("steel-auth-"):
+        return ref
     return None
 
 

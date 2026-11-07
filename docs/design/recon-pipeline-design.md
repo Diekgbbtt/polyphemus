@@ -71,7 +71,7 @@ Three real nesting levels: **pipeline orchestrator -> per-job orchestrator agent
 - Loads project settings once (`load_settings`, default `polymerhus.app.clients.pg.load_settings`) - `pipeline.py:381`.
 - Builds the phase plan from the static job registry (`control/jobs.py::JOBS`, `PHASES`) via `build_phase_plan` (`pipeline.py:420`, `jobs.py:532-544`), optionally restricted to a validated `job_subset` (`jobs.py:512-529`).
 - For each phase (index order), for each job in that phase: resolves `input_assets` - phase 0 seeds from the resolved target seed via `seed_assets` (`pipeline.py:153-167`), phase>0 re-queries Neo4j via `read_assets(job.consumes, project_id)` (`pipeline.py:253-291`), which validates `node_type` against `curator.ALLOWED_LABELS` before interpolating it into the Cypher label position (the only place a label appears unparameterised - `pipeline.py:271-272`).
-- Builds `extra = {"project_id": project_id}`, plus the auth feed for `use_auth` jobs: the gateway-bound account identifier rides `extra["auth_account"]` (never the material) and each phase's assembly resolves it from the shared store, projecting the flat request material as `extra["auth_context"]` (the pod serialises it per tool at fill time), the per-account session-state reference as `extra["steel_state"]`, and the browser auth material as `extra["browser_auth"]` for the agent-driven crawl (#395, supersedes the profile key of #223 T4 #243 and the retired settings-blob injection).
+- Builds `extra = {"project_id": project_id}`, plus the auth feed for `use_auth` jobs: the gateway-bound account identifier rides `extra["auth_account"]` (never the material) and each phase's assembly resolves it from the shared store, projecting the flat request material as `extra["auth_context"]` (the pod serialises it per tool at fill time), the decoupled auth-context reference as `extra["browser_context_ref"]`, and the browser gate metadata as `extra["browser_auth"]` for the agent-driven crawl (#395, supersedes the profile key of #223 T4 #243 and the retired settings-blob injection).
 - Runs every job in a phase concurrently via `asyncio.gather` (`pipeline.py:169`) - this is the **phase barrier**: phase `i+1`'s `input_assets` are not even resolved until every phase-`i` job has returned (`_run_one` wraps `run_job` and is awaited as a batch).
 - The run reaches the terminal `registry.set_run_status(run_id, "complete")` only on the full happy path, as the function's last statement (`pipeline.py:819`); a gateway `GatewayStop` (`pipeline.py:466-471`) or a `browser_only` verdict that prunes the plan empty (`pipeline.py:480-493`) terminates the run as `"failed"` first, and a deliberate stop (module cancel / forced teardown, `pipeline.py:815-816`) terminates it as the first-class `"stopped"` - so `"complete"` is not unconditional and a stop is no longer indistinguishable from a crash (#287).
 
@@ -258,7 +258,6 @@ The registry is a tuple of `Role` records (`providers.py:367-380`); the recon-re
 Role("configurator",     "LLM_CONFIGURATOR",     "session")
 Role("triager",          "LLM_TRIAGER",          "session",  "low")
 Role("job_orchestrator", "LLM_JOB_ORCHESTRATOR", "session",  "medium")
-Role("crawler",          "LLM_CRAWLER",          "session")
 ```
 
 (The full tuple also carries the analysis and hunting roles; the provider table is `openai`/`openrouter`/`swissai`/`opencode`/`opencode-go`, `providers.py:203-209`.)
@@ -437,7 +436,7 @@ sequenceDiagram
     participant EDGE as HTTP-history edge
     participant CUR as curator.curate
 
-    CP->>CP: extra.steel_state + extra.browser_auth
+    CP->>CP: extra.browser_context_ref + extra.browser_auth
     CP->>CJ: run_live_crawl(context)
     CJ->>SC: attach (never start)
     CJ->>SIDE: attach raw CDP
@@ -541,7 +540,7 @@ Seven operator-validation items (V1-V7: LLM-preprocess cost/latency gating, the 
 | `STEEL_CRAWL_MAX_DURATION_S` / `STEEL_CRAWL_MAX_ACTIONS` | 900 / 300 | live crawl wall and action bounds |
 | `KALI_HTTP_HISTORY_EDGE_URL` / `KALI_HTTP_HISTORY_EDGE_TOKEN` | `http://kali:8002` / "" | the HTTP-history ingest edge |
 | `CRAWL_MAX_PAGES` / `_MAX_DEPTH` / `_MAX_ITERS` / `_JOB_TIMEOUT_S` | 50 / 3 / 30 / 480 | legacy ReAct-loop bounds; not used by the live engine |
-| `LLM_<ROLE>` | required per invoked role, `"<provider>:<model>"` | per-role model id, `providers.resolve_role` (`LLM_TRIAGER`, `LLM_CRAWLER`, `LLM_JOB_ORCHESTRATOR`, `LLM_CONFIGURATOR`, ...; there is no `LLM_CROSS`) |
+| `LLM_<ROLE>` | required per invoked role, `"<provider>:<model>"` | per-role model id, `providers.resolve_role` (`LLM_TRIAGER`, `LLM_JOB_ORCHESTRATOR`, `LLM_CONFIGURATOR`, ...; there is no `LLM_CROSS`) |
 | `API_KEY_{OPENAI,OPENROUTER,SWISSAI}` | required per configured provider | provider credential |
 | `KALI_MCP_URL` | (in `polymerhus.app.config`, not `recon/config.py`) | fastmcp `execute_command` endpoint |
 
@@ -568,10 +567,6 @@ src/polymerhus/recon/
   domain/parsers/        - 12 parser modules / 17 parse fns (§4.3)
   crawl/crawl_pod.py     - the agent-mode pod subgraph (§3.4)
   crawl/steel/           - the live engine: job, run, session, auth, frontier, policy, capture, manifest, ledger
-  crawl/crawl_agent.py   - legacy ReAct adapter (compatibility)
-  crawl/crawl_agentic.py - legacy ReAct loop (compatibility)
-  crawl/steel_client.py  - legacy provider seam (compatibility)
-  crawl/steel_provider.py- legacy SteelCrawlProvider (compatibility)
   crawl/prompts/steel-crawl.md - the legacy crawler role prompt
   config.py              - env-driven tunables
 src/polymerhus/project_management/

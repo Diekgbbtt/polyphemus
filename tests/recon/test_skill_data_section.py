@@ -129,18 +129,6 @@ def test_load_skill_description_carries_contract_verbatim():
 
 # --- AST-222-05: the steel skill is read directly from the crawl prompts/ dir ---
 
-def test_steel_skill_readers_serve_the_module_prompt():
-    from polymerhus.recon.crawl import crawl_agent, crawl_agentic
-
-    body = crawl_agentic._load_steel_crawl_skill()
-    assert body  # the steel-crawl role prompt ships with the crawl module
-    assert not body.startswith("---")  # plain .md, no frontmatter
-    assert crawl_agent._load_skill() == body  # both readers, one prompt file
-    assert "Steel Agentic Crawl" in body
-
-
-# --- AST-222-06: every repo skill conforms (the #222 convention criterion) ---
-
 def test_every_repo_skill_conforms_to_data_section():
     names = skills.list_skills()
     assert names  # the catalogue is non-empty: a vacuous pass proves nothing
@@ -192,7 +180,7 @@ def test_session_agent_loads_skill_through_tool_at_phase_entry(tmp_path, monkeyp
         AIMessage(content="phase ready"),
     ]
     turn = run_session_turn(
-        "crawler", "run9:crawler",
+        "steel-crawl", "run9:steel-crawl",
         [HumanMessage(content="phase entry: load the crawl discipline")],
         checkpointer=InMemorySaver(),
         tools=[skills.build_load_skill_tool()],
@@ -248,7 +236,7 @@ def test_session_agent_without_tool_binding_cannot_load_skill(tmp_path, monkeypa
         AIMessage(content="phase ready"),
     ]
     turn = run_session_turn(
-        "crawler", "run9:crawler",
+        "steel-crawl", "run9:steel-crawl",
         [HumanMessage(content="phase entry: load the crawl discipline")],
         checkpointer=InMemorySaver(),
         tools=(),
@@ -416,7 +404,7 @@ def test_session_turn_carries_bound_skill_index_to_model(tmp_path, monkeypatch):
             return self
 
     run_session_turn(
-        "crawler", "run9:index",
+        "steel-crawl", "run9:index",
         [HumanMessage(content="go")],
         checkpointer=InMemorySaver(),
         middleware=[skills.skill_index_middleware()],
