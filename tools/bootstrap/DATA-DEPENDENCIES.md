@@ -9,7 +9,7 @@ Three data dependencies per target, the N12 work items of the eval harness:
 
 1. **L1 surface** - the target's business-function `Service`s and cross-cutting `System`s, grounded on the real deployed target.
    Consumed now as `operator_kb.md` (structured prose) through the platform scaffold (`src/polymerhus/analysis/scaffold.py`; the eval CLI wrapper is `eval/scaffold.py`); also emitted as a graph-ready RDF dataset (`l1-surface.yaml`).
-2. **AuthContext** - the store's `overview` (login mechanism, defences, required headers, anti-bot, replayability, authenticated-context oracle) and `accounts` (credentials, tokens, roles, and the `steel.state` session-state reference).
+2. **AuthContext** - the store's `overview` (login mechanism, defences, required headers, anti-bot, replayability, authenticated-context oracle) and `accounts` (credentials, tokens, roles, and the `browser_context.ref` auth-context reference).
    The oracle is `auth_probe.url`: a deployment-neutral path that answers 2xx only with an authenticated context, and 401, 403, or 3xx without one.
    It is the recon gateway's only pass/fail signal for authentication, and the crawl's precondition.
    Delivered by direct file write through `POST /projects/{id}/data-dependencies/auth-overview` and `auth-credentials`; the retired inline `target_config.auth` and `PUT /projects/{id}/auth` are not the eval path.

@@ -105,20 +105,28 @@ def test_a_present_domain_is_refused(tmp_path):
     assert any("domain" in e for e in errors), errors
 
 
-def test_a_retired_steel_profile_is_refused(tmp_path):
+def test_a_retired_steel_key_is_refused(tmp_path):
     account = _account(_base_credentials())
     account["steel"] = {"profile": "legacy-profile"}
     project = _project_dir(tmp_path, {"alice": account})
     errors = tool.check_auth(project)
-    assert any("steel.profile" in e and "steel.state" in e for e in errors), errors
+    assert any("account.steel" in e for e in errors), errors
 
 
-def test_a_steel_state_reference_is_accepted(tmp_path):
+def test_a_steel_state_reference_is_refused(tmp_path):
     account = _account(_base_credentials())
     account["steel"] = {"state": "alice-session"}
     project = _project_dir(tmp_path, {"alice": account})
     errors = tool.check_auth(project)
-    assert not any("steel.profile" in e for e in errors), errors
+    assert any("account.steel" in e for e in errors), errors
+
+
+def test_a_browser_context_reference_is_accepted(tmp_path):
+    account = _account(_base_credentials())
+    account["browser_context"] = {"ref": "steel-auth-proj-alice"}
+    project = _project_dir(tmp_path, {"alice": account})
+    errors = tool.check_auth(project)
+    assert not any("account.browser_context" in e for e in errors), errors
 
 
 def test_an_absolute_url_anywhere_in_the_account_is_refused(tmp_path):

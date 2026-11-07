@@ -141,7 +141,7 @@ def test_auth_job_without_material_runs_anonymous():
 
 
 def test_crawl_node_best_effort_on_run_failure():
-    def run_crawl_fn(target, *, scope, steel_state=None, browser_auth=None):
+    def run_crawl_fn(target, *, scope, browser_context_ref=None, browser_auth=None):
         raise RuntimeError("steel down")
 
     pod = crawl_pod.build_crawl_pod(

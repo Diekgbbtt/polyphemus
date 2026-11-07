@@ -74,6 +74,9 @@ Out: `assigner`, `skill_evolver`, one-shot roles, `configurator`, `crawler` (rem
 - Remove the `crawler` role and every comment/test/doc that wires it.
 - Rename the `steel_crawl` job skill from `agentic_crawl` to `steel_crawl`.
 - Point the analysis anatomy deep-probe availability check at `KALI_BROWSER_MCP_URL`.
+- The data-dependency validator refuses the retired `steel` key and accepts
+  `browser_context.ref`; the project scaffold no longer creates the dead
+  `steel-state/` bucket.
 - Add the EOL record with date 2026-11-07 and the rationale.
 - Gate: the full targeted tier is green and no `crawler` reference remains outside the EOL record.
 
@@ -85,7 +88,7 @@ Out: `assigner`, `skill_evolver`, one-shot roles, `configurator`, `crawler` (rem
   pool context is a session record under a context key, the six tool bindings
   share one constructor, and the app/crawl typed-error classes stay layer
   local).
-- Full unit tier: 6821 passed, 44 skipped, 1 xfailed. The only failures are the
+- Full unit tier: 6822 passed, 44 skipped, 1 xfailed. The only failures are the
   six known local Node failures in `tests/ingestion/test_n8n_url_workflow.py`
   (`docs/tickets/local-node-missing-simdjson.md`).
 - Targeted tiers: `tests/app tests/kali tests/eval` 1717 passed, 22 skipped;

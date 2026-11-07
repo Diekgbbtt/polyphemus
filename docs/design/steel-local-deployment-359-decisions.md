@@ -1,3 +1,8 @@
+> 2026-11-07: the browser path is the one `browser` tool over the in-stack
+> pool; the auth store records `accounts.<account>.browser_context.ref`.
+> The `steel.state` reference below is historical. See
+> `docs/design/agent-browser-integration-plan.md`.
+
 # Local Steel deployment and the address seam (#359) - decisions
 
 *Status: recorded during the #359 grilling round (2026-10-19). The spec is `docs/design/steel-local-deployment-359-spec.md`; the tracker issues carry the work authority.*
@@ -152,7 +157,7 @@ The local API's missing profile store is no longer a capability branch in the to
 Profiles are retired in the cloud too.
 
 The local state file is per account, owner-only, atomic, and single-writer.
-The auth store holds a `steel.state` reference, not the state.
+The auth store holds a `browser_context.ref` reference, not the state.
 Old `steel.profile` references are silently disregarded; no warning, alias, or migration branch.
 
 ## D359-13 - The wrapper hides local mode and fixes the local user agent (#395)

@@ -139,11 +139,11 @@ The data-dependency staging and the validator use that same seam, so a committed
   The path is deployment-neutral; the app resolves it against the project's canonical origin.
   The oracle passes only a 2xx with `redirected: false`; `401`, `403`, any 3xx, or a followed redirect fails; anything else is indeterminate and fails closed.
   A no-auth target may omit it; the crawl then logs the missing probe and uses the legacy surface gate.
-- `account.steel` is `{state: <session-state key>}`.
-  The retired `steel.profile` object is not the contract: the store ignores it, and the validator refuses it with a named error.
-  The state key names a caller-owned state file (`<data_root>/<project_id>/steel-state/<key>.json`) holding the four durable fields (`cookies`, `localStorage`, `sessionStorage`, `indexedDB`); the store holds the reference, never the state.
+- `account.browser_context` is `{ref: <pool context key>}`.
+  The retired `steel` object is not the contract: the store refuses it, and the validator reports the unknown field.
+  The reference names the decoupled auth-context object in the pool store; the pool store holds the state, and the auth store holds only the reference.
 - The accounts keep `credentials`, `tokens`, `snapshot`, `roles`, and `default_role` exactly as `records.validate_account` defines them.
-  The browser-only path stores a session snapshot and a `steel.state`; the request path stores the replayed credential material.
+  The browser-only path stores a session snapshot and a `browser_context.ref`; the request path stores the replayed credential material.
 - Secrets never enter git: `overview.yaml` is the only redaction-safe artifact that may be committed; `credentials.yaml`, the authn skill's reference scripts, and the state files stay in the staging root (`eval/data-dependencies/`, git-ignored) or the eval host (`/root/eval-dd/data/<target>/`).
 
 ## Non-goals

@@ -1,3 +1,8 @@
+> 2026-11-07: the browser surface is one `browser` tool over the in-stack
+> pool; the auth store records `accounts.<account>.browser_context.ref`.
+> The `steel.state` and session-state-file details below are historical.
+> See `docs/design/agent-browser-integration-plan.md`.
+
 # Steel session-only change: exhaustive impact map (#395)
 
 *Status: implemented and audited 2026-10-21.*

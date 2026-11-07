@@ -58,7 +58,7 @@ def base_pod_state(extra=None):
 
 
 def test_crawl_pod_success_merges_baseurl_endpoint_parameter():
-    def run_crawl_fn(target, *, scope, steel_state=None, browser_auth=None):
+    def run_crawl_fn(target, *, scope, browser_context_ref=None, browser_auth=None):
         assert target == "https://app.example.com"
         # scope is folded to the registrable domain of the seed host (Change A)
         assert scope == ["example.com"]
@@ -84,7 +84,7 @@ def test_crawl_pod_success_merges_baseurl_endpoint_parameter():
 
 
 def test_crawl_pod_generic_exception_yields_failed_export_no_crash():
-    def run_crawl_fn(target, *, scope, steel_state=None, browser_auth=None):
+    def run_crawl_fn(target, *, scope, browser_context_ref=None, browser_auth=None):
         raise RuntimeError("boom")
 
     curate_fn = make_capturing_curate_fn()
@@ -113,7 +113,7 @@ def test_crawl_pod_partial_v2_manifest_yields_reduced_coverage():
         "stats": {"flows": 1},
     }
 
-    def run_crawl_fn(target, *, scope, steel_state=None, browser_auth=None):
+    def run_crawl_fn(target, *, scope, browser_context_ref=None, browser_auth=None):
         return dict(partial)
 
     curate_fn = make_capturing_curate_fn()
@@ -144,7 +144,7 @@ def test_crawl_pod_complete_v2_manifest_is_not_reduced():
         "stats": {"flows": 1},
     }
 
-    def run_crawl_fn(target, *, scope, steel_state=None, browser_auth=None):
+    def run_crawl_fn(target, *, scope, browser_context_ref=None, browser_auth=None):
         return dict(complete)
 
     curate_fn = make_capturing_curate_fn()
@@ -161,7 +161,7 @@ def test_crawl_pod_complete_v2_manifest_is_not_reduced():
 
 
 def test_crawl_pod_empty_manifest_yields_failed_export():
-    def run_crawl_fn(target, *, scope, steel_state=None, browser_auth=None):
+    def run_crawl_fn(target, *, scope, browser_context_ref=None, browser_auth=None):
         return {"endpoints": [], "js_urls": []}
 
     curate_fn = make_capturing_curate_fn()
@@ -217,7 +217,7 @@ def test_crawl_scope_folds_to_registrable_domain_of_seed_host():
 
     captured = {}
 
-    def run_crawl_fn(target, *, scope, steel_state=None, browser_auth=None):
+    def run_crawl_fn(target, *, scope, browser_context_ref=None, browser_auth=None):
         captured["target"] = target
         captured["scope"] = scope
         return dict(CANNED_MANIFEST)
@@ -245,7 +245,7 @@ def test_curator_threads_registrable_scope_domain_to_curate_fn():
     `curate_fn`, so out-of-scope BaseURLs (js.stripe.com, *.auth0.com, ...)
     are dropped by the agnostic noise filter. For target app.daytona.io the
     threaded scope_domain is the registrable domain daytona.io."""
-    def run_crawl_fn(target, *, scope, steel_state=None, browser_auth=None):
+    def run_crawl_fn(target, *, scope, browser_context_ref=None, browser_auth=None):
         return dict(CANNED_MANIFEST)
 
     curate_fn = make_capturing_curate_fn()
@@ -294,5 +294,5 @@ def test_crawl_node_forwards_browser_auth():
              "project_id": "p1"}
     result = graph.invoke(state)
     assert seen["browser_auth"] == material
-    assert "steel_state" not in seen
+    assert "browser_context_ref" not in seen
     assert result["export"].verdict == "success"

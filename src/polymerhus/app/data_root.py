@@ -5,7 +5,6 @@ the layout is defined once and no module scaffolds its own directories:
 
     <data_root>/<project_id>/
     ├── auth/                   # the auth module owns this (#220)
-    ├── steel-state/            # per-account browser session state (#395)
     ├── usage/                  # the durable token-usage record (#326)
     ├── analysis/               # the analysis episodic memory (T3)
     ├── hunting/
@@ -46,7 +45,6 @@ DATA_ROOT = Path(__file__).resolve().parents[3] / "data"
 # 2026-10-20), which the stores create lazily like any runtime-keyed branch.
 PROJECT_SCAFFOLD: tuple[str, ...] = (
     "auth",
-    "steel-state",
     "usage",
     "analysis",
     "hunting/hunter",

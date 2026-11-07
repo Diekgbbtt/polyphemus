@@ -93,14 +93,13 @@ def test_project_dir_validates_the_project_id(tmp_path: Path) -> None:
 
 
 def test_scaffold_carries_the_module_buckets(tmp_path: Path) -> None:
-    """Every module bucket lands at project creation - auth (#220), the
-    steel session-state bucket (#395), and the analysis episodic-memory bucket
-    (T3) included - so a store writes files only, never directories. The
-    project skill area lives in the live skills root's
-    `target-specific-procedure/` branch, not in the data root."""
+    """Every module bucket lands at project creation - auth (#220) and the
+    analysis episodic-memory bucket (T3) included - so a store writes files
+    only, never directories. The project skill area lives in the live skills
+    root's `target-specific-procedure/` branch, not in the data root."""
     project_dir_ = ensure_project("proj-1", root=tmp_path / "data")
 
-    for rel in ("auth", "steel-state", "analysis", "hunting/threat_modeller",
+    for rel in ("auth", "analysis", "hunting/threat_modeller",
                 "hunting/hunter", "hunting/test-executor-pod"):
         assert (project_dir_ / rel).is_dir(), f"missing module bucket {rel}"
 

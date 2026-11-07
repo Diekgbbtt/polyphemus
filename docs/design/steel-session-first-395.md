@@ -1,3 +1,8 @@
+> 2026-11-07: the browser surface is one `browser` tool over the in-stack
+> pool; the auth store records `accounts.<account>.browser_context.ref`.
+> The `steel.state` and session-state-file details below are historical.
+> See `docs/design/agent-browser-integration-plan.md`.
+
 # Session-first browser design (#395): correction and profile retirement
 
 *Status: revision, 2026-10-19. Superseded in part 2026-10-20 by `steel-session-only-395-decisions.md`: profiles are retired in the cloud too, there is one runtime-agnostic skill (not two primitive packs), and local user-agent consistency uses the CLI `set useragent` primitive rather than `CHROME_ARGS`. Keep this record as the session-first analysis; read the newer decision record for the binding decisions.*

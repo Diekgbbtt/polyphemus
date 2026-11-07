@@ -1,3 +1,8 @@
+> 2026-11-07: the browser surface is one `browser` tool over the in-stack
+> pool; the auth store records `accounts.<account>.browser_context.ref`.
+> The `steel.state` and session-state-file details below are historical.
+> See `docs/design/agent-browser-integration-plan.md`.
+
 # steel_crawl workbench: authenticated full-surface crawl
 
 **Status: DESIGN WORKBENCH, 2026-10-30.**

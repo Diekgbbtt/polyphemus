@@ -1,3 +1,9 @@
+> 2026-11-07: the agent surface is one `browser` tool and the auth
+> context is a decoupled pool-store object referenced by
+> `accounts.<account>.browser_context.ref`. The stable-key and
+> `steel.state` steps below are historical. See
+> `docs/design/agent-browser-integration-plan.md`.
+
 # Steel crawl pool convergence: implementation plan
 
 Status: A, B, C, and D complete; E and F pending.

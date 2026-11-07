@@ -345,12 +345,6 @@ def check_auth(project_dir: Path) -> list[str]:
                     validate_account({**acct, "origin": acct.get("origin", "operator")})
                 except AuthInvalidError as exc:
                     errors.append(f"credentials.yaml: account {name!r}: {exc}")
-                steel = acct.get("steel")
-                if isinstance(steel, dict) and "profile" in steel:
-                    errors.append(
-                        f"credentials.yaml: account {name!r} steel.profile is "
-                        "retired; store the session key as steel.state"
-                    )
                 errors.extend(_auth_origin_errors(name, acct))
 
     # The authenticated-context oracle is mandatory whenever the target
