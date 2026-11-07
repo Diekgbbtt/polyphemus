@@ -970,3 +970,40 @@ Both pods stayed on the spec's axes and did not fabricate evidence.
 The IDOR pod's bottleneck was the target behaviour and the substitution, not
 Kali.
 The XSS pod's browser stage is the Kali cost.
+
+## Follow-up: hunter notes loss and the data root (2026-11-07)
+
+The hunter wrote 60 notes during the run.
+Langfuse records 60 successful `notes` writes, 3 rejects for a missing `command`, and 12 reads.
+The surviving `hunting/hunter/notes.yaml` contains 35 records, all `pod-export:*` records written by the surfer.
+No hunter phase note survives.
+
+The notes were not missing at write time.
+The store lost them.
+`HunterMemoryStore.write_note` was an unlocked whole-file read-modify-write.
+The hunter's `notes` tool runs in a worker thread (`asyncio.to_thread`), while the surfer's pod-export write ran on the event loop.
+A stale writer could replace the file with its pre-note list and drop the note without an error.
+A controlled concurrent test reproduced the loss.
+Commit `86046d63` wraps the critical section in the per-project lock.
+
+The run also wrote to an ephemeral data root.
+The C.a agent container was started from `docker-compose.yml` only.
+Its mounts were `/data/ingestion` and the skills volume; there was no `/srv/data` bind.
+The app writes `/srv/data`, so every hunting artifact landed in the container's writable layer.
+The host path inspected after the run is a 15:08:41 copy of that layer, not the live store.
+The assessor found the live store under `/var/lib/docker/rootfs/overlayfs/86fd2ad7.../srv/data`.
+The container was recreated on 5 November, so the pre-loss file is gone.
+The note bodies survive in the Langfuse inputs.
+
+The fixes:
+
+- The base `docker-compose.yml` now binds `${INSTANCE_DATA_ROOT:-./data}:/srv/data` on the agent service.
+  The host data root is authoritative and survives a container kill.
+  The code addresses `/srv/data` only, so the host layout stays external.
+- The pod-export stubs moved to `hunting/pod-export/notes.yaml` (`PodExportStore`).
+  The hunter `notes.yaml` holds the episodic phase notes only.
+  The two files have separate writers and separate bounds.
+- The hunter notes read-modify-write is serialised by the project lock.
+
+The data-root fix is configuration-layer.
+No eval start or end verification was added.
