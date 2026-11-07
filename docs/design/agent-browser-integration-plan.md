@@ -80,7 +80,7 @@ Out: `assigner`, `skill_evolver`, one-shot roles, `configurator`, `crawler` (rem
 ### S7 Review and verification (complete)
 
 - Adversarial standards and spec review (two axes, parallel sub-agents). The
-  second pass after the fix commit reports no hard standards violations and no
+  final pass after the fix commits reports no hard standards violations and no
   missing spec requirement; the remaining judgement calls are accepted (the
   pool context is a session record under a context key, the six tool bindings
   share one constructor, and the app/crawl typed-error classes stay layer
