@@ -346,7 +346,7 @@ def test_the_default_adapter_adds_the_process_facts_to_the_envelope(monkeypatch)
     assert envelope["duration_ms"] >= 0
 
 
-def test_the_crawl_never_starts_a_session():
+def test_the_crawl_never_runs_a_raw_start_command():
     exec_fn = FakeExecFn(
         load_cli("catalogue"),
         load_cli("session"),
@@ -363,7 +363,9 @@ def test_the_crawl_never_starts_a_session():
     assert exec_fn.commands == commands_before_start
     client.stop()
 
-    assert not hasattr(client, "start")
+    # The lifecycle verb exists on the client (the MCP backend mounts through
+    # browser_start), but the command grammar never reaches it.
+    assert callable(client.start)
     assert all("start" not in command for command in exec_fn.commands)
     assert all(command[2] != "start" for command in exec_fn.commands)
     assert all("--json" in command for command in exec_fn.commands)

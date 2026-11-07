@@ -129,6 +129,63 @@ def test_crawl_pod_generic_exception_yields_failed_export_no_crash():
     assert observations[0].macro_kind == "reduced_crawl_coverage"
 
 
+def test_crawl_pod_partial_v2_manifest_yields_reduced_coverage():
+    partial = {
+        "schema_version": "steel-crawl/v2",
+        "run": {"stop_reason": "session_deadline", "partial": True},
+        "endpoints": [
+            {"method": "GET", "url": "https://app.example.com/one", "path": "/one"}
+        ],
+        "stats": {"flows": 1},
+    }
+
+    def run_crawl_fn(target, *, scope, steel_state=None, browser_auth=None):
+        return dict(partial)
+
+    curate_fn = make_capturing_curate_fn()
+    pod = crawl_pod.build_crawl_pod(
+        run_crawl_fn=run_crawl_fn,
+        parse_fn=steel_parse,
+        triage_fn=lambda exec_result, assets, job: [],
+        curate_fn=curate_fn,
+    )
+
+    result = pod.invoke(base_pod_state())
+    export = result["export"]
+
+    assert export.verdict == "failed"
+    assert "partial crawl: session_deadline" in export.error
+    observations = curate_fn.calls[0]["observations"]
+    assert len(observations) == 1
+    assert observations[0].macro_kind == "reduced_crawl_coverage"
+
+
+def test_crawl_pod_complete_v2_manifest_is_not_reduced():
+    complete = {
+        "schema_version": "steel-crawl/v2",
+        "run": {"stop_reason": "frontier_empty", "partial": False},
+        "endpoints": [
+            {"method": "GET", "url": "https://app.example.com/one", "path": "/one"}
+        ],
+        "stats": {"flows": 1},
+    }
+
+    def run_crawl_fn(target, *, scope, steel_state=None, browser_auth=None):
+        return dict(complete)
+
+    curate_fn = make_capturing_curate_fn()
+    pod = crawl_pod.build_crawl_pod(
+        run_crawl_fn=run_crawl_fn,
+        parse_fn=steel_parse,
+        triage_fn=lambda exec_result, assets, job: [],
+        curate_fn=curate_fn,
+    )
+
+    result = pod.invoke(base_pod_state())
+
+    assert result["export"].verdict == "success"
+
+
 def test_crawl_pod_empty_manifest_yields_failed_export():
     def run_crawl_fn(target, *, scope, steel_state=None, browser_auth=None):
         return {"endpoints": [], "js_urls": []}

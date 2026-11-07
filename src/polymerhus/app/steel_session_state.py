@@ -26,8 +26,10 @@ The module performs no I/O at import (CODING_STANDARD section 6).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 from pathlib import Path
 
 import httpx
@@ -93,6 +95,36 @@ def to_sdk_session_context(context: object) -> dict:
         for canonical, sdk_name in _STATE_FIELDS
         if canonical in source
     }
+
+
+_SESSION_NAME_MAX = 128
+_SESSION_SLUG = re.compile(r"[^A-Za-z0-9_-]+")
+
+
+def _session_slug(value: str, fallback: str) -> str:
+    """One safe session-name component: lowercase, bounded, alnum-led."""
+    text = _SESSION_SLUG.sub("-", (value or "").strip()).strip("-_")
+    text = re.sub(r"-{2,}", "-", text).lower()
+    return text or fallback
+
+
+def browser_session_name(project_id: str, account: str | None = None) -> str:
+    """The stable pool key for one project's (optional) account.
+
+    `steel-<project_slug>[-<account_slug>]`. The key is deterministic across
+    runs: the run id stays in the lease, the ledger, and the manifest, so the
+    next gateway turn mounts the same durable browser state. The store's name
+    rule (alnum start, [A-Za-z0-9_-], 128 max) is enforced here.
+    """
+    project = _session_slug(project_id, "project")
+    name = f"steel-{project}"
+    if account:
+        name = f"{name}-{_session_slug(account, 'account')}"
+    if len(name) <= _SESSION_NAME_MAX:
+        return name
+    digest = hashlib.sha256(name.encode("utf-8")).hexdigest()[:12]
+    head = name[: _SESSION_NAME_MAX - len(digest) - 1].rstrip("-_")
+    return f"{head}-{digest}"
 
 
 def state_path(
@@ -327,6 +359,7 @@ def restore_session(
 __all__ = [
     "API_KEY_ENV",
     "SteelStateError",
+    "browser_session_name",
     "capture_session_context",
     "create_session",
     "load_session_context",

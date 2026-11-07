@@ -1,17 +1,18 @@
-"""The Steel session client: catalogue, attach, CLI envelope, and stop.
+"""The Steel session client: backend, catalogue, envelope, and stop.
 
 Spec: `docs/design/steel-crawl-spec.md` sections 4, 4.1, 4.3, and 4.4.
+Convergence: `docs/design/steel-crawl-pool-convergence.md`.
 
-The crawl never starts a session: it attaches to exactly one pre-authenticated
-session by name and runtime id, sends every later command with `--session` and
-`--json`, and stops the session it owns. The two options are placed after the
-verb and before every positional, so a variadic verb's mandatory `--` boundary
-is the last thing before its value and no option can fold into the value text.
-`start` is absent from the public surface by construction, so the lifecycle
-cannot be reached from this client.
+The client is a thin identity facade over one backend. The production backend
+is the browser MCP (`McpBackend` over `McpBrowserClient`): the client mounts a
+durable lease with `browser_start`, runs every command with `browser_exec`, and
+releases it with `browser_end`. The CLI backend remains for a local-only
+deployment and for the engine's contract tests.
 
-`SteelSessionRegistry` only observes; it owns no lifecycle action and cannot
-start, stop, or release anything. The lifecycle owner calls the observations.
+The backend owns the transport. The client owns the runtime identity and the
+`cdp_endpoint` the passive capture attaches to. `start` (or its engine-facing
+alias `attach`) never silently creates a second session: the MCP lease is
+keyed by the MCP session and the name, and `browser_start` is the only mount.
 
 The websocket URL is a secret: it is wrapped in `SecretStr`, so neither the
 record's `repr`/`str`, a `model_dump(mode="json")`, nor a log line that renders
@@ -19,7 +20,8 @@ the record can carry it. The CDP sidecar reads it with
 `websocket_url.get_secret_value()` and never logs it.
 
 Importing this module performs no I/O (CODING_STANDARD section 6): the default
-`exec_fn` resolves a subprocess only when a command is executed.
+CLI `exec_fn` resolves a subprocess only when a command is executed, and the
+MCP backend is built lazily by `from_mcp`.
 """
 from __future__ import annotations
 
@@ -27,7 +29,8 @@ import json
 import subprocess
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, SecretStr
 
@@ -38,8 +41,8 @@ def steel_prefix(*, api_url: str | None = None) -> tuple[str, ...]:
     """The `steel browser` prefix, optionally with the global `--api-url`.
 
     `--api-url` is a global CLI flag, so it sits before `browser`. A caller
-    passes the result as `SteelSessionClient(prefix=...)`; the client itself
-    never hardcodes a host.
+    passes the result as `CliBackend(prefix=...)`; the client never hardcodes
+    a host.
     """
     if api_url:
         return ("steel", "--api-url", api_url, "browser")
@@ -49,9 +52,9 @@ def steel_prefix(*, api_url: str | None = None) -> tuple[str, ...]:
 class SteelSession(BaseModel):
     """One observed Steel browser session.
 
-    `session_id` is the runtime id and `name` is the CLI name. The two are the
-    stable identity pair; a name can be reused after a release, so the runtime
-    id is the tiebreaker.
+    `session_id` is the runtime id and `name` is the durable name. The two are
+    the stable identity pair; a name can be reused after a release, so the
+    runtime id is the tiebreaker.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -63,6 +66,7 @@ class SteelSession(BaseModel):
     debug_url: str = ""
     debugger_url: str = ""
     websocket_url: SecretStr | None = None
+    cdp_host: str = ""
     created_at: str | None = None
     remaining_ms: int | None = None
     inactivity_timeout_ms: int | None = None
@@ -87,10 +91,7 @@ class SteelSession(BaseModel):
     def from_api(
         cls, data: Mapping[str, Any], *, name: str | None = None
     ) -> "SteelSession":
-        """Build from the full runtime record (`GET /v1/sessions/<id>`).
-
-        `name` is the requested name, used only when the record omits it.
-        """
+        """Build from the full runtime record (`GET /v1/sessions/<id>`)."""
         return cls(
             session_id=str(data.get("id") or ""),
             name=str(data.get("name") or name or ""),
@@ -109,8 +110,8 @@ class SteelSession(BaseModel):
     def from_start(cls, name: str, data: Mapping[str, Any]) -> "SteelSession":
         """Build from a `steel browser start --json` payload.
 
-        This module never issues the start; a lifecycle owner that did builds
-        the record here and hands it to the registry to observe.
+        A lifecycle owner that starts a session builds the record here and
+        hands it to the registry to observe.
         """
         return cls(
             session_id=str(data.get("id") or ""),
@@ -124,13 +125,31 @@ class SteelSession(BaseModel):
             source="cli.start",
         )
 
+    @classmethod
+    def from_mcp(
+        cls,
+        *,
+        name: str,
+        session_id: str,
+        cdp_url: str,
+        cdp_host: str,
+    ) -> "SteelSession":
+        """Build from one `browser_start` result."""
+        return cls(
+            session_id=session_id,
+            name=name,
+            status="live",
+            websocket_url=cdp_url or None,
+            cdp_host=cdp_host,
+            source="mcp.start",
+        )
+
     def merge(self, other: "SteelSession") -> "SteelSession":
         """Apply `other`'s observations to this record.
 
         A newer non-empty field wins; a missing field never erases an earlier
-        one, so a catalogue read does not drop the websocket the API read
-        learned. Two different runtime ids are not the same session (the name
-        was reused), so the merge refuses them.
+        one. Two different runtime ids are not the same session (the name was
+        reused), so the merge refuses them.
         """
         if (
             self.session_id
@@ -152,6 +171,7 @@ class SteelSession(BaseModel):
                     if other.websocket_url is not None
                     else self.websocket_url
                 ),
+                "cdp_host": other.cdp_host or self.cdp_host,
                 "created_at": other.created_at or self.created_at,
                 "remaining_ms": (
                     other.remaining_ms
@@ -168,8 +188,52 @@ class SteelSession(BaseModel):
         )
 
 
-# `exec_fn(command) -> envelope`: the one impure seam. Tests inject a fake;
-# production resolves the real CLI through `_subprocess_exec` on first call.
+@dataclass(frozen=True)
+class StartResult:
+    """What one backend `start` returns to the client and the crawl."""
+
+    session: SteelSession
+    restored: dict[str, Any] = field(default_factory=dict)
+    cdp_url: str = ""
+    cdp_host: str = ""
+    warnings: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class SteelEnd:
+    """The durable end report the client passes to the job."""
+
+    ended: bool
+    reason: str = "explicit"
+    captured: bool = False
+    saved: bool = False
+    stopped: bool = False
+    released: bool | None = None
+    warnings: tuple[str, ...] = ()
+    # True when the backend owns a durable state store (the browser MCP). A
+    # local CLI backend has no pool state, so its saved=False is not evidence
+    # loss and must not make the crawl partial.
+    state_managed: bool = False
+
+
+class BrowserBackend(Protocol):
+    """The transport slice the session client needs."""
+
+    @property
+    def registry(self) -> "SteelSessionRegistry": ...
+
+    def start(self, name: str) -> StartResult: ...
+
+    def command(self, verb: str, *args: str) -> list[str]: ...
+
+    def exec(self, command: Sequence[str]) -> Mapping[str, Any]: ...
+
+    def end(self) -> Mapping[str, Any]: ...
+
+    def close(self) -> None: ...
+
+
+# `exec_fn(command) -> envelope`: the one impure seam of the CLI backend.
 ExecFn = Callable[[Sequence[str]], Mapping[str, Any]]
 
 
@@ -221,7 +285,125 @@ def _subprocess_exec(command: Sequence[str]) -> dict[str, Any]:
 
 
 class SteelSessionClient:
-    """A synchronous Steel CLI client bound to at most one owned session."""
+    """A synchronous Steel session client bound to at most one owned session."""
+
+    def __init__(
+        self,
+        *,
+        exec_fn: ExecFn | None = None,
+        prefix: Sequence[str] | None = None,
+        registry: SteelSessionRegistry | None = None,
+        api_fn: Callable[[str], Mapping[str, Any]] | None = None,
+        backend: BrowserBackend | None = None,
+    ) -> None:
+        if backend is not None and exec_fn is not None:
+            raise ValueError("a session client accepts one backend, not two")
+        self._backend: BrowserBackend = backend or CliBackend(
+            exec_fn=exec_fn,
+            prefix=prefix,
+            registry=registry,
+            api_fn=api_fn,
+        )
+        self._attached: SteelSession | None = None
+        self._start: StartResult | None = None
+
+    @classmethod
+    def from_mcp(cls, url: str, **client_kwargs: Any) -> "SteelSessionClient":
+        """Mount the browser MCP as this client's backend."""
+        from polymerhus.recon.crawl.steel.mcp_client import (  # noqa: PLC0415
+            McpBackend,
+            McpBrowserClient,
+        )
+
+        return cls(backend=McpBackend(McpBrowserClient(url, **client_kwargs)))
+
+    @property
+    def attached(self) -> SteelSession | None:
+        """The session this client owns, or `None` before start / after end."""
+        return self._attached
+
+    @property
+    def registry(self) -> SteelSessionRegistry:
+        return self._backend.registry
+
+    @property
+    def cdp_endpoint(self) -> tuple[str, str] | None:
+        """The passive capture's `(url, Host)` for the owned session."""
+        if self._start is None:
+            return None
+        return self._start.cdp_url, self._start.cdp_host
+
+    def catalogue(self) -> list[SteelSession]:
+        """Read the live catalogue. Only the CLI backend has one."""
+        catalogue = getattr(self._backend, "catalogue", None)
+        if not callable(catalogue):
+            raise InvalidCommand(
+                "the browser MCP backend has no session catalogue"
+            )
+        return catalogue()
+
+    def attach(self, name: str) -> SteelSession:
+        """Mount one durable session by name (the engine's start)."""
+        result = self._backend.start(name)
+        self._start = result
+        self._attached = result.session
+        return result.session
+
+    def start(self, name: str) -> SteelSession:
+        """Alias of `attach` for callers that name the lifecycle verb."""
+        return self.attach(name)
+
+    def command(self, verb: str, *args: str) -> list[str]:
+        """Build one command in the backend's grammar."""
+        return self._backend.command(verb, *args)
+
+    def execute(self, verb: str, *args: str) -> Mapping[str, Any]:
+        """Run one session-bound command with the owned session."""
+        return self._backend.exec(self._backend.command(verb, *args))
+
+    def stop(self) -> SteelEnd:
+        """End the owned session and return its durable report."""
+        report = self._backend.end()
+        self._attached = None
+        self._start = None
+        end = _end_from_mapping(report)
+        if (
+            report.get("success") is False
+            and not end.stopped
+            and end.released is not True
+        ):
+            raise SessionStillLive(
+                "the Steel session was neither stopped nor released"
+            )
+        if end.ended is False:
+            return end
+        return end
+
+    def close(self) -> None:
+        """Close the backend. Release the lease if it is still mounted."""
+        try:
+            self._backend.close()
+        finally:
+            self._attached = None
+            self._start = None
+
+
+def _end_from_mapping(report: Mapping[str, Any]) -> SteelEnd:
+    released = report.get("released")
+    return SteelEnd(
+        ended=bool(report.get("ended", True)),
+        reason=str(report.get("reason") or "explicit"),
+        captured=bool(report.get("captured", False)),
+        saved=bool(report.get("saved", False)),
+        stopped=bool(report.get("stopped", False)),
+        released=released if isinstance(released, bool) else None,
+        warnings=tuple(str(item) for item in report.get("warnings") or ()),
+        state_managed=bool(report.get("state_managed", False)),
+    )
+
+
+class CliBackend:
+    """The local CLI transport, kept for a local-only deployment and tests."""
 
     def __init__(
         self,
@@ -236,11 +418,6 @@ class SteelSessionClient:
         self._registry = registry if registry is not None else SteelSessionRegistry()
         self._api_fn = api_fn
         self._attached: SteelSession | None = None
-
-    @property
-    def attached(self) -> SteelSession | None:
-        """The session this client owns, or `None` before attach / after stop."""
-        return self._attached
 
     @property
     def registry(self) -> SteelSessionRegistry:
@@ -265,14 +442,12 @@ class SteelSessionClient:
         self._registry.observe_catalogue(sessions)
         return sessions
 
-    def attach(self, name: str) -> SteelSession:
+    def start(self, name: str) -> StartResult:
         """Attach to one live pre-authenticated session by name.
 
         The filtered catalogue read proves the name is live and binds the
         runtime id. The optional `api_fn` reads the full runtime record by id
-        (the websocket and the session clocks) when the caller has one; the
-        CLI has no session-record verb, so a caller without it still has the
-        identity and status needed for every command.
+        (the websocket and the session clocks) when the caller has one.
         """
         live = self.catalogue()
         if not any(session.name == name for session in live):
@@ -319,22 +494,24 @@ class SteelSessionClient:
                 record = record.merge(SteelSession.from_api(full, name=name))
         session = self._registry.observe_api(record)
         self._attached = session
-        return session
+        websocket = (
+            session.websocket_url.get_secret_value()
+            if session.websocket_url is not None
+            else ""
+        )
+        return StartResult(
+            session=session,
+            cdp_url=websocket,
+            cdp_host=session.cdp_host,
+        )
 
     def command(self, verb: str, *args: str) -> list[str]:
         """Build one session-bound command: options first, then positionals.
 
         `--session` and `--json` are options, so they sit directly after the
-        verb, before every positional argument and before a variadic verb's
-        `--` boundary. A trailing option would be swallowed by a variadic verb
-        as value text, and a trailing `--session` would fold the command onto a
-        billable auto-provisioned `default` session (skill `steel-browser`,
-        variadic boundary).
-
-        A command with no owned session is refused before the command exists:
-        the envelope invariant is never left to the CLI to reject. `start` is
-        refused outright: the crawl attaches to a pre-authenticated session and
-        never creates one (spec 4.3).
+        verb, before every positional and before a variadic verb's `--`
+        boundary. `start` is refused: the CLI backend attaches to a live
+        session and never creates one.
         """
         if verb == "start":
             raise InvalidCommand("the crawl never starts a Steel session")
@@ -348,18 +525,12 @@ class SteelSessionClient:
             *args,
         ]
 
-    def execute(self, verb: str, *args: str) -> Mapping[str, Any]:
-        """Run one session-bound command with the owned session and `--json`."""
-        return self._run(self.command(verb, *args))
+    def exec(self, command: Sequence[str]) -> Mapping[str, Any]:
+        """Run one built command and return its envelope."""
+        return self._run(command)
 
-    def stop(self) -> None:
-        """Stop the owned session and prove the catalogue no longer lists it.
-
-        The `stoppedSessions` echo is not proof
-        (`skills/internal/tools/steel-browser/SKILL.md`, Close: the catalogue is
-        the liveness proof), so the stop is followed by one catalogue read. A
-        name that survives raises: the run cannot claim a clean release.
-        """
+    def end(self) -> Mapping[str, Any]:
+        """Stop the owned session and prove the catalogue no longer lists it."""
         session = self._require_attached("stop")
         self._run([*self._prefix, "stop", "--session", session.name, "--json"])
         self._registry.observe_stop(session.name)
@@ -368,6 +539,20 @@ class SteelSessionClient:
                 f"the Steel catalogue still lists {session.name!r} after stop"
             )
         self._attached = None
+        return {
+            "success": True,
+            "ended": True,
+            "reason": "explicit",
+            "captured": False,
+            "saved": False,
+            "stopped": True,
+            "released": None,
+            "warnings": [],
+        }
+
+    def close(self) -> None:
+        """The CLI backend owns no external session."""
+        return None
 
     def _require_attached(self, action: str) -> SteelSession:
         if self._attached is None:
@@ -459,8 +644,11 @@ class SteelSessionError(RuntimeError):
     code = "command_failed"
     default_message = "the Steel command failed"
 
-    def __init__(self, message: str = "") -> None:
+    def __init__(
+        self, message: str = "", *, payload: Mapping[str, Any] | None = None
+    ) -> None:
         self.message = message or self.default_message
+        self.payload = dict(payload) if isinstance(payload, Mapping) else None
         super().__init__(self.message)
 
 
@@ -524,6 +712,27 @@ class GuardError(SteelSessionError):
     default_message = "the Steel guard failed"
 
 
+class RestoreFailed(SteelSessionError):
+    """The stored browser state could not be restored.
+
+    The pool's restore is lossy by contract; a hard failure means the session
+    did not reach its recorded state and the crawl must not continue on it.
+    """
+
+    code = "restore_failed"
+    default_message = "the stored browser state could not be restored"
+
+
+class BrowserUnavailable(SteelSessionError):
+    """The browser MCP or the worker pool is unreachable or exhausted.
+
+    The crawl cannot continue and the failure is retryable at the run level.
+    """
+
+    code = "browser_unavailable"
+    default_message = "the browser pool is unavailable"
+
+
 class CommandFailed(SteelSessionError):
     """The execution surface raised, or the envelope is unmapped."""
 
@@ -571,13 +780,19 @@ def _raise_for_error(envelope: Mapping[str, Any]) -> None:
 __all__ = [
     "CLI_ERROR_TYPES",
     "DEFAULT_PREFIX",
+    "BrowserBackend",
     "BrowserStuck",
+    "BrowserUnavailable",
+    "CliBackend",
     "CommandFailed",
     "GuardError",
     "InvalidCommand",
+    "RestoreFailed",
     "SessionMissing",
     "SessionStillLive",
     "SessionTaken",
+    "StartResult",
+    "SteelEnd",
     "SteelSession",
     "SteelSessionClient",
     "SteelSessionError",

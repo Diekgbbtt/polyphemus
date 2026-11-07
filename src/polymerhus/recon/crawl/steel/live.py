@@ -29,15 +29,12 @@ import queue
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-import httpx
-
-from polymerhus.app.steel_endpoint import steel_browser_api_url
 from polymerhus.recon.crawl.steel.auth import (
     AuthOracle,
     AuthVerdict,
@@ -98,8 +95,7 @@ CDP_BODY_LIMIT = 2**24
 CDP_TIMEOUT_S = 30.0
 SNAPSHOT_COMMAND = ("snapshot", "-i", "-c", "-u")
 NAVIGATE_ARGS = ("--wait-until", "domcontentloaded")
-MAX_ACTIONS_DEFAULT = 300
-MAX_DURATION_S_DEFAULT = 900
+MAX_DURATION_S_DEFAULT = 600
 
 
 class LiveCrawlError(RuntimeError):
@@ -128,18 +124,16 @@ class LiveCdpTransport:
 
     def __init__(
         self,
-        websocket_url: str,
+        endpoint: Callable[[], tuple[str, str] | None],
         *,
         target_type: str = "page",
         timeout_s: float = CDP_TIMEOUT_S,
     ) -> None:
-        from websockets.sync.client import connect  # noqa: PLC0415
-
-        self._ws = connect(
-            websocket_url,
-            max_size=CDP_BODY_LIMIT,
-            open_timeout=15,
-        )
+        if not callable(endpoint):
+            raise ValueError("the CDP endpoint must be callable")
+        self._endpoint = endpoint
+        self._ws = None
+        self._reader: threading.Thread | None = None
         self._timeout_s = timeout_s
         self._target_type = target_type
         self._next_id = 0
@@ -148,16 +142,92 @@ class LiveCdpTransport:
         self._session_id: str | None = None
         self._lock = threading.Lock()
         self._closed = False
-        self._reader = threading.Thread(target=self._read, daemon=True)
-        self._reader.start()
 
     @property
     def session_id(self) -> str | None:
         """The flattened CDP session id the page target was attached under."""
         return self._session_id
 
+    def _connect(self) -> None:
+        """Open the socket lazily and present the worker's localhost Host.
+
+        The socket goes to the container address; the URI carries the Host and
+        the path. Chrome's CDP proxy rejects any Host that is not localhost.
+        """
+        if self._ws is not None:
+            return
+        if self._closed:
+            raise LiveCrawlError("the CDP transport is closed")
+        endpoint = self._endpoint()
+        if not endpoint:
+            raise LiveCrawlError(
+                "the browser session carries no CDP endpoint; capture is unavailable"
+            )
+        url, cdp_host = endpoint
+        parts = urlsplit(url or "")
+        if parts.scheme not in ("ws", "wss") or not parts.hostname:
+            raise LiveCrawlError("the browser session carries an invalid CDP URL")
+        authority = (cdp_host or "").strip()
+        if (
+            not authority
+            or "://" in authority
+            or "/" in authority
+            or any(character.isspace() for character in authority)
+        ):
+            raise LiveCrawlError("the browser session carries an invalid CDP Host")
+        if ":" not in authority:
+            authority = f"{authority}:{parts.port or (443 if parts.scheme == 'wss' else 80)}"
+        uri = f"{parts.scheme}://{authority}{parts.path or '/'}"
+        if parts.query:
+            uri = f"{uri}?{parts.query}"
+        port = parts.port or (443 if parts.scheme == "wss" else 80)
+        import socket  # noqa: PLC0415
+
+        try:
+            sock = socket.create_connection((parts.hostname, port), timeout=15)
+        except OSError as exc:
+            raise LiveCrawlError(
+                f"the CDP socket to {parts.hostname}:{port} failed: {exc}"
+            ) from exc
+        from websockets.sync.client import connect  # noqa: PLC0415
+
+        try:
+            if parts.scheme == "wss":
+                import ssl  # noqa: PLC0415
+
+                self._ws = connect(
+                    uri,
+                    sock=sock,
+                    ssl=ssl.create_default_context(),
+                    server_hostname=parts.hostname,
+                    max_size=CDP_BODY_LIMIT,
+                    open_timeout=15,
+                    proxy=None,
+                )
+            else:
+                self._ws = connect(
+                    uri,
+                    sock=sock,
+                    max_size=CDP_BODY_LIMIT,
+                    open_timeout=15,
+                    proxy=None,
+                )
+        except Exception as exc:  # noqa: BLE001 - one typed connection failure
+            try:
+                sock.close()
+            except OSError:
+                pass
+            raise LiveCrawlError(f"the CDP connection failed: {exc}") from exc
+        self._reader = threading.Thread(target=self._read, daemon=True)
+        self._reader.start()
+
+    def _ensure_page(self) -> None:
+        if self._session_id is None:
+            self.attach_page()
+
     def attach_page(self) -> Mapping[str, Any]:
         """Attach to the session's page target and return its target info."""
+        self._connect()
         targets = self.send("Target.getTargets").get("targetInfos") or []
         pages = [
             target
@@ -185,6 +255,11 @@ class LiveCdpTransport:
         """Send one command and return its result object."""
         if self._closed:
             raise LiveCrawlError("the CDP transport is closed")
+        self._connect()
+        if self._session_id is None and not method.startswith("Target."):
+            # The sidecar's first enable command must reach the page target,
+            # not the browser root. The page attach is part of the transport.
+            self._ensure_page()
         with self._lock:
             self._next_id += 1
             command_id = self._next_id
@@ -228,15 +303,22 @@ class LiveCdpTransport:
         if self._closed:
             return
         self._closed = True
-        try:
-            self._ws.close()
-        except Exception:  # noqa: BLE001 - close is best-effort
-            pass
-        self._reader.join(timeout=5)
+        ws, reader = self._ws, self._reader
+        self._ws = None
+        if ws is not None:
+            try:
+                ws.close()
+            except Exception:  # noqa: BLE001 - close is best-effort
+                pass
+        if reader is not None:
+            reader.join(timeout=5)
 
     def _read(self) -> None:
+        ws = self._ws
+        if ws is None:
+            return
         try:
-            for raw in self._ws:
+            for raw in ws:
                 try:
                     message = json.loads(raw)
                 except (json.JSONDecodeError, TypeError):
@@ -273,40 +355,6 @@ class LiveCdpTransport:
             return
 
 
-def api_session_record(
-    session_id: str,
-    *,
-    base_url: str | None = None,
-    api_key: str | None = None,
-    timeout_s: float = 10.0,
-) -> Mapping[str, Any]:
-    """Read one Steel session record from the runtime API.
-
-    The CLI's catalogue entry omits the websocket and the clocks; the API is
-    the record's source of truth. The URL is the shared resolver's SDK-native
-    origin with the API's `/v1` mount restored.
-    """
-    import os  # noqa: PLC0415
-
-    origin = (base_url or steel_browser_api_url() or "").strip().rstrip("/")
-    if not origin:
-        raise LiveCrawlError("STEEL_BROWSER_API_URL is unset; no session API")
-    if origin.endswith("/v1"):
-        origin = origin[: -len("/v1")].rstrip("/")
-    headers: dict[str, str] = {}
-    key = api_key or os.environ.get("STEEL_API_KEY", "").strip()
-    if key:
-        headers["Authorization"] = f"Bearer {key}"
-    response = httpx.get(
-        f"{origin}/v1/sessions/{session_id}", headers=headers, timeout=timeout_s
-    )
-    response.raise_for_status()
-    data = response.json()
-    if not isinstance(data, Mapping):
-        raise LiveCrawlError("the Steel session API returned no object")
-    return data
-
-
 @dataclass
 class LiveRunContext:
     """The runtime inputs one live crawl needs, all supplied by its caller."""
@@ -322,9 +370,9 @@ class LiveRunContext:
     account: str | None = None
     edge_url: str | None = None
     edge_token: str | None = None
-    cli_prefix: Sequence[str] = ("steel", "browser")
+    browser_mcp_url: str = ""
     max_duration_s: float = MAX_DURATION_S_DEFAULT
-    max_actions: int = MAX_ACTIONS_DEFAULT
+    cancel: Callable[[], bool] | None = None
     coverage: Mapping[str, Any] = field(default_factory=dict)
     started_at: str | None = None
 
@@ -491,19 +539,14 @@ def run_live_crawl(ctx: LiveRunContext) -> LiveRunResult:
     manifest_path = run_dir / "manifest.json"
     summary_path = run_dir / "summary.json"
 
-    session = SteelSessionClient(prefix=ctx.cli_prefix, api_fn=api_session_record)
-    attached = session.attach(ctx.session_name)
-    websocket = (
-        attached.websocket_url.get_secret_value()
-        if attached.websocket_url is not None
-        else ""
-    )
-    if not websocket:
+    if not (ctx.browser_mcp_url or "").strip():
         raise LiveCrawlError(
-            "the Steel session carries no CDP websocket; capture is unavailable"
+            "KALI_BROWSER_MCP_URL is unset; the browser pool is unavailable"
         )
-    transport = LiveCdpTransport(websocket)
-    transport.attach_page()
+    session = SteelSessionClient.from_mcp(ctx.browser_mcp_url)
+    # The transport opens lazily, after the job has mounted the lease and the
+    # start result has supplied the container address and the localhost Host.
+    transport = LiveCdpTransport(lambda: session.cdp_endpoint)
     sidecar = CaptureSidecar(transport)
     state = BrowserState()
     mapper = CommandMapper(session, state)
@@ -524,8 +567,7 @@ def run_live_crawl(ctx: LiveRunContext) -> LiveRunResult:
         return time.monotonic() >= deadline_at
 
     def cancel() -> bool:
-        crawl = holder.get("crawl")
-        return bool(crawl and crawl.action_count >= ctx.max_actions)
+        return bool(ctx.cancel is not None and ctx.cancel())
 
     def submit_check(form) -> bool:
         sidecar.pump()
@@ -550,29 +592,41 @@ def run_live_crawl(ctx: LiveRunContext) -> LiveRunResult:
     def submit_form(page, element):
         executor.submit(page, element, generation=state.current_generation)
 
-    crawl = CrawlRun(
-        project_id=ctx.project_id,
-        capture_context=CaptureContext(
-            run_id=ctx.run_id, session_id=attached.session_id
-        ),
-        session=session,
-        state=state,
-        sidecar=sidecar,
-        policy=policy,
-        mapper=mapper,
-        element_map=ElementMap(),
-        ledger=ledger,
-        form_ledger=form_ledger,
-        page_factory=page_factory,
-        navigate=navigate,
-        submit_form=submit_form,
-        in_scope=_scope_predicate(ctx.scope),
-        deadline=deadline,
-        cancel=cancel,
-        form_executor=executor,
-        recapture=page_factory.capture_current,
-    )
-    holder["crawl"] = crawl
+    def build_crawl() -> CrawlRun:
+        """Build the traversal after the job mounted the session.
+
+        The capture context needs the runtime session id, and the id exists
+        only after `browser_start`. The job mounts first, then calls `run_fn`.
+        """
+        attached = session.attached
+        return CrawlRun(
+            project_id=ctx.project_id,
+            capture_context=CaptureContext(
+                run_id=ctx.run_id,
+                session_id=attached.session_id if attached is not None else "",
+            ),
+            session=session,
+            state=state,
+            sidecar=sidecar,
+            policy=policy,
+            mapper=mapper,
+            element_map=ElementMap(),
+            ledger=ledger,
+            form_ledger=form_ledger,
+            page_factory=page_factory,
+            navigate=navigate,
+            submit_form=submit_form,
+            in_scope=_scope_predicate(ctx.scope),
+            deadline=deadline,
+            cancel=cancel,
+            form_executor=executor,
+            recapture=page_factory.capture_current,
+        )
+
+    def run_fn(root: PageInstance) -> FrontierResult:
+        crawl = build_crawl()
+        holder["crawl"] = crawl
+        return crawl.run(root).frontier
 
     def auth_fn(root: PageInstance) -> AuthVerdict:
         oracle = AuthOracle(
@@ -586,7 +640,8 @@ def run_live_crawl(ctx: LiveRunContext) -> LiveRunResult:
         return verdict
 
     def manifest_fn(frontier: FrontierResult | None, stop_reason: str) -> Manifest:
-        output = crawl.last_output
+        crawl = holder.get("crawl")
+        output = crawl.last_output if crawl is not None else None
         verdict = holder.get("verdict")
         run = RunBlock(
             crawl_run_id=ctx.run_id,
@@ -652,7 +707,7 @@ def run_live_crawl(ctx: LiveRunContext) -> LiveRunResult:
         ledger=ledger,
         prepare_fn=lambda: page_factory(ctx.target_url, None, 0, "seed", ()),
         auth_fn=auth_fn,
-        run_fn=lambda root: crawl.run(root).frontier,
+        run_fn=run_fn,
         manifest_fn=manifest_fn,
         flush_fn=flush_fn,
         ingest_fn=ingest_fn,
@@ -666,9 +721,13 @@ def run_live_crawl(ctx: LiveRunContext) -> LiveRunResult:
         result = job.run()
     finally:
         policy_client.close()
-        transport.close()
+        try:
+            session.close()
+        finally:
+            transport.close()
     duration_s = time.monotonic() - started
-    output = crawl.last_output
+    crawl = holder.get("crawl")
+    output = crawl.last_output if crawl is not None else None
     summary = {
         "run_id": ctx.run_id,
         "project_id": ctx.project_id,
@@ -725,7 +784,11 @@ def run_live_crawl(ctx: LiveRunContext) -> LiveRunResult:
         ),
         "script_count": len(sidecar.scripts),
         "realtime_count": len(sidecar.realtime),
-        "session_closed": session.attached is None,
+        "session_closed": bool(
+            result.end is not None
+            and (result.end.stopped or result.end.released is True)
+        ),
+        "end": asdict(result.end) if result.end is not None else None,
         "flush": holder.get("flush"),
         "coverage": dict(ctx.coverage),
     }

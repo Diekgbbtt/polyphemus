@@ -82,6 +82,21 @@ def _manifest_is_empty(manifest: dict | None) -> bool:
     return not any(manifest.get(key) for key in _EMPTY_MANIFEST_KEYS)
 
 
+def _manifest_partial(manifest: dict | None) -> str | None:
+    """The partial stop reason, or None when the v2 run is complete.
+
+    A partial run is evidence, not a successful graph input: the pod routes it
+    to the reduced-coverage fail node instead of parsing a half surface as if
+    it were complete.
+    """
+    if not manifest or not isinstance(manifest, dict):
+        return None
+    run = manifest.get("run")
+    if not isinstance(run, dict) or run.get("partial") is not True:
+        return None
+    return str(run.get("stop_reason") or "partial")
+
+
 def _coverage_observation(input_asset: dict, reason: str) -> Observation:
     target = _input_asset_url(input_asset) or ""
     return Observation(
@@ -141,16 +156,18 @@ def live_run_crawl_fn(
             "the live steel crawl needs a project_id and a run_id in its extra"
         )
     from polymerhus.app.data_root import DATA_ROOT  # noqa: PLC0415
+    from polymerhus.app.steel_session_state import (  # noqa: PLC0415
+        browser_session_name,
+    )
     from polymerhus.recon.crawl.steel.live import (  # noqa: PLC0415
         LiveRunContext,
         run_live_crawl,
     )
 
     session_name = str(
-        extra.get("steel_session") or f"steel-crawl-{project_id}"
+        extra.get("steel_session")
+        or browser_session_name(project_id, extra.get("auth_account"))
     )
-    cli = os.environ.get("STEEL_CRAWL_CLI", "").strip()
-    prefix = (cli, "browser") if cli else ("steel", "browser")
     browser_auth = browser_auth or {}
     context = LiveRunContext(
         project_id=project_id,
@@ -164,11 +181,10 @@ def live_run_crawl_fn(
         account=extra.get("auth_account"),
         edge_url=os.environ.get("KALI_HTTP_HISTORY_EDGE_URL") or None,
         edge_token=os.environ.get("KALI_HTTP_HISTORY_EDGE_TOKEN") or None,
-        cli_prefix=prefix,
+        browser_mcp_url=os.environ.get("KALI_BROWSER_MCP_URL", "").strip(),
         max_duration_s=float(
-            os.environ.get("STEEL_CRAWL_MAX_DURATION_S", "900")
+            os.environ.get("STEEL_CRAWL_MAX_DURATION_S", "600")
         ),
-        max_actions=int(os.environ.get("STEEL_CRAWL_MAX_ACTIONS", "300")),
         coverage={"scope": list(scope)},
     )
     result = run_live_crawl(context)
@@ -264,6 +280,13 @@ def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn):
 
         if _manifest_is_empty(manifest):
             return {"manifest": None, "crawl_error": "empty crawl manifest"}
+
+        partial = _manifest_partial(manifest)
+        if partial is not None:
+            return {
+                "manifest": None,
+                "crawl_error": f"partial crawl: {partial}",
+            }
 
         return {"manifest": manifest}
 

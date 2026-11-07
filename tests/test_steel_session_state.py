@@ -237,3 +237,30 @@ def test_state_path_is_the_one_per_account_location(tmp_path):
     assert path == tmp_path / "proj-1" / "steel-state" / "alice.json"
     with pytest.raises(ValueError):
         st.state_path("proj-1", "../alice", root=tmp_path)
+
+
+def test_browser_session_name_is_stable_and_account_scoped():
+    assert st.browser_session_name("proj-1") == "steel-proj-1"
+    assert st.browser_session_name("proj-1", "alice-first_authn_bootstrap") == (
+        "steel-proj-1-alice-first_authn_bootstrap"
+    )
+    assert st.browser_session_name("proj-1", "alice") == st.browser_session_name(
+        "proj-1", "alice"
+    )
+
+
+def test_browser_session_name_sanitises_unsafe_characters():
+    assert st.browser_session_name("My Project/One", "Alice @ Example") == (
+        "steel-my-project-one-alice-example"
+    )
+    assert st.browser_session_name("...") == "steel-project"
+
+
+def test_browser_session_name_is_bounded_and_store_safe():
+    import re
+
+    name = st.browser_session_name("p" * 200, "a" * 200)
+
+    assert len(name) <= 128
+    assert re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", name)
+    assert name == st.browser_session_name("p" * 200, "a" * 200)

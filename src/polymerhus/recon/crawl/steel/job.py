@@ -33,9 +33,10 @@ from polymerhus.recon.crawl.steel.capture.sidecar import (
 )
 from polymerhus.recon.crawl.steel.frontier import FrontierResult
 from polymerhus.recon.crawl.steel.ledger import FinalizeResult, RunLedger, finalize
-from polymerhus.recon.crawl.steel.manifest import Manifest
+from polymerhus.recon.crawl.steel.manifest import ErrorRecord, Manifest
 from polymerhus.recon.crawl.steel.session import (
     SessionMissing,
+    SteelEnd,
     SteelSessionClient,
     SteelSessionError,
 )
@@ -92,6 +93,7 @@ class JobResult:
     pages: tuple[PageRecord, ...] = ()
     actions: tuple[ActionRecord, ...] = ()
     error: str | None = None
+    end: SteelEnd | None = None
 
     @property
     def partial(self) -> bool:
@@ -216,7 +218,16 @@ class CrawlJob:
         frontier: FrontierResult | None,
     ) -> JobResult:
         pages, actions = self._records(frontier)
+        # Close first: the end report carries whether the browser state was
+        # saved, and that fact belongs in the manifest the job is about to
+        # write. A failed close is evidence loss, never a live session.
+        end, close_error = self._close_report()
         manifest = self._manifest_fn(frontier, stop_reason)
+        if end is not None and end.state_managed and end.saved is False:
+            manifest = _mark_partial(manifest)
+        if close_error is not None:
+            manifest = _add_error(manifest, "session_close_failed", close_error)
+            manifest = _mark_partial(manifest)
         result = finalize(
             ledger=self._ledger,
             manifest=manifest,
@@ -224,7 +235,7 @@ class CrawlJob:
             finished_at=self._clock(),
             flush_fn=self._flush_fn,
             ingest_fn=self._ingest_fn,
-            close_fn=self._close,
+            close_fn=None,
             coverage=self._coverage,
         )
         logger.info(
@@ -241,22 +252,23 @@ class CrawlJob:
             pages=pages,
             actions=actions,
             error=error,
+            end=end,
         )
 
-    def _close(self) -> None:
-        """Close capture and stop the owned session, surfacing either failure."""
+    def _close_report(self) -> tuple[SteelEnd | None, str | None]:
+        """Close capture and end the owned session, surfacing either failure."""
         errors: list[str] = []
         try:
             self._sidecar.close()
         except Exception as exc:  # noqa: BLE001 - close is best-effort
             errors.append(f"capture_close_failed: {exc}")
+        end: SteelEnd | None = None
         if self._session_attached and self._stop_session:
             try:
-                self._session.stop()
+                end = self._session.stop()
             except Exception as exc:  # noqa: BLE001 - stop is best-effort
                 errors.append(f"session_stop_failed: {exc}")
-        if errors:
-            raise RuntimeError("; ".join(errors))
+        return end, "; ".join(errors) if errors else None
 
     def _records(
         self, frontier: FrontierResult | None
@@ -319,6 +331,22 @@ def _emit(sink: Callable[[Any], None], record: Any) -> None:
         sink(record)
     except Exception as exc:  # noqa: BLE001 - observability is best-effort
         logger.warning("observability record dropped: %s", exc)
+
+
+def _mark_partial(manifest: Manifest) -> Manifest:
+    """Mark the run partial without rewriting any other run fact."""
+    return manifest.model_copy(
+        update={"run": manifest.run.model_copy(update={"partial": True})}
+    )
+
+
+def _add_error(manifest: Manifest, code: str, message: str) -> Manifest:
+    """Append one finalize-stage error to the manifest."""
+    errors = [
+        *manifest.errors,
+        ErrorRecord(code=code, message=message, stage="finalize"),
+    ]
+    return manifest.model_copy(update={"errors": errors})
 
 
 def _stop_reason(error: BaseException) -> str:

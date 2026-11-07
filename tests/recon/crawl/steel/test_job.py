@@ -32,7 +32,7 @@ from polymerhus.recon.crawl.steel.frontier import (
 from polymerhus.recon.crawl.steel.job import CrawlJob
 from polymerhus.recon.crawl.steel.ledger import RunLedger
 from polymerhus.recon.crawl.steel.manifest import RunBlock, build_manifest
-from polymerhus.recon.crawl.steel.session import SessionMissing
+from polymerhus.recon.crawl.steel.session import SessionMissing, SteelEnd
 from polymerhus.recon.crawl.steel.state import BrowserState, PageInstance, StaleElement
 
 
@@ -42,6 +42,10 @@ class FakeSession:
         self.attached: str | None = None
         self.start_calls = 0
         self.stopped = False
+        self.stop_error: Exception | None = None
+        self.end_report = SteelEnd(
+            ended=True, saved=True, stopped=True, captured=True
+        )
 
     def attach(self, name: str) -> Any:
         if self.failure is not None:
@@ -52,8 +56,11 @@ class FakeSession:
     def start(self, *args: Any) -> None:
         self.start_calls += 1
 
-    def stop(self) -> None:
+    def stop(self) -> SteelEnd:
         self.stopped = True
+        if self.stop_error is not None:
+            raise self.stop_error
+        return self.end_report
 
 
 class FakeSidecar:
@@ -103,6 +110,7 @@ def make_job(
     auth: Any | None = None,
     deadline: Any | None = None,
     records: dict[str, list[Any]] | None = None,
+    on_manifest: Any | None = None,
 ):
     session = session or FakeSession()
     sidecar = sidecar or FakeSidecar()
@@ -144,7 +152,10 @@ def make_job(
         prepare_fn=lambda: root,
         auth_fn=auth_fn,
         run_fn=run_fn,
-        manifest_fn=lambda result, stop_reason: build_manifest(
+        manifest_fn=lambda result, stop_reason: (
+            on_manifest() if on_manifest is not None else None
+        )
+        or build_manifest(
             run=RunBlock(
                 crawl_run_id="run-1",
                 session_name="session-1",
@@ -279,3 +290,56 @@ def test_the_job_log_does_not_leak_the_connect_url_or_credentials(caplog):
     assert "cookie" not in caplog.text.lower()
     assert "password" not in caplog.text.lower()
     assert "connectUrl" not in caplog.text
+
+
+def test_the_session_is_ended_before_the_manifest_is_built():
+    seen: dict[str, bool] = {}
+
+    job, session, sidecar, run_calls, records = make_job(
+        on_manifest=lambda: seen.update(
+            stopped=session.stopped, closed=sidecar.closed
+        )
+    )
+
+    job.run()
+
+    assert seen == {"stopped": True, "closed": True}
+
+
+def test_a_saved_false_end_marks_the_run_partial():
+    job, session, sidecar, run_calls, records = make_job()
+    session.end_report = SteelEnd(
+        ended=True,
+        saved=False,
+        stopped=True,
+        captured=False,
+        state_managed=True,
+    )
+
+    result = job.run()
+
+    assert result.status == "partial"
+    assert result.manifest.run.partial is True
+    assert result.partial is True
+
+
+def test_a_stop_failure_marks_the_run_partial_and_records_the_error():
+    job, session, sidecar, run_calls, records = make_job()
+    session.stop_error = RuntimeError("the stop failed")
+
+    result = job.run()
+
+    assert result.status == "partial"
+    assert result.manifest.run.partial is True
+    assert any(
+        error.code == "session_close_failed" for error in result.manifest.errors
+    )
+    assert "the stop failed" in result.manifest.errors[-1].message
+
+
+def test_the_end_report_rides_the_result():
+    job, session, sidecar, run_calls, records = make_job()
+
+    result = job.run()
+
+    assert result.end is session.end_report
