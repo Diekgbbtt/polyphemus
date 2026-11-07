@@ -49,15 +49,15 @@ No slice is closed with a failing or unrun test.
 
 ## Phase E - Adversarial review and fix loop
 
-- [ ] Dispatch one adversarial review with the critical-thinking frame.
-- The review hunts: non-functional requirement coverage, technical invariants
+- [x] Dispatch adversarial reviews with the critical-thinking frame.
+- The reviews hunted: non-functional requirement coverage, technical invariants
   and environmental constraints, spec divergence, unhandled outliers, design
   smells, high risk, cheap patches instead of wider component change,
   ambiguous interfaces, high cyclomatic complexity, and documentation
   convergence.
-- Each finding becomes a fix slice with its own red test.
-- [ ] Repeat until a full review pass reports no residual quality defect.
-- Gate: the reviewer reports clean.
+- Each finding became a fix slice with its own red test.
+- [x] Repeated until both reviewers reported PASS with no residual defect.
+- Gate: both reviewers reported clean on `17a4bdfd`.
 
 ## Phase F - E2E execution
 
