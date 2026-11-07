@@ -105,10 +105,10 @@ services:
     entrypoint: ["/opt/kali/entrypoint.sh"]
     # A stop ends every browser lease (capture, stop, release) before the
     # browser MCP exits, and that path is bounded by STEEL_CLI_TIMEOUT_S
-    # (180 s) plus the API and settle bounds. Docker's 10 s default would
+    # (300 s) plus the API and settle bounds. Docker's 10 s default would
     # SIGKILL the end path and orphan the API session until the worker's own
     # timeout fires. Without an active lease the process exits at once.
-    stop_grace_period: 210s
+    stop_grace_period: 330s
     ports: ["8000:8000"]
     environment:
       # Browser capability (#221): the steel CLI resolves auth from the
@@ -123,35 +123,13 @@ services:
       # the CLI reads this same value natively. Same empty-default convention
       # as STEEL_API_KEY.
       STEEL_BROWSER_API_URL: ${STEEL_BROWSER_API_URL:-}
-      # Browser pool (#359, W6). The browser MCP process starts only when the
-      # operator has forwarded the pool Docker socket into the container; an
-      # empty value keeps the feature off and leaves the exec plane untouched.
-      # At boot the pool manager reads that socket, discovers the labelled
-      # workers, and health-probes each one. It never creates, starts, stops,
-      # or removes a container. Port 8003 stays unpublished: the agent reaches
-      # it on the compose network, and every worker port is the operator's
-      # forward.
-      STEEL_MCP_PORT: ${STEEL_MCP_PORT:-8003}
-      STEEL_POOL_DOCKER_SOCKET: ${STEEL_POOL_DOCKER_SOCKET:-}
-      STEEL_POOL_LABEL: ${STEEL_POOL_LABEL:-polymerhus.steel-pool=true}
-      STEEL_POOL_SIZE: ${STEEL_POOL_SIZE:-4}
-      # The host the worker URL uses. `localhost` is correct when the
-      # operator's forward lands in this container; `host.docker.internal`
-      # is correct when it lands on the Docker host.
-      STEEL_WORKER_HOST: ${STEEL_WORKER_HOST:-localhost}
-      # When the forward lands on the Docker host, the entrypoint relays the
-      # worker ports onto this container's loopback (both families). Empty
-      # keeps the relay off; the tunnel-inside-Kali deployment needs neither.
-      STEEL_POOL_FORWARD_PORTS: ${STEEL_POOL_FORWARD_PORTS:-}
-      STEEL_POOL_FORWARD_HOST: ${STEEL_POOL_FORWARD_HOST:-host.docker.internal}
-      STEEL_POOL_WAIT_S: ${STEEL_POOL_WAIT_S:-30}
-      STEEL_POOL_HEALTH_S: ${STEEL_POOL_HEALTH_S:-30}
-      STEEL_HEARTBEAT_S: ${STEEL_HEARTBEAT_S:-120}
-      STEEL_LEASE_TTL_S: ${STEEL_LEASE_TTL_S:-600}
-      STEEL_SESSION_STORE: /var/lib/steel/sessions
-      STEEL_CLI: /opt/localbin/.steel/steel
-      STEEL_GUARD: /opt/kali/steel_guard.py
-      STEEL_WORKER_API_SUFFIX: ${STEEL_WORKER_API_SUFFIX:-/v1}
+      # Browser pool (#359, W10). The pool is part of this compose project.
+      # The browser MCP starts only when the Docker socket is present; the
+      # thin overlay sets this value empty. The worker service is the single
+      # replicated definition below. The worker API keeps DOMAIN localhost:3000
+      # inside its own container; the MCP reverse proxy owns the public
+      # loopback port and rewrites the session websocket URL.
+      STEEL_POOL_DOCKER_SOCKET: ${STEEL_POOL_DOCKER_SOCKET:-/var/run/docker.sock}
       # The #196 capture-plane environment (dev line).
       PYTHONPATH: /opt
       KALI_HTTP_HISTORY_ROOT: /data
@@ -211,6 +189,11 @@ services:
       # The browser session store. Owner-only; the entrypoint fixes the
       # volume mode before the browser MCP validates it.
       - steel-sessions:/var/lib/steel/sessions
+      # The pool manager reads the local Docker API through this socket.
+      # It only lists containers and reads their published ports; the client
+      # has no write operation. The thin overlay unmounts nothing: it sets
+      # STEEL_POOL_DOCKER_SOCKET empty and the MCP does not start.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     extra_hosts:
       # Route app.online.orders.com to the Docker host, where nginx publishes :443
       # and reverse-proxies to the correct backend. host_gateway = host's gateway IP.
@@ -230,6 +213,39 @@ services:
       start_period: 40s
     networks: [polymerhus-net]
 
+  steel-worker:
+    # Browser worker (#359, W10). One definition; Compose replicates it with
+    # deploy.replicas. The API keeps DOMAIN=localhost:3000 inside its own
+    # container. The browser MCP reverse proxy maps 127.0.0.1:3100+i to this
+    # container's port 3000 and rewrites the session websocket URL, so the
+    # CLI stays on localhost and Chrome accepts the Host. The raw Chrome port
+    # stays inside the container. The image is built for the host architecture
+    # (the eval host is arm64; build it there, do not transfer the amd64 image).
+    image: steel-browser-api:v0.5.5-beta
+    command: ["--no-nginx"]
+    restart: unless-stopped
+    environment:
+      HOST: 0.0.0.0
+      PORT: "3000"
+      DOMAIN: localhost:3000
+      CDP_DOMAIN: localhost:3000
+      ENABLE_COMMANDS_API: "false"
+    labels:
+      polymerhus.steel-pool: "true"
+    extra_hosts:
+      # The target front is published on the Docker host. The worker's Chrome
+      # resolves the synthetic host through the eval orchestrator's alias.
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:3000/v1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    deploy:
+      replicas: 2
+    networks: [polymerhus-net]
+
   agent:
     build: { context: ., dockerfile: Dockerfile }
     image: polymerhus-agent:latest
@@ -239,6 +255,10 @@ services:
       NEO4J_PASSWORD: polymerhus
       POSTGRES_DSN: postgresql://polymerhus:polymerhus@postgres:5432/polymerhus
       KALI_MCP_URL: http://kali:8000/mcp
+      # Browser MCP (#359, W10). Empty keeps the browser tools off in a clean
+      # clone; the eval overlay points it at the Kali browser server. The
+      # browser plane is a degraded capability, never a boot dependency.
+      KALI_BROWSER_MCP_URL: ${KALI_BROWSER_MCP_URL:-}
       KALI_HTTP_HISTORY_EDGE_URL: ${KALI_HTTP_HISTORY_EDGE_URL:-http://kali:8002}
       KALI_HTTP_HISTORY_EDGE_TOKEN: ${KALI_HTTP_HISTORY_EDGE_TOKEN:-polymerhus-http-history-edge-dev}
       PROJECT_ID: default

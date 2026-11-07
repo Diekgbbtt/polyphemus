@@ -47,7 +47,7 @@ COMPLETE_ENV = {
     "LLM_CAPABILITY_OVERRIDES": CAPABILITY_OVERRIDE_ENV,
 }
 
-BASE_SERVICES = {"agent", "kali", "postgres", "neo4j", "lightrag"}
+BASE_SERVICES = {"agent", "kali", "postgres", "neo4j", "lightrag", "steel-worker"}
 
 docker = pytest.mark.skipif(
     shutil.which("docker") is None, reason="docker CLI unavailable"

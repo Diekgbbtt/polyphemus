@@ -98,8 +98,11 @@ DEFAULT_MCP_PATH = "/mcp"
 DEFAULT_POOL_LABEL = "polymerhus.steel-pool=true"
 DEFAULT_POOL_SIZE = 4
 DEFAULT_POOL_HEALTH_S = 30.0
-DEFAULT_CLI_TIMEOUT_S = 600.0
+DEFAULT_CLI_TIMEOUT_S = 300.0
 DEFAULT_WORKER_API_SUFFIX = "/v1"
+DEFAULT_SESSION_STORE = "/var/lib/steel/sessions"
+DEFAULT_CLI_PATH = "/opt/localbin/.steel/steel"
+DEFAULT_GUARD_PATH = "/opt/kali/steel_guard.py"
 
 _FORBIDDEN_VERBS = frozenset({"start", "stop", "sessions", "live"})
 # The CLI's `scrape` family is sessionless. A bound command must run in the
@@ -501,9 +504,15 @@ class BrowserServerConfig:
             raise ValueError(
                 f"STEEL_POOL_DOCKER_SOCKET {docker_socket!r} does not exist"
             )
-        session_store = required("STEEL_SESSION_STORE")
-        cli_path = required("STEEL_CLI")
-        guard_path = required("STEEL_GUARD")
+        # The store, CLI, and guard locations are deployment constants. The
+        # environment may override them for a local probe, but the shipped
+        # stack does not carry them.
+        session_store = (
+            (source.get("STEEL_SESSION_STORE") or "").strip()
+            or DEFAULT_SESSION_STORE
+        )
+        cli_path = (source.get("STEEL_CLI") or "").strip() or DEFAULT_CLI_PATH
+        guard_path = (source.get("STEEL_GUARD") or "").strip() or DEFAULT_GUARD_PATH
         for label, path in (("STEEL_CLI", cli_path), ("STEEL_GUARD", guard_path)):
             if not os.path.isfile(path) or not os.access(path, os.X_OK):
                 raise ValueError(f"{label} {path!r} is not an executable file")

@@ -33,6 +33,9 @@ services:
       # Steel runtime address (#391, D359-4): the SDK crawl provider reads the
       # same value as the CLI. Empty means the remote cloud; no default ships.
       STEEL_BROWSER_API_URL: ${STEEL_BROWSER_API_URL:-}
+      # Browser MCP (#359, W10): the baseline dev stack includes the pool.
+      # Set this empty in the shell to run the thin stack without browsers.
+      KALI_BROWSER_MCP_URL: ${KALI_BROWSER_MCP_URL:-http://kali:8003/mcp}
       # Bootstrapper call-1 prompt arrangement (see bootstrap.py::_PROMPT_CONFIGS).
       # Passed through so a comparative eval can run each arm against the REAL
       # system. `--reload` does NOT re-read the environment, so switching arms

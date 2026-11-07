@@ -656,6 +656,7 @@ class TestConfig:
         assert config.pool_wait_s == pytest.approx(30.0)
         assert config.heartbeat_s == pytest.approx(120.0)
         assert config.lease_ttl_s == pytest.approx(600.0)
+        assert config.cli_timeout_s == pytest.approx(300.0)
         assert config.worker_api_suffix == "/v1"
 
     def test_reads_the_deployment_values(self, tmp_path):
@@ -704,12 +705,13 @@ class TestConfig:
         with pytest.raises(ValueError, match="does not exist"):
             BrowserServerConfig.from_env(env)
 
-    def test_missing_store_fails_loud(self, tmp_path):
+    def test_missing_store_uses_the_deployment_constant(self, tmp_path):
         env = self._env(tmp_path)
         del env["STEEL_SESSION_STORE"]
 
-        with pytest.raises(ValueError, match="STEEL_SESSION_STORE"):
-            BrowserServerConfig.from_env(env)
+        config = BrowserServerConfig.from_env(env)
+
+        assert config.session_store == "/var/lib/steel/sessions"
 
     def test_missing_cli_fails_loud(self, tmp_path):
         env = self._env(tmp_path)

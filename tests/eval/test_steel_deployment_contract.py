@@ -42,9 +42,14 @@ def test_the_retired_compose_says_so_in_its_first_lines():
     assert "docker-compose.steel-pool.yml" in head
 
 
-def test_the_operator_guide_points_at_the_pool_not_the_retired_deploy():
+def test_the_active_pool_runbook_is_the_in_stack_one():
+    runbook = (REPO_ROOT / "eval" / "deploy" / "steel" / "POOL-RUNBOOK.md").read_text(
+        encoding="utf-8"
+    )
+    assert "steel-worker" in runbook
+    assert "deploy.replicas" in runbook
+    assert "docker-compose.steel-pool.yml" not in runbook
     text = OPERATOR.read_text(encoding="utf-8")
-    assert "eval/deploy/steel/docker-compose.steel-pool.yml" in text
     assert "docker compose -f eval/deploy/steel/docker-compose.steel.yml up -d" not in text
 
 
