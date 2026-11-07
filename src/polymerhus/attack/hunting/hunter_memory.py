@@ -859,40 +859,46 @@ class HunterMemoryStore(BoundedRecordStore):
                 f"hunter store: unknown note kind {kind!r}; known: {NOTE_KINDS}"
             )
         self._validate_hunt_key(hunt_key)
-        path = self._notes_file(project_id)
-        records = self._read_records(path)
-        key = self.note_key(hunt_key, note_name)
-        if action == "append":
-            records.append(
-                {
-                    "key": key,
-                    "hunt_key": hunt_key,
-                    "note_name": note_name,
-                    "kind": kind,
-                    "body": body,
-                    "evidence": evidence,
-                    "provenance": provenance or {},
-                }
-            )
-            self._write_records(path, records)
-            return key
-        for rec in records:
-            if rec.get("key") != key:
-                continue
-            if action == "update":
-                rec.update(
+        # The whole read-modify-write is ONE critical section: the hunter's
+        # `notes` tool runs in a worker thread (`asyncio.to_thread`) while the
+        # surfer's durable pod-export write runs on the event loop. Without the
+        # lock the stale writer replaces the file with its pre-note list and
+        # the note is lost without an error (the C.a failure).
+        with self._lock_for(project_id):
+            path = self._notes_file(project_id)
+            records = self._read_records(path)
+            key = self.note_key(hunt_key, note_name)
+            if action == "append":
+                records.append(
                     {
+                        "key": key,
+                        "hunt_key": hunt_key,
+                        "note_name": note_name,
                         "kind": kind,
                         "body": body,
                         "evidence": evidence,
                         "provenance": provenance or {},
                     }
                 )
-            else:  # delete
-                records.remove(rec)
-            self._write_records(path, records)
-            return key
-        return None
+                self._write_records(path, records)
+                return key
+            for rec in records:
+                if rec.get("key") != key:
+                    continue
+                if action == "update":
+                    rec.update(
+                        {
+                            "kind": kind,
+                            "body": body,
+                            "evidence": evidence,
+                            "provenance": provenance or {},
+                        }
+                    )
+                else:  # delete
+                    records.remove(rec)
+                self._write_records(path, records)
+                return key
+            return None
 
     def read_notes(
         self,

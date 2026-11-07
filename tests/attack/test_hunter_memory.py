@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from pathlib import Path
 
 import pytest
@@ -645,3 +646,55 @@ def test_the_phase_kind_is_hunter_only():
     assert "phase_summary" in hunter_memory.NOTE_KINDS
     assert "phase_summary" not in ProjectMemoryStore.NOTE_KINDS
     assert "phase_summary" not in POD_NOTE_KINDS
+
+
+def test_concurrent_note_append_cannot_lose_a_record(tmp_path, monkeypatch):
+    """The notes surface is one read-modify-write of the whole file.
+
+    The hunter's `notes` tool runs in a worker thread (`asyncio.to_thread`)
+    while the surfer's durable pod-export write runs on the event loop. Without
+    the per-project lock the stale writer replaces the file with its pre-note
+    list and the phase note is lost without an error (the C.a failure).
+    """
+    store = HunterMemoryStore(root_dir=tmp_path)
+    _append_named(store, "pod-export:s1", provenance={"verdict_stub": True})
+
+    real_read = HunterMemoryStore._read_records.__func__
+    surfer_read = threading.Event()
+    release_surfer = threading.Event()
+
+    def patched_read(cls, path):
+        records = real_read(cls, path)
+        if threading.current_thread().name == "surfer":
+            surfer_read.set()
+            release_surfer.wait(timeout=5)
+        return records
+
+    monkeypatch.setattr(
+        HunterMemoryStore, "_read_records", classmethod(patched_read))
+
+    surfer = threading.Thread(
+        target=lambda: _append_named(
+            store, "pod-export:s2", provenance={"verdict_stub": True}),
+        name="surfer")
+    surfer.start()
+    assert surfer_read.wait(timeout=5)
+
+    hunter_done = threading.Event()
+
+    def hunter_write() -> None:
+        _append_named(store, "phase:grounding")
+        hunter_done.set()
+
+    hunter = threading.Thread(target=hunter_write, name="hunter")
+    hunter.start()
+    # Unfixed: the hunter writes now (the surfer is paused after its read).
+    # Fixed: the hunter blocks on the project lock, so this times out.
+    hunter_done.wait(timeout=1)
+    release_surfer.set()
+    hunter.join(timeout=5)
+    surfer.join(timeout=5)
+
+    names = {n["note_name"] for n in store.read_notes(PROJECT)}
+    assert "phase:grounding" in names
+    assert {"pod-export:s1", "pod-export:s2"} <= names
