@@ -25,12 +25,11 @@ human-in-the-loop path, no credentialed login, and no operator prompt -
 post-gateway, auth is already established and a mid-run prompt is strictly
 worse.
 
-`default_run_crawl_fn` wraps the async `crawl_agent.run_crawl` behind
-`polymerhus.recon.control.async_bridge.run_coro_blocking`, exactly like
-`pod.default_exec_fn` wraps the async kali MCP call - so every node in this
-graph, like every node in `pod.py`'s graph, is a plain sync function and
-the compiled graph is `.invoke()`-able synchronously from `job_agent`, even
-though `job_agent` itself runs inside the pipeline's event loop.
+`default_run_crawl_fn` is the synchronous live engine (`live_run_crawl`), so
+every node in this graph, like every node in `pod.py`'s graph, is a plain
+sync function and the compiled graph is `.invoke()`-able synchronously from
+`job_agent`, even though `job_agent` itself runs inside the pipeline's event
+loop.
 """
 from __future__ import annotations
 

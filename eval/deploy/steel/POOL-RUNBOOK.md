@@ -116,7 +116,7 @@ both before the model sees them.
 
 The count is a bootstrap setting, not a runtime command.
 
-1. Edit `deploy.replicas` on `steel-worker` in `docker-compose.yml`.
+1. Edit `deploy.replicas` on `steel-worker` in `docker-compose.pool.yml`.
 2. Run `docker compose -p ph-<short> -f docker-compose.yml -f docker-compose.pool.yml up -d --remove-orphans`.
 3. Read `pool.discovered` in the browser MCP log.
 

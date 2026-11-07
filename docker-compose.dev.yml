@@ -1,4 +1,6 @@
-# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+#          -f docker-compose.pool.yml up
+# The pool file is optional; omit it for the thin stack.
 # agent: live source + uvicorn --reload (edits apply instantly)
 # kali : the whole ./kali tree is bind-mounted at /opt/kali in the base — `docker restart kali` to reload
 #

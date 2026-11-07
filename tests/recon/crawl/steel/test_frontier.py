@@ -617,6 +617,19 @@ def test_a_typed_action_error_stops_with_its_code_and_message():
     assert "command_failed" in result.failed[0].error
 
 
+def test_a_session_loss_during_an_action_is_recorded_as_a_failed_action():
+    graph = FakeGraph()
+    root = graph.open_root(elements=(button("e-lost", "Lost"),))
+    graph.failures[(ROOT, "e-lost")] = SessionMissing("the session is gone")
+
+    result = graph.frontier().run(root)
+
+    assert result.stop_reason == "session_missing"
+    assert len(result.failed) == 1
+    assert result.failed[0].element.element_id == "e-lost"
+    assert "session_missing" in result.failed[0].error
+
+
 def test_a_typed_choice_error_stops_with_its_code_and_message():
     graph = FakeGraph()
     root = graph.open_root(elements=(link("e-a", "A", "/a"),))

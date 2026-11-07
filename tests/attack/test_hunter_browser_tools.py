@@ -89,34 +89,52 @@ def test_unreachable_browser_fails_open():
     ) == []
 
 
-def test_a_transient_browser_open_is_retried():
-    class _FlakySession(_Session):
+def test_a_transient_browser_open_is_retried_with_a_fresh_session():
+    from contextlib import asynccontextmanager
+
+    class _OneShotClient:
+        """A client whose `session` is a one-shot context manager, like the real
+        `MultiServerMCPClient.session`."""
+
         def __init__(self):
-            super().__init__()
             self.attempts = 0
+            self.closed = False
 
-        async def __aenter__(self):
-            self.attempts += 1
-            if self.attempts == 1:
-                raise ConnectionError("starting")
-            return self
+        def session(self, name: str):
+            assert name == "browser"
 
-    session = _FlakySession()
+            @asynccontextmanager
+            async def open_session():
+                self.attempts += 1
+                if self.attempts == 1:
+                    raise ConnectionError("starting")
+                try:
+                    yield object()
+                finally:
+                    self.closed = True
+
+            return open_session()
+
+    client = _OneShotClient()
 
     async def loader(_handle):
         return _tools("browser_exec")
 
-    tools = _collect(
-        "http://kali:8003/mcp",
-        session=session,
-        loader=loader,
-        retry_attempts=2,
-        retry_delay_s=0.0,
-    )
+    async def run():
+        async with open_browser_tools(
+            "http://kali:8003/mcp",
+            client_factory=lambda: client,
+            loader=loader,
+            retry_attempts=2,
+            retry_delay_s=0.0,
+        ) as tools:
+            return list(tools)
+
+    tools = asyncio.run(run())
 
     assert [tool.name for tool in tools] == ["browser_exec"]
-    assert session.attempts == 2
-    assert session.closed is True
+    assert client.attempts == 2
+    assert client.closed is True
 
 
 def test_only_the_three_browser_tools_are_exposed():

@@ -303,6 +303,13 @@ class Frontier:
                 stale.append(StaleVisit(page=current, element=chosen, error=error))
                 continue
             except SessionMissing as error:
+                failed.append(
+                    FailedVisit(
+                        page=current,
+                        element=chosen,
+                        error=_error_text(error),
+                    )
+                )
                 return finish("session_missing", _error_text(error))
             except Exception as error:  # noqa: BLE001 - a typed action failure
                 failed.append(

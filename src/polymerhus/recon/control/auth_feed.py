@@ -11,10 +11,10 @@ projects only the subset its tools need:
   the existing `extra["auth_context"]` transport, serialised per tool by
   `serialize_auth_flags` (the pod-side serialiser moved here unchanged -
   same flag tables, same reserved keys, same shell quoting);
-- the crawler and browser tools: the resolved session-state reference
-  (`extra["steel_state"]`) plus browser auth material
-  (`extra["browser_auth"]`: cookies, required headers, header-located tokens,
-  and storage-located tokens);
+- the crawler and browser tools: the stable pool key
+  (`extra["steel_session"]`) plus the gate metadata
+  (`extra["browser_auth"]`: `auth_probe` and `login_url`; the pool store owns
+  cookies and localStorage);
 - non-auth jobs: nothing - `use_auth` stays the single eligibility gate.
 
 Role/default_role selection resolves over the account record
@@ -241,6 +241,15 @@ def project_steel_state(
         return None
     steel = account.get("steel") or {}
     state = steel.get("state") if isinstance(steel, dict) else None
+    if project_id and account_name:
+        from polymerhus.app.steel_session_state import (  # noqa: PLC0415
+            browser_session_name,
+        )
+
+        # The deterministic key is the contract. A legacy value was a
+        # per-project file reference (`alice`), and a stale value may name
+        # another project's key; neither is a safe pool mount.
+        return browser_session_name(project_id, account_name)
     if isinstance(state, str) and state.startswith("steel-"):
         from polymerhus.app.steel_session_state import (  # noqa: PLC0415
             is_browser_session_name,
@@ -248,17 +257,6 @@ def project_steel_state(
 
         if is_browser_session_name(state):
             return state
-    if project_id and account_name:
-        from polymerhus.app.steel_session_state import (  # noqa: PLC0415
-            browser_session_name,
-        )
-
-        # A legacy value was a per-project file reference (`alice`), not a
-        # pool key. The deterministic key is the only safe mount after the
-        # convergence; never feed a legacy reference to the pool.
-        return browser_session_name(project_id, account_name)
-    if isinstance(state, str) and state:
-        return state
     return None
 
 

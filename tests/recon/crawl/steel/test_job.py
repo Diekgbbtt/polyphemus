@@ -37,6 +37,7 @@ from polymerhus.recon.crawl.steel.session import (
     BrowserUnavailable,
     RestoreFailed,
     SessionMissing,
+    SessionTaken,
     SteelEnd,
 )
 from polymerhus.recon.crawl.steel.state import BrowserState, PageInstance, StaleElement
@@ -275,6 +276,20 @@ def test_a_browser_unavailable_mount_is_a_typed_partial_stop():
     assert result.stop_reason == "browser_unavailable"
     assert any(
         error.code == "browser_unavailable" and error.stage == "mount"
+        for error in result.manifest.errors
+    )
+
+
+def test_a_session_taken_mount_keeps_its_typed_code():
+    job, session, sidecar, run_calls, records = make_job(
+        session=FakeSession(failure=SessionTaken("mounted elsewhere"))
+    )
+
+    result = job.run()
+
+    assert result.stop_reason == "session_taken"
+    assert any(
+        error.code == "session_taken" and error.stage == "mount"
         for error in result.manifest.errors
     )
 

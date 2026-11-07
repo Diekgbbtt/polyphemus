@@ -398,8 +398,11 @@ def _stop_reason(error: BaseException) -> str:
         return "browser_unavailable"
     if isinstance(error, RestoreFailed) or code == "restore_failed":
         return "restore_failed"
-    if isinstance(error, SteelSessionError):
-        return "error"
+    if isinstance(error, SteelSessionError) and code:
+        # Every typed Steel failure keeps its contract code as the stop
+        # reason, so the manifest error and the recovery directive stay
+        # specific instead of collapsing to a generic "error".
+        return code
     return "error"
 
 

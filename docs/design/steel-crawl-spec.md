@@ -4,7 +4,7 @@
 **P0:** passed on the local Steel deployment.
 **Prototype:** passed on the public fixture.
 **Implementation:** the unit and contract tiers are complete.
-The live gate is the three-target e2e on the eval server (`eval/steel-crawl-e2e/`); the measured runs, predicates, and non-functional results are in `eval/steel-crawl-e2e/NFR-REPORT.md` and `eval/steel-crawl-e2e/ASSERTIONS.md`.
+The live gate is the pool E2E on the eval server (`tests/e2e/test_steel_crawl_pool_e2e.py`, phase F); the retired three-target cloud/CLI bundle (`eval/steel-crawl-e2e/`) is historical setup reference and its measured runs are in `eval/steel-crawl-e2e/NFR-REPORT.md` and `eval/steel-crawl-e2e/ASSERTIONS.md`.
 **Design history:** `docs/design/steel-crawl-workbench.md`.
 **P0 evidence:** `docs/experiments/p0-steel-cdp-sidecar.md`.
 **Prototype:** `docs/experiments/crawl_proto_local.py` and `docs/experiments/runs/crawl-proto-20261031T164759Z/`.
@@ -332,7 +332,7 @@ The browser MCP's own codes map onto the same typed surface:
 | `session_in_use` | `SessionTaken` |
 | `invalid_command`, `invalid_argument` | `InvalidCommand` |
 | `guard_error` | `GuardError` (payload preserved) |
-| `pool_exhausted`, `pool_unavailable` | `BrowserUnavailable` |
+| `pool_exhausted`, `pool_unavailable`, `browser_unavailable` | `BrowserUnavailable` |
 | `restore_failed` | `RestoreFailed` |
 | `store_error`, `lease_error`, `capture_failed`, `browser_error`, `internal_error` | `CommandFailed` |
 
@@ -1126,9 +1126,10 @@ unit and contract coverage:
 `tests/kali/test_steel_pool_proxy.py`,
 `tests/recon/crawl/steel/test_mcp_client.py`, and
 `tests/recon/crawl/steel/test_live_transport.py`.
-The live gate is the ComfyUI `steel_crawl` walkthrough
-(`tests/recon/crawl/test_steel_crawl_real_e2e.py`, extended for the pool) and
-the White Jotter authenticated walkthrough on the eval host.
+The live gate is the pool E2E
+(`tests/e2e/test_steel_crawl_pool_e2e.py`) on the eval host:
+the ComfyUI `steel_crawl` walkthrough and the White Jotter authenticated
+walkthrough.
 Both are pending phase F of the implementation plan.
 The JEV engine diff against `feat/steel-crawl` is empty.
 The edge gate is `tests/kali/test_http_history_edge.py`.

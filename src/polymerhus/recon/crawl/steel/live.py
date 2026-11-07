@@ -9,12 +9,13 @@ runtime. It owns four adapters:
   returns, attaches to the session's page target, and satisfies the sidecar's
   two-method transport seam. It never sends a browser action; the CLI owns
   every action.
-- `LivePageFactory` navigates through the CLI, reads the compact snapshot,
-  projects the live forms through one JS expression, and registers the page in
-  `BrowserState`. The snapshot keeps the CLI refs; a synthetic form node names
-  its CSS selector explicitly.
-- `api_session_record` reads the runtime session record the CLI does not
-  expose (the websocket and clocks) from the Steel API.
+- `LivePageFactory` navigates through the browser MCP, reads the compact
+  snapshot, projects the live forms through one JS expression, and registers
+  the page in `BrowserState`. The snapshot keeps the CLI refs; a synthetic
+  form node names its CSS selector explicitly.
+- `session.cdp_endpoint` supplies the endpoint the start result returned; the
+  transport connects its socket to the worker address and presents the
+  worker's localhost Host.
 - `run_live_crawl` assembles `CrawlJob` and `CrawlRun` from those adapters and
   returns the terminal job plus the durable paths the caller reads back.
 

@@ -261,9 +261,12 @@ def test_project_browser_auth_carries_a_login_url_alone():
     ) == {"login_url": "https://x/login"}
 
 
-def test_project_steel_state_reads_the_session_reference(tmp_path):
-    account = resolve_account("p1", "alice", store=_seeded_store(tmp_path))
-    assert project_steel_state(account) == "alice"
+def test_project_steel_state_reads_a_valid_pool_reference(tmp_path):
+    assert project_steel_state({"steel": {"state": "steel-p1-alice"}}) == (
+        "steel-p1-alice"
+    )
+    # A legacy per-project file reference is not a pool key.
+    assert project_steel_state({"steel": {"state": "alice"}}) is None
     assert project_steel_state({}) is None
 
 
@@ -285,8 +288,16 @@ def test_project_steel_state_replaces_a_legacy_reference(legacy):
     ) == "steel-proj1-alice"
 
 
-def test_project_steel_state_keeps_a_valid_stable_key():
+def test_project_steel_state_computes_the_stable_key_with_context():
     account = {"steel": {"state": "steel-proj1-alice"}}
+
+    assert project_steel_state(
+        account, project_id="proj1", account_name="alice"
+    ) == "steel-proj1-alice"
+
+
+def test_project_steel_state_does_not_trust_another_projects_key():
+    account = {"steel": {"state": "steel-other-bob"}}
 
     assert project_steel_state(
         account, project_id="proj1", account_name="alice"

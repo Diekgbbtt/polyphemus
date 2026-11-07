@@ -11,11 +11,14 @@ All images build in-repo from Dockerfiles (`docker images` to check):
 
 ## Run
     cp .env.example .env
-    docker compose up -d --build                # prod-ish
+    # baseline (includes the Steel browser pool):
+    docker compose -f docker-compose.yml -f docker-compose.pool.yml up -d --build
     # dev (agent hot-reload + live source):
-    docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+    docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.pool.yml up -d --build
+    # thin (no browser pool):
+    docker compose -f docker-compose.yml -f docker-compose.thin.yml up -d
 
-Services: agent `:8080/health` · kali fastmcp `:8000/mcp` · neo4j `:7474`/`:7687` (neo4j/polymerhus) · postgres `:5432`.
+Services: agent `:8080/health` · kali fastmcp `:8000/mcp` · browser MCP `http://kali:8003/mcp` · neo4j `:7474`/`:7687` (neo4j/polymerhus) · postgres `:5432`.
 
 ## Verify
 

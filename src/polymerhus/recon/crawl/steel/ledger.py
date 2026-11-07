@@ -261,13 +261,14 @@ def finalize(
     if flush_error is not None:
         errors.append(flush_error)
         ledger.append_error("http_history_flush_failed", flush_error, stage="flush")
+        manifest = _append_error(
+            manifest, "http_history_flush_failed", flush_error
+        )
         partial = True
     elif cursor is not None:
         ledger.set_cursor(cursor)
     if partial:
-        manifest = manifest.model_copy(
-            update={"run": manifest.run.model_copy(update={"partial": True})}
-        )
+        manifest = _mark_partial(manifest)
 
     def run_ingest() -> tuple[Any, str | None]:
         try:
@@ -279,23 +280,9 @@ def finalize(
     if ingest_error is not None:
         errors.append(ingest_error)
         ledger.append_error("graph_ingest_failed", ingest_error, stage="ingest")
+        manifest = _append_error(manifest, "graph_ingest_failed", ingest_error)
+        manifest = _mark_partial(manifest)
         partial = True
-
-    if errors:
-        recorded = list(manifest.errors) + [
-            ErrorRecord(
-                code=error.split(":", 1)[0],
-                message=error,
-                stage="finalize",
-            )
-            for error in errors
-        ]
-        manifest = manifest.model_copy(
-            update={
-                "run": manifest.run.model_copy(update={"partial": True}),
-                "errors": recorded,
-            }
-        )
 
     ledger.append_manifest(manifest)
     return FinalizeResult(
@@ -305,6 +292,23 @@ def finalize(
         ingest=ingest_result,
         errors=tuple(errors),
         coverage=dict(coverage or {}),
+    )
+
+
+def _mark_partial(manifest: Manifest) -> Manifest:
+    return manifest.model_copy(
+        update={"run": manifest.run.model_copy(update={"partial": True})}
+    )
+
+
+def _append_error(manifest: Manifest, code: str, message: str) -> Manifest:
+    return manifest.model_copy(
+        update={
+            "errors": [
+                *manifest.errors,
+                ErrorRecord(code=code, message=message, stage="finalize"),
+            ]
+        }
     )
 
 

@@ -124,18 +124,23 @@ async def open_browser_tools(
         loader = loader or load_mcp_tools
 
     client = client_factory()
-    session = client.session("browser")
+    session = None
     handle = None
     last_error: Exception | None = None
     for attempt in range(1, retry_attempts + 1):
+        # `MultiServerMCPClient.session` returns a one-shot async context
+        # manager. A failed attempt consumes it, so every retry needs a fresh
+        # one; re-entering the failed object raises on the real adapter.
+        session = client.session("browser")
         try:
             handle = await session.__aenter__()
             break
         except Exception as exc:  # noqa: BLE001 - a missing browser degrades
             last_error = exc
+            session = None
             if attempt < retry_attempts:
                 await asyncio.sleep(retry_delay_s * attempt)
-    if handle is None:
+    if handle is None or session is None:
         logger.warning(
             "browser tools are unavailable at %s after %d attempt(s); the "
             "caller runs without them: %s",

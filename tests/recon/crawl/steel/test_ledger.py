@@ -202,6 +202,7 @@ def test_the_manifest_writer_receives_the_final_partial_after_a_flush_failure(
     assert result.status == "partial"
     assert seen
     assert seen[-1].run.partial is True
+    assert seen[-1].errors[0].code == "http_history_flush_failed"
 
 
 def test_a_failed_ingest_marks_the_run_partial_but_the_flush_still_runs(tmp_path):

@@ -1,5 +1,10 @@
 # steel_crawl - live non-functional report
 
+> RETIRED: the cloud/CLI bundle predates the pool convergence. The live gate is
+> `tests/e2e/test_steel_crawl_pool_e2e.py` (phase F). The 900-second/300-action
+> figures below are historical; the production contract is 600 seconds with no
+> action cap.
+
 **Date:** 2026-11-03.
 **Scope:** the three live targets on the eval server: ComfyUI (no auth), SiyuCMS (admin form login), PrestaShop (back-office cookie).
 **Gate:** `tests/e2e/test_steel_crawl_e2e.py`; the catalogue is `ASSERTIONS.md`.
