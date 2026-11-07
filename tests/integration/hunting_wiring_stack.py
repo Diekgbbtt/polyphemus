@@ -284,14 +284,12 @@ def seed_parent_note(project_id: str, *, config_key: str, run_id: str,
     `HunterMemoryStore.write_note` (the Q16 record the identifier refactor
     writes at pod completion), mirroring `_record_durable_pod_export` - keyed
     `<config_key>:pod-export:<spec_id>`, action=update (#199)."""
-    from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
-    store = HunterMemoryStore()
+    from polymerhus.attack.hunting.pod_export_memory import PodExportStore
+    store = PodExportStore()
     spec_id = str(source).rsplit(":", 1)[-1]
-    store.write_note(
-        project_id, action="update", hunt_key=config_key,
-        note_name=f"pod-export:{spec_id}", kind="freeform",
-        body=str(verdict or {}), evidence="verdict-stub",
-        provenance={"run_id": run_id, "source": source},
+    store.write_export(
+        project_id, hunt_key=config_key, spec_id=spec_id, run_id=run_id,
+        source=source, export=verdict or {},
     )
 
 

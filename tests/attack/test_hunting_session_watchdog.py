@@ -12,6 +12,7 @@ import pytest
 
 from polymerhus.attack.hunting import surfer as surfer_mod
 from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
+from polymerhus.attack.hunting.pod_export_memory import PodExportStore
 from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore
 from polymerhus.attack.hunting.surfer import (
     RunDispatchState,
@@ -66,7 +67,7 @@ def test_a_hunter_session_that_exceeds_its_window_settles_and_moves_on(
 
 
 def test_a_pod_session_that_exceeds_its_window_writes_a_degraded_export(tmp_path):
-    hunter = HunterMemoryStore(tmp_path / "hunter")
+    pod_exports = PodExportStore(tmp_path / "pod-export")
     pod = PodMemoryStore(tmp_path / "pod")
     spec = {
         **_draft(),
@@ -78,7 +79,7 @@ def test_a_pod_session_that_exceeds_its_window_writes_a_degraded_export(tmp_path
 
     asyncio.run(run_pod_session(
         spec=spec, project_id=PROJECT, run_id=RUN, hunt_key=HUNT,
-        spec_id=SPEC_ID, inbox=None, hunter_store=hunter, gate=None,
+        spec_id=SPEC_ID, inbox=None, pod_export_store=pod_exports, gate=None,
         pod_builder=_hang, pod_store=pod, state=RunDispatchState(),
         session_timeout_s=0.01,
     ))
@@ -125,7 +126,7 @@ def test_the_pod_watchdog_reads_the_env_override():
 
 
 def test_a_cancelled_pod_session_writes_no_export_and_keeps_the_cursor(tmp_path):
-    hunter = HunterMemoryStore(tmp_path / "hunter")
+    pod_exports = PodExportStore(tmp_path / "pod-export")
     pod = PodMemoryStore(tmp_path / "pod")
     spec = {**_draft(), "status": "ratified"}
 
@@ -143,7 +144,7 @@ def test_a_cancelled_pod_session_writes_no_export_and_keeps_the_cursor(tmp_path)
     async def _drive():
         task = asyncio.create_task(run_pod_session(
             spec=spec, project_id=PROJECT, run_id=RUN, hunt_key=HUNT,
-            spec_id=SPEC_ID, inbox=None, hunter_store=hunter, gate=None,
+            spec_id=SPEC_ID, inbox=None, pod_export_store=pod_exports, gate=None,
             pod_builder=_write_then_hang, pod_store=pod,
             state=RunDispatchState(),
         ))
@@ -198,7 +199,7 @@ def _seed_pod_trail(pod: PodMemoryStore) -> None:
 
 
 def test_the_watchdog_backstop_preserves_the_durable_trail(tmp_path):
-    hunter = HunterMemoryStore(tmp_path / "hunter")
+    pod_exports = PodExportStore(tmp_path / "pod-export")
     pod = PodMemoryStore(tmp_path / "pod")
     _seed_pod_trail(pod)
     spec = {**_draft(), "status": "ratified"}
@@ -208,7 +209,7 @@ def test_the_watchdog_backstop_preserves_the_durable_trail(tmp_path):
 
     asyncio.run(run_pod_session(
         spec=spec, project_id=PROJECT, run_id=RUN, hunt_key=HUNT,
-        spec_id=SPEC_ID, inbox=None, hunter_store=hunter, gate=None,
+        spec_id=SPEC_ID, inbox=None, pod_export_store=pod_exports, gate=None,
         pod_builder=_hang, pod_store=pod, state=RunDispatchState(),
         session_timeout_s=0.01,
     ))
@@ -223,7 +224,7 @@ def test_the_watchdog_backstop_preserves_the_durable_trail(tmp_path):
 
 
 def test_the_watchdog_backstop_does_not_overwrite_an_execution_terminal(tmp_path):
-    hunter = HunterMemoryStore(tmp_path / "hunter")
+    pod_exports = PodExportStore(tmp_path / "pod-export")
     pod = PodMemoryStore(tmp_path / "pod")
     existing = {
         "verdict": "successful",
@@ -237,7 +238,7 @@ def test_the_watchdog_backstop_does_not_overwrite_an_execution_terminal(tmp_path
 
     asyncio.run(run_pod_session(
         spec=spec, project_id=PROJECT, run_id=RUN, hunt_key=HUNT,
-        spec_id=SPEC_ID, inbox=None, hunter_store=hunter, gate=None,
+        spec_id=SPEC_ID, inbox=None, pod_export_store=pod_exports, gate=None,
         pod_builder=_hang, pod_store=pod, state=RunDispatchState(),
         session_timeout_s=0.01,
     ))

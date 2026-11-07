@@ -81,6 +81,7 @@ from typing import AbstractSet, Any, Awaitable, Callable
 
 from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
 from polymerhus.attack.hunting.hunter_payload import materialise_hunter_payload
+from polymerhus.attack.hunting.pod_export_memory import PodExportStore
 from polymerhus.attack.hunting.pod.finalize import PodTerminal, finalize_pod
 from polymerhus.attack.hunting.pod.types import POD_WATCHDOG_TIMEOUT
 from polymerhus.attack.hunting.mover import (
@@ -555,6 +556,7 @@ def build_run_dispatch(
     threat_store: Any = None,
     hunter_store: HunterMemoryStore,
     pod_store: Any,
+    pod_export_store: PodExportStore | None = None,
     state: RunDispatchState,
     gate: Any,
     hunter_builder: Callable[..., tuple[Callable[[Any], Awaitable[Any]], Any]],
@@ -758,7 +760,7 @@ def build_run_dispatch(
             hunt_key=item.hunt_key,
             spec_id=item.spec_file,
             inbox=inbox,
-            hunter_store=hunter_store,
+            pod_export_store=pod_export_store,
             gate=gate,
             role_gate=_role_gate("pod"),
             pod_builder=pod_builder,
@@ -979,48 +981,40 @@ def _verdict_stub_handler(*, hunt_key):
     return _stub
 
 
-def _record_durable_pod_export(*, hunter_store, project_id, run_id, hunt_key,
+def _record_durable_pod_export(*, pod_export_store, project_id, run_id, hunt_key,
                                spec_id, source, export) -> None:
     """The DURABLE parent-keyed export record (identity-based refactor,
     2026-08-25 / ADR Q16 amendment, note key pinned by #199): authored
     deterministically at pod completion, keyed by the parent's threat dispatch id
     (`hunt_key`, S3 8.9) - independent of any live parent session, crash-safe,
-    never lost to a live-mailbox-only path. The export envelope is recorded as
-    a freeform note on the hunter memory (the verdict-stub marker), keyed
-    `<hunt_key>:pod-export:<spec_id>` (the parent's threat key + the
-    `pod-export:` marker + the derived `<fault>_<strategy>` spec id), with
-    ONE current record per (hunt, spec): a re-export UPDATES the same key
-    (one TestImplementationSpec yields at most one PodExport), and the first
-    export APPENDS (the store's update-on-missing is a denoted miss, never a
-    silent drop). The pod session id lives ONLY in `provenance["source"]`,
-    never in the key. Fail-open (O3): a write failure warns - the export is
-    never re-fabricated or dropped, and the run must never wedge on the
+    never lost to a live-mailbox-only path.
+
+    The record lives in the pod-export store (`hunting/pod-export/notes.yaml`),
+    NOT in the hunter's episodic notes file. The two files have separate
+    writers and separate bounds. The pod-export key is
+    `<hunt_key>:pod-export:<spec_id>` with ONE current record per (hunt, spec):
+    a re-export UPDATEs the same key, and the pod session id lives ONLY in
+    `provenance["source"]`. Fail-open (O3): a write failure warns - the export
+    is never re-fabricated or dropped, and the run must never wedge on the
     record."""
-    note_name = f"pod-export:{spec_id}"
-    key = hunter_store.note_key(hunt_key, note_name)
+    if pod_export_store is None:
+        logger.warning(
+            "surfer: no pod-export store bound; durable export for %s/%s not "
+            "recorded", hunt_key, spec_id)
+        return
     try:
-        existing = [
-            r for r in hunter_store.read_notes(project_id, parent_key=hunt_key)
-            if r.get("key") == key
-        ]
-        hunter_store.write_note(
+        pod_export_store.write_export(
             project_id,
-            action="update" if existing else "append",
             hunt_key=hunt_key,
-            note_name=note_name,
-            kind="freeform",
-            body=json.dumps(export or {}, sort_keys=True),
-            evidence="durable pod-completion export record (ADR Q16): no re-evaluation",
-            provenance={
-                "run_id": run_id,
-                "source": source,
-                "verdict_stub": True,
-            },
+            spec_id=spec_id,
+            run_id=run_id,
+            source=source,
+            export=export,
         )
     except Exception as exc:  # noqa: BLE001 - O3: warn and keep serving
         logger.warning(
             "surfer: durable pod-export record failed for %s/%s (%s)",
-            hunt_key, note_name, exc,
+            hunt_key, spec_id, exc,
         )
 
 
@@ -1032,7 +1026,7 @@ async def run_pod_session(
     hunt_key: str,
     spec_id: str,
     inbox: AgentInbox | None,
-    hunter_store: HunterMemoryStore,
+    pod_export_store: PodExportStore | None,
     gate: Any,
     pod_builder: Callable[..., Awaitable[dict]],
     pod_store: Any,
@@ -1136,7 +1130,7 @@ async def run_pod_session(
     # parent's threat dispatch id + the pod-export:<spec_id> marker (#199) - the
     # single crash-safe record, independent of any live parent inbox.
     _record_durable_pod_export(
-        hunter_store=hunter_store, project_id=project_id, run_id=run_id,
+        pod_export_store=pod_export_store, project_id=project_id, run_id=run_id,
         hunt_key=hunt_key, spec_id=spec_id, source=source, export=export,
     )
     # The WITHIN-RUN live feed (optional): only when a co-running parent's inbox

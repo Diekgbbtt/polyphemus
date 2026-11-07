@@ -1125,6 +1125,7 @@ async def start_hunting(
     tick_interval: float | None = None,
     hunter_store: Any = None,
     pod_store: Any = None,
+    pod_export_store: Any = None,
     hunter_builder: Callable[..., Any] | None = None,
     pod_builder: Callable[..., Awaitable[Any]] | None = None,
     modeller_pass_fn: Callable[..., Awaitable[Any]] | None = None,
@@ -1186,7 +1187,8 @@ async def start_hunting(
 
     Injectable seams (CODING_STANDARD s6): `control` is the session-capable
     control plane (`RuntimeControlPlane` default), `gate` the hunting dispatch
-    gate (Q15), `hunter_store` / `pod_store` the memory stores,
+    gate (Q15), `hunter_store` / `pod_store` / `pod_export_store` the memory
+    stores,
     `threat_store` / `graph_read_fn` the modeller's store and its grounding read
     seam, `tools` the whole modeller tool seam, `modeller_pass_fn` /
     `modeller_kwargs` the pass body and its turn seam, `hunter_builder` /
@@ -1285,6 +1287,12 @@ async def start_hunting(
         # the run has no config input family left to read.
         if hunter_store is None:
             hunter_store = HunterMemoryStore()
+        if pod_export_store is None:
+            from polymerhus.attack.hunting.pod_export_memory import (  # noqa: PLC0415
+                PodExportStore,
+            )
+            pod_export_store = PodExportStore(
+                root_dir=getattr(hunter_store, "root", None))
         if pod_store is None:
             try:
                 from polymerhus.attack.hunting.pod.pod_memory import (  # noqa: PLC0415
@@ -1355,6 +1363,7 @@ async def start_hunting(
             threat_store=run_threat_store,
             hunter_store=hunter_store,
             pod_store=pod_store,
+            pod_export_store=pod_export_store,
             state=state,
             gate=gate,
             hunter_builder=resolved_hunter_builder,

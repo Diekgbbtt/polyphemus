@@ -117,12 +117,13 @@ HUNTER_NOTES_MAX_BYTES = 4 * 1024 * 1024
 
 
 def _is_durable_prior_insight(record: dict) -> bool:
-    """The durable prior-insight marker (G3/#202): a Q16 pod-export stub
-    (`provenance.verdict_stub`) is the durable pod-completion record the surfer
-    writes for a parent hunt key, so it is protected from the ordinary-notes
-    eviction of the `notes.yaml` bound (#341). The old
-    `HuntStore` consumer retired with the config family; the
-    record stays the durable trail a later verdict/insight reader can use."""
+    """The LEGACY durable prior-insight marker (G3/#202).
+
+    New pod-export records live in `PodExportStore`
+    (`hunting/pod-export/notes.yaml`). This predicate keeps a
+    `provenance.verdict_stub` record that is already present in an OLD
+    `hunting/hunter/notes.yaml` from the ordinary-notes eviction of the #341
+    bound, so a legacy stub is never lost on the next write."""
     provenance = record.get("provenance")
     return bool(isinstance(provenance, dict) and provenance.get("verdict_stub"))
 
@@ -248,6 +249,11 @@ class HunterMemoryStore(BoundedRecordStore):
         app-owned `DATA_ROOT`), with the per-project `hunting/hunter/` bucket
         resolved through the ONE `data_root.project_dir` layout owner."""
         self._root = Path(root_dir) if root_dir is not None else DATA_ROOT
+
+    @property
+    def root(self) -> Path:
+        """The data root every project bucket resolves under."""
+        return self._root
 
     # -- paths -------------------------------------------------------------
 
