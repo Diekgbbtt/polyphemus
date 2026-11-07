@@ -1,3 +1,6 @@
+> 2026-11-07: the legacy agentic tool-calling gate was removed with
+> the six-tool path; see `docs/design/legacy-crawler-eol.md`.
+
 # Assertions - #100 LLM API Gateway programme (T1-T6): gateway wiring + models sync pipeline + T3-T6 surfaces
 
 **Source:** tickets #104 (T1), #105 (T2), #106 (T3), #107 (T4), #108 (T5), #109 (T6); ADR `docs/design/llm-gateway-100-decisions.md` (D1-D11); spec `docs/design/dynamic-llm-gateway-design-spec.md`.
@@ -82,11 +85,6 @@
   observable: unset -> `openai_api_base == PROVIDERS[provider]` and the zen id strip runs client-side (`deepseek/deepseek-v4-flash-free` -> `deepseek-v4-flash-free`); set -> `openai_api_base == "http://127.0.0.1:4000"` verbatim and the model string is sent verbatim (no strip); `max_retries=0` holds in both modes
   yields: integration test
 
-- **C14** | seam: crawl gate vs live reader (D4 item 4, D5 Rule 1) | delivery: success + degradation
-  input: `_refuse_crawl_without_tool_calling(body)` for role `crawler`, live stack
-  observable: `supports_tool_calling` true -> returns None; false/None -> returns the refusal string `"opencode:deepseek-v4-flash-free"`; reader raising -> refusal (never crash); identity unresolvable -> None (proceed)
-  yields: integration test
-
 - **C15** | seam: provider API-key rotation propagation (#193, D9 snapshot) | delivery: rotation-convergent
   input: after a synced gateway, rotate ONE provider's `API_KEY_*` in env and run the sync again
   observable: that provider's registered records are re-pushed via the update path (`PATCH /model/{model_id}/update`) with the CURRENT key in `litellm_params.api_key` (litellm re-encrypts and persists it - `/model/info` masks the key, so it can never be diffed from the registered side); every other provider is untouched; the `__sync_snapshot__` record's `api_key_hashes` (per-provider fingerprint of the applied key) reflects the rotation; a third run with the unchanged key pushes ZERO add/update/delete
@@ -139,15 +137,6 @@
   terminal: `context_limit` == oracle int; `output_limit` == oracle or None; `source` == `models.dev/opencode/deepseek-v4-flash-free`; `reasoning_in_response`/`reasoning_field` per the D11 matrix; call 2 returns the identical cached object (identity, not equality)
   observed: the returned profile object + `is` identity across calls
   yields: e2e test `test_reader_resolves_and_holds_live_profile`
-
-- **E6** | grounds: D4 item 4 + #108 ("warns the operator, REFUSES to execute the tool-loop, and degrades gracefully")
-  entry seam: `_refuse_crawl_without_tool_calling(AgenticCrawlRequest(model="crawler", ...))` inside the agent container
-  input: `model="crawler"` (the role whose client the crawl seam uses), live stack
-  live edge: none (reader against the co-located gateway)
-  path: gate resolves the role's (provider, model) -> reader -> branch on `supports_tool_calling`
-  terminal: returns None when the oracle says the model supports tool calling; returns the refusal `"opencode:deepseek-v4-flash-free"` (with the warn log line naming model/capability state/gap) when it does not; either way no exception
-  observed: the gate's return value + `docker compose logs agent` warn line when refused
-  yields: e2e test `test_crawl_gate_live_refusal_or_pass`
 
 - **E7** | grounds: D11 items 3-4 + #109 ("parses the reasoning ... replays it into the next turn's message history (byte-identical prefix) ... tracks cache hits via usage.cached_tokens ... records reasoning readability via a dedicated langfuse llm-response log field")
   entry seam: the stateful session turn path (`stateful_turn` / the session seam) for the triager role, through the gateway, two turns

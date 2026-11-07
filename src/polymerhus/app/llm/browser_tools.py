@@ -50,7 +50,6 @@ __all__ = [
     "browser_session_name",
     "build_browser_tool",
     "resolve_browser_context_ref",
-    "strip_cdp_fields",
 ]
 
 
@@ -120,27 +119,6 @@ class BrowserArgs(BaseModel):
     )
 
 
-def strip_cdp_fields(value: Any) -> Any:
-    """Remove the CDP endpoint from a model-facing browser result."""
-    if isinstance(value, Mapping):
-        return {
-            key: strip_cdp_fields(item)
-            for key, item in value.items()
-            if key not in {"cdp_url", "cdp_host"}
-        }
-    if isinstance(value, (list, tuple)):
-        return [strip_cdp_fields(item) for item in value]
-    if isinstance(value, str):
-        try:
-            parsed = json.loads(value)
-        except (TypeError, ValueError):
-            return value
-        if isinstance(parsed, (Mapping, list)):
-            return json.dumps(strip_cdp_fields(parsed), ensure_ascii=False)
-        return value
-    return value
-
-
 def _slug(value: str, fallback: str) -> str:
     text = _SLUG.sub("-", (value or "").strip()).strip("-_")
     text = re.sub(r"-{2,}", "-", text).lower()
@@ -193,20 +171,23 @@ def resolve_browser_context_ref(
     *,
     store=None,
 ) -> str:
-    """The account's auth-context reference, or the deterministic one.
+    """The deterministic auth-context reference for one account.
 
-    The auth store's `browser_context.ref` is authoritative when present. An
-    account with no stored reference gets the deterministic context key; the
-    pool store returns no object for it, so the fresh session starts
-    anonymous.
+    The project and account are the contract: the reference is
+    `steel-auth-<project>-<account>`. The auth store records the same
+    reference; a stale or foreign stored value never overrides the
+    deterministic key, so one project can never mount another project's
+    context. The pool store returns no object for an unwritten key, so the
+    fresh session starts anonymous.
     """
+    deterministic = browser_context_ref(project_id, account)
     if store is None:
         try:
             from polymerhus.app.auth.store import AuthStore  # noqa: PLC0415
 
             store = AuthStore()
         except Exception:  # noqa: BLE001 - a missing store is a fresh context
-            return browser_context_ref(project_id, account)
+            return deterministic
     try:
         value = store.read(
             project_id, f"accounts.{account}.browser_context"
@@ -215,9 +196,9 @@ def resolve_browser_context_ref(
         value = None
     if isinstance(value, Mapping):
         ref = value.get("ref")
-        if isinstance(ref, str) and _SESSION_NAME.fullmatch(ref):
+        if ref == deterministic:
             return ref
-    return browser_context_ref(project_id, account)
+    return deterministic
 
 
 class BrowserTool(BaseTool):
@@ -295,11 +276,7 @@ class BrowserTool(BaseTool):
                 retryable=False,
             )
         try:
-            context_ref = (
-                self._context_ref_resolver(account)
-                if account is not None
-                else self._context_ref_resolver(None)
-            )
+            context_ref = self._context_ref_resolver(account)
             start = self._client.start(
                 self._session_name_factory(account),
                 url=url,
@@ -469,7 +446,13 @@ def build_browser_tool(
 
         mcp_url = config.KALI_BROWSER_MCP_URL
     target = (mcp_url or "").strip()
-    client = McpBrowserClient(target) if target else None
+    try:
+        client = McpBrowserClient(target) if target else None
+    except (TypeError, ValueError):
+        # A malformed deployment value is a degraded capability, never a
+        # construction failure: the agent surface stays stable and reports
+        # `browser_unavailable`.
+        client = None
 
     def session_name(account_name: str | None) -> str:
         return browser_session_name(

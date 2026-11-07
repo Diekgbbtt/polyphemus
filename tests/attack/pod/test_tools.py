@@ -393,3 +393,15 @@ def test_runner_tools_note_tool_rejects_a_storeless_instance(tmp_path):
     out = note.invoke({"operation": "write", "order": 0, "note_name": "n",
                        "kind": "freeform", "body": "x"})
     assert out.startswith("NOTES_NO_STORE")
+
+def test_browser_signature_separates_context_and_persist():
+    from polymerhus.attack.hunting.pod.tools import browser_signature
+
+    base = {"command": "exec", "input": "snapshot -i"}
+    assert browser_signature("v0", dict(base)) == browser_signature("v0", dict(base))
+    assert browser_signature("v0", base) != browser_signature(
+        "v0", {**base, "account": "alice"}
+    )
+    assert browser_signature("v0", {"command": "end"}) != browser_signature(
+        "v0", {"command": "end", "persist_context": True}
+    )

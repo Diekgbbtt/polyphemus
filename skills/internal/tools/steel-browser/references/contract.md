@@ -36,7 +36,9 @@ Success:
 ```
 
 - `ended` is false when no session was mounted; the call still succeeds.
-- `reason` is `explicit`, `mcp_close`, `ttl`, or `shutdown`.
+- `reason` is `explicit`, `mcp_close`, `ttl`, or `shutdown` for a mounted
+  session. A no-op end answers `no_client` (the capability is not configured)
+  or `no_session` (the agent never started one).
 - `released` is `null` when the stop was enough, `true` when the stop failed and the API release fallback ran, and `false` when that fallback failed.
 - `captured` and `saved` state whether the session record was written.
 - `context_saved` states whether `persist_context=true` updated the account's auth context.

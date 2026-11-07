@@ -72,6 +72,10 @@ class _HarnessMiddleware(AgentMiddleware):
             return handler(request)
         if name == "browser":
             args = request.tool_call.get("args") or {}
+            # Lifecycle calls are never deduped: a second start after an end
+            # is a legitimate resume, not a repeated probe.
+            if args.get("command") != "exec":
+                return handler(request)
             sig = browser_signature(self.variant_ref, dict(args))
             if self.log is not None and self.log.has_executed(sig):
                 return ToolMessage(
@@ -114,6 +118,8 @@ class _HarnessMiddleware(AgentMiddleware):
             return await handler(request)
         if name == "browser":
             args = request.tool_call.get("args") or {}
+            if args.get("command") != "exec":
+                return await handler(request)
             sig = browser_signature(self.variant_ref, dict(args))
             if self.log is not None and self.log.has_executed(sig):
                 return ToolMessage(

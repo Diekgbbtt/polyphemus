@@ -787,13 +787,20 @@ async def run_pod_session(
             log = hc.log
             variant = hc.variant_ref or "v0"
             signature = browser_signature(variant, dict(arguments))
-            log.mark_executed(signature)
+            # Only an exec probe is a dedup subject; start/end are lifecycle
+            # calls a resumed session must be free to repeat.
+            if arguments.get("command") == "exec":
+                log.mark_executed(signature)
             error = (
                 result.get("error") if isinstance(result, dict) else None
             )
             success = not (
                 isinstance(result, dict) and result.get("success") is False
             )
+            data = result.get("data") if isinstance(result, dict) else None
+            http_status = data.get("status") if isinstance(data, Mapping) else None
+            if not isinstance(http_status, int):
+                http_status = None
             log.record_observation(
                 RawObservation(
                     probe_ref=signature,
@@ -804,7 +811,7 @@ async def run_pod_session(
                         "input": arguments.get("input"),
                         "account": arguments.get("account"),
                     },
-                    status=None,
+                    status=http_status,
                     stdout=json.dumps(result, ensure_ascii=False)[:4000],
                     returncode=0 if success else 1,
                     error_code=(

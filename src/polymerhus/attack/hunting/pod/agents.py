@@ -173,7 +173,8 @@ async def default_triager_fn(spec: dict, observation: RawObservation,
     `HuntSession` thread with `ToolStrategy(TriagerDecision)` and the critic's
     compaction middleware, reading the delta the graph composed (`messages` =
     the verbatim P3 note + filtered triager context + memory guidance, D84-23).
-    Bound tools: note read + (config-gated) query_lightrag (D84-27) - NEVER exec.
+    Bound tools: note read + (config-gated) query_lightrag + the one `browser`
+    tool (read-only commands by prompt) - NEVER the Kali `exec` tool.
     Hard-fails on an unbound session/harness (D84-14); a FAILED turn degrades to
     a safe honest terminal, never raises a DOMAIN failure into the loop - a
     provider failure propagates as the typed `ProviderUnavailableError` (#329)."""
@@ -326,8 +327,10 @@ def triager_react_tools(memory_store, spec_id, *, kb_fn=None, kb_lookup=None,
                         log=None, variant_ref="", graph_view_fn=None,
                         browser_tool=None):
     """The Triager's bound-tool set (D84-27): note read + the always-bound
-    `query_lightrag` KB tool + the shared `graph_view` L0/L1 tool (#197) - NEVER
-    exec (the critic never touches the target). The triager's KB reads are
+    `query_lightrag` KB tool + the shared `graph_view` L0/L1 tool (#197) + the
+    one `browser` tool (read-only commands by prompt). The critic never
+    mutates the target and never receives the Kali `exec` tool. The triager's
+    KB reads are
     CONTEXT reads (D84-27), so `log`/`variant_ref` may be unbound - a logless KB
     tool records nothing (fail-open); when the harness provides them, the reads
     are recorded against the current variant (T3/#179)."""

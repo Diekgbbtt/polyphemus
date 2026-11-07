@@ -34,7 +34,7 @@ Out: `assigner`, `skill_evolver`, one-shot roles, `configurator`, `crawler` (rem
 
 - Add `src/polymerhus/app/llm/browser_client.py`: the sync MCP client, generalised from the crawl client.
 - Add `src/polymerhus/app/llm/browser_tools.py`: the unified `BrowserTool`, the contract description, the session/context key helpers, and the CDP-field stripper.
-- Keep `src/polymerhus/attack/hunting/browser_tools.py` as a compatibility re-export.
+- Delete `src/polymerhus/attack/hunting/browser_tools.py`; there is no compatibility re-export (the old wrapper had no consumer after the binding swap).
 - Gate: the new unit tier is green.
 
 ### S2 Pool store context reference (complete)
@@ -58,6 +58,8 @@ Out: `assigner`, `skill_evolver`, one-shot roles, `configurator`, `crawler` (rem
 - Bind `BrowserTool` to every in-scope agent at its actor or turn boundary.
 - Add the `browser` entry to every in-scope Tools paragraph.
 - Add `steel-browser` to every in-scope role's bounded skill set.
+- The shared auth seam forwards `project_id` and lets `with_write_skill` win over `with_readonly_auth_store`, so the gateway's bound skill role and its project-scoped auth store agree.
+- The mechanism typist binds the browser on its turn; the prompt scopes its use to the verify/falsify phase.
 - Gate: the agent tool-surface and prompt tests are green.
 
 ### S5 Pod evidence (complete)
@@ -76,6 +78,6 @@ Out: `assigner`, `skill_evolver`, one-shot roles, `configurator`, `crawler` (rem
 
 ### S7 Review and verification (in progress)
 
-- Adversarial standards and spec review.
+- Adversarial standards and spec review (two axes, parallel sub-agents).
 - Full unit tier and the targeted integration tier.
 - Evidence record.

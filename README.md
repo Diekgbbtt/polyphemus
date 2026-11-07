@@ -129,7 +129,8 @@ Settings are the `recon` object sent to `PUT /projects/{id}/settings` and persis
 Authentication is NOT a project setting. The retired `auth_context` key is refused loudly
 (#243): the settings blob carries no auth. The auth gateway reads and seeds the shared auth
 store through `PUT /projects/{id}/auth`; the Steel crawl mounts the decoupled auth
-context referenced by `accounts.<account>.browser_context.ref`.
+context whose deterministic reference is recorded as
+`accounts.<account>.browser_context.ref`.
 
 | Setting | Type | Purpose |
 |---|---|---|

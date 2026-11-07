@@ -214,24 +214,32 @@ def _surface_tools(
             return ()
     try:
         from polymerhus.analysis.graph_tools import build_surface_tools
-        from polymerhus.app.config import config
-        from polymerhus.app.llm.browser_tools import build_browser_tool
 
         surface = tuple(build_surface_tools(
             role_id, project_id=project_id, with_http=True,
             with_exec=(role_id == "mechanism_typist"),
         ))
+    except Exception:  # noqa: BLE001 - fail-open: no surface tools bound
+        logger.warning("proposer_turn: surface tools unbuildable; binding none",
+                       exc_info=True)
+        return ()
+    if role_id != "mechanism_typist":
+        return surface
+    try:
+        from polymerhus.app.config import config
+        from polymerhus.app.llm.browser_tools import build_browser_tool
+
         browser = build_browser_tool(
             project_id=project_id,
             role=role_id,
             instance_id=run_id or "analysis",
             mcp_url=config.KALI_BROWSER_MCP_URL,
         )
-        return surface + (browser,)
-    except Exception:  # noqa: BLE001 - fail-open: no surface tools bound
-        logger.warning("proposer_turn: surface tools unbuildable; binding none",
+    except Exception:  # noqa: BLE001 - the browser is one optional capability
+        logger.warning("proposer_turn: browser tool unbuildable; binding none",
                        exc_info=True)
-        return ()
+        return surface
+    return surface + (browser,)
 
 
 def _prose_tools(role_id: str, *, tools_bound: bool = False) -> tuple:

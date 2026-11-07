@@ -56,12 +56,19 @@ def command_signature(variant_ref: str, command: str) -> str:
 
 
 def browser_signature(variant_ref: str, arguments: dict) -> str:
-    """The O7/C10 dedup key for one browser command within a variant."""
+    """The O7/C10 dedup key for one browser command within a variant.
+
+    The account and the persist flag ride the key: the same command against
+    two auth contexts is two probes, and an explicit context write is never
+    folded into a plain end.
+    """
     blob = (
         f"{variant_ref}\x00browser\x00"
         f"{arguments.get('command') or ''}\x00"
+        f"{arguments.get('account') or ''}\x00"
         f"{arguments.get('url') or ''}\x00"
-        f"{arguments.get('input') or ''}"
+        f"{arguments.get('input') or ''}\x00"
+        f"{bool(arguments.get('persist_context'))}"
     ).encode("utf-8")
     return hashlib.sha256(blob).hexdigest()[:16]
 

@@ -217,6 +217,20 @@ def test_an_unconfigured_pool_is_a_fail_open_tool():
     assert result["error"]["retryable"] is False
 
 
+def test_a_malformed_pool_url_is_a_fail_open_tool():
+    tool = build_browser_tool(
+        project_id="proj-1",
+        role="hunter",
+        instance_id="hunt-1",
+        mcp_url="not-a-url",
+    )
+
+    result = json.loads(tool._run("start"))
+
+    assert result["success"] is False
+    assert result["error"]["code"] == "browser_unavailable"
+
+
 def test_a_typed_mcp_error_keeps_its_code_and_retryability():
     client = FakeClient(
         start_error=BrowserMcpError(
@@ -309,20 +323,10 @@ def test_an_invalid_stored_reference_degrades_to_the_deterministic_one(value):
     ) == "steel-auth-proj-1-alice"
 
 
-def test_strip_cdp_fields_filters_mappings_lists_and_json_strings():
-    payload = {
-        "success": True,
-        "cdp_url": "ws://172.20.0.5:3000/",
-        "cdp_host": "localhost:3000",
-        "nested": [{"cdp_url": "ws://x/", "keep": 1}],
-    }
 
-    from polymerhus.app.llm.browser_tools import strip_cdp_fields
+def test_a_foreign_stored_reference_never_overrides_the_deterministic_key():
+    store = _Store({"ref": "steel-auth-other-project-alice"})
 
-    stripped = strip_cdp_fields(payload)
-    assert "cdp_url" not in stripped
-    assert "cdp_host" not in stripped
-    assert stripped["nested"] == [{"keep": 1}]
-    text = strip_cdp_fields(json.dumps(payload))
-    assert "cdp_url" not in text
-    assert '"success": true' in text
+    assert resolve_browser_context_ref("proj-1", "alice", store=store) == (
+        "steel-auth-proj-1-alice"
+    )

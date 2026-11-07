@@ -124,7 +124,7 @@ The module-level `pod_graph` (`pod.py:770`) wires the three real collaborators; 
 `steel_crawl` is the only job with `configurator_mode="agent"` (`src/polymerhus/recon/control/jobs.py`).
 It replaces `configurator -> execute -> gate` with a single `crawl` node (`crawl_pod.py`) that runs `run_live_crawl` synchronously, then rejoins the shared `parse -> triager -> curator` shape.
 The live run assembles `CrawlJob` and `CrawlRun`: the session client mounts the stable browser key through the browser MCP, the auth oracle runs once, the passive CDP sidecar captures flows, the frontier and the Jev policy traverse, the HTTP-history client flushes normalized artifacts to the edge, and `finalize` writes the v2 manifest and ledger on every exit.
-The `crawl_agent.run_crawl` ReAct loop and the `steel_client` provider are not the crawl path; the pool is the only browser executor.
+The in-stack pool MCP is the only browser executor.
 See `docs/design/steel-crawl-spec.md` for the module contract and `docs/design/steel-crawl-pool-convergence.md` for the pool contract.
 
 ## 4. Interface agreements & data contracts
@@ -267,7 +267,6 @@ Role("job_orchestrator", "LLM_JOB_ORCHESTRATOR", "session",  "medium")
 Every `ChatOpenAI` instance is constructed with the Langfuse callbacks at build time (`providers.py:767`) so tracing survives being invoked inside a worker thread where LangGraph's callback contextvar does not propagate (`async_bridge.run_coro_blocking`).
 `chat_model_for(role)` (`roles.py:79`) is the one-line façade used by the triager call site (`pod.py`).
 The invoked recon roles today are `triager` (every job) and `job_orchestrator` (the run's pre-pipeline auth gateway, §3.1).
-`crawler` is reserved for the legacy ReAct compatibility path; the live crawl uses the deterministic engine and the Jev policy.
 `configurator` remains dormant - deterministic mode never builds an LLM for it, and it is reserved for the #238 rate-limit work.
 
 The triager's structured output is no longer built inline with a hardcoded method. It runs through the session/role seams (`stateful_turn` when a pod session is bound, else `invoke_role`), and the structured-output method is capability-negotiated rather than fixed:
@@ -567,7 +566,6 @@ src/polymerhus/recon/
   domain/parsers/        - 12 parser modules / 17 parse fns (§4.3)
   crawl/crawl_pod.py     - the agent-mode pod subgraph (§3.4)
   crawl/steel/           - the live engine: job, run, session, auth, frontier, policy, capture, manifest, ledger
-  crawl/prompts/steel-crawl.md - the legacy crawler role prompt
   config.py              - env-driven tunables
 src/polymerhus/project_management/
   api.py         - REST API (§8)
@@ -576,11 +574,10 @@ src/polymerhus/app/
   clients/pg.py, neo4j_client.py - Postgres/Neo4j clients
 skills/
   recon/triager/writing-observations/SKILL.md - authored, NOT wired (§4.1, §9.1)
-  recon/crawler/steel-crawl/SKILL.md  (realised by #222 - the live crawler prompt moved under skills/ and loads via the shared `skill_for` loader)
 ```
 
 Correction against `jobs-tools-skills-taxonomy.md` §3: the proposed `skills/` layout (`skills/recon/{role}/{skill-name}/SKILL.md`, with a `skill_for(role, job)` resolver in `agent/recon/skills.py`) is only partially realized.
-`skills/recon/triager/writing-observations/SKILL.md` exists on disk exactly as proposed, but no `agent/recon/skills.py` or `skill_for` function exists to load it (historical note: `skill_for` now lives at `src/polymerhus/recon/domain/skills.py` and the crawler prompt moved to `skills/recon/crawler/steel-crawl/SKILL.md`, #222; the resolver-signature part of this correction still stands).
+`skills/recon/triager/writing-observations/SKILL.md` exists on disk exactly as proposed, but no `agent/recon/skills.py` or `skill_for` function exists to load it (historical note: `skill_for` now lives at `src/polymerhus/recon/domain/skills.py`; the resolver-signature part of this correction still stands).
 The taxonomy's conceptual model (job/tool/skill as three axes, `JobSpec.skill` as a job-family label) is accurate to `jobs.py`'s live `skill=` field; only the file-loading mechanism is unbuilt.
 
 ---

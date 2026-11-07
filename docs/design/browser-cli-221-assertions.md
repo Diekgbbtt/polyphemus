@@ -1,3 +1,7 @@
+> 2026-11-07: the agent surface is one `browser` tool over the in-stack
+> pool MCP. The CLI and session-state assertions below are historical;
+> the legacy six-tool path is removed (see `docs/design/legacy-crawler-eol.md`).
+
 # Assertions - browser capability via Steel CLI (#221)
 
 **Source:** `docs/design/browser-cli-221-spec.md` (the just-exec design), per `docs/design/browser-cli-221-decisions.md` (D11-D19 binding; D1/D4/D5 retired, D2/D6/D10/D13 amended).
@@ -56,7 +60,7 @@ Status: deferred to the post-merge live run (this PR's tests are keyless; no clo
 
 E2 - steel_crawl non-regression.
 Grounds spec story 16.
-Input entering at the crawl seam: the unchanged crawl contract and the crawler role prompt.
+Input entering at the crawl seam: the deterministic crawl contract.
 Live edge: none (self-contained).
 Terminal: the crawl suites stay green and the diff shows zero hunks under `recon/crawl/`; the duplicate readers are already one role-prompt each (#222), so this stream touches no crawl content.
 Yields the existing `tests/recon/crawl/` suites.
@@ -114,11 +118,9 @@ The next live tier (E1) must re-verify or delete them rather than leave them ass
 - The `steel-browser` skill body contains no cloud, local, endpoint, API key, `--local`, profile, or `sessionContext` text (`tests/test_steel_skill_rule.py`, `tests/recon/test_steel_session_only_surfaces.py`).
 - The local wrapper injects `--local` for `browser` and `scrape`, passes through `--version`, and does not touch cloud mode (`tests/test_steel_wrapper.py`, `tests/test_steel_exec.py`, `tests/test_steel_exec_scaffold.py`).
 - After a local `browser start`, the wrapper sets one fixed user agent; two consecutive sessions report the same value (`tests/test_steel_wrapper.py`, `tests/eval/test_steel_deployment_contract.py`).
-- A local deployment with `STEEL_BROWSER_API_URL` set and no `STEEL_API_KEY` runs the crawl path (`tests/recon/crawl/test_steel_client.py`, `tests/test_steel_endpoint.py`, `tests/test_steel_exec_live.py`).
-- Session state round-trips cookies, localStorage, sessionStorage, and indexedDB and drops every other field (`tests/test_steel_session_state.py`, `tests/integration/test_steel_session_state_http.py`, `tests/e2e/test_steel_session_state_live.py`).
-- The state file is owner-only and the account stores only `steel.state` (`tests/test_steel_session_state.py`, `tests/app/test_auth_records.py`).
-- Crawl auth replicates cookies, required headers, header-located tokens, and storage-located tokens, then passes the application-state or authenticated-surface gate (`tests/recon/crawl/test_auth_replication_gate.py`, `tests/recon/crawl/test_steel_provider_cookies.py`).
-- A failed gate is `auth_replication_failed` with reduced coverage, not a silent authenticated crawl (`tests/recon/crawl/test_auth_replication_gate.py`, `tests/recon/crawl/test_crawl_pod.py`).
-- Existing `steel.profile` values are silently disregarded; no warning, alias, or migration branch (`tests/app/test_auth_records.py`, `tests/recon/test_auth_feed.py`).
+- The pool MCP mounts the account's decoupled auth context; cookies and localStorage restore, and all four captured fields are evidence (`kali/steel_pool`, `tests/kali/test_steel_pool_lease.py`).
+- The auth store records only `accounts.<account>.browser_context.ref` (`tests/app/test_auth_records.py`).
+- The crawl mounts the same context reference; an unverified context is not a silent authenticated crawl (`tests/recon/crawl/steel/test_live_run.py`, `tests/recon/crawl/test_crawl_auth.py`).
+- `steel.state` is removed; there is no warning, alias, or migration branch (`tests/app/test_auth_records.py`, `tests/recon/test_auth_feed.py`).
 - The CLI `start` has no state field, so the interactive surface reuses a live session; only the crawl provider restores and captures state (`tests/test_steel_skill_rule.py`, `tests/recon/test_authn_skill_writing.py`).
 

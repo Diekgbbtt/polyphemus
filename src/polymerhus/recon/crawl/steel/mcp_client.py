@@ -48,6 +48,7 @@ MCP_ERROR_TYPES: dict[str, type[SteelSessionError]] = {
     "pool_unavailable": BrowserUnavailable,
     "browser_unavailable": BrowserUnavailable,
     "restore_failed": RestoreFailed,
+    "session_still_live": SessionStillLive,
     "store_error": CommandFailed,
     "lease_error": CommandFailed,
     "capture_failed": CommandFailed,
@@ -99,70 +100,6 @@ def raise_for_mcp_error(error: object) -> None:
     raise mapped(message, payload=payload)
 
 
-class McpBrowserClient(AppMcpBrowserClient):
-    """The shared client with the crawl's typed error surface.
-
-    The transport and the MCP session are the shared implementation; this
-    subclass only maps the app-layer errors onto the crawl's session errors,
-    so the engine keeps its typed stop reasons.
-    """
-
-    def start(self, name, *, url=None, context_ref=None):
-        try:
-            start = super().start(
-                name, url=url, context_ref=context_ref
-            )
-        except AppBrowserUnavailable as exc:
-            raise BrowserUnavailable(str(exc)) from exc
-        except AppBrowserMcpError as exc:
-            raise_for_mcp_error(
-                {
-                    "code": exc.code,
-                    "message": str(exc),
-                    "retryable": exc.retryable,
-                    "recovery": exc.recovery,
-                }
-            )
-            raise  # pragma: no cover
-        if not start.cdp_url or not start.cdp_host:
-            raise McpBrowserError("browser_start carried no CDP endpoint")
-        return start
-
-    def exec(self, command):
-        try:
-            return super().exec(command)
-        except AppBrowserUnavailable as exc:
-            raise BrowserUnavailable(str(exc)) from exc
-        except AppBrowserMcpError as exc:
-            raise_for_mcp_error(
-                {
-                    "code": exc.code,
-                    "message": str(exc),
-                    "retryable": exc.retryable,
-                    "recovery": exc.recovery,
-                }
-            )
-            raise  # pragma: no cover
-
-    def end(self, *, persist_context=False):
-        try:
-            return super().end(persist_context=persist_context)
-        except AppBrowserUnavailable as exc:
-            raise BrowserUnavailable(str(exc)) from exc
-        except AppBrowserMcpError as exc:
-            if exc.code == "session_still_live":
-                raise SessionStillLive(str(exc)) from exc
-            raise_for_mcp_error(
-                {
-                    "code": exc.code,
-                    "message": str(exc),
-                    "retryable": exc.retryable,
-                    "recovery": exc.recovery,
-                }
-            )
-            raise  # pragma: no cover
-
-
 def _mapped_call(call):
     """Run one app-client call and map its typed failures to crawl errors."""
     try:
@@ -179,6 +116,37 @@ def _mapped_call(call):
             }
         )
         raise  # pragma: no cover - raise_for_mcp_error always raises
+
+
+class McpBrowserClient(AppMcpBrowserClient):
+    """The shared client with the crawl's typed error surface.
+
+    The transport and the MCP session are the shared implementation; this
+    adapter maps the app-layer errors onto the crawl's session errors and
+    keeps the CDP endpoint check the engine needs.
+    """
+
+    def start(self, name, *, url=None, context_ref=None):
+        start = _mapped_call(
+            lambda: super(McpBrowserClient, self).start(
+                name, url=url, context_ref=context_ref
+            )
+        )
+        if not start.cdp_url or not start.cdp_host:
+            raise McpBrowserError("browser_start carried no CDP endpoint")
+        return start
+
+    def exec(self, command):
+        return _mapped_call(
+            lambda: super(McpBrowserClient, self).exec(command)
+        )
+
+    def end(self, *, persist_context=False):
+        return _mapped_call(
+            lambda: super(McpBrowserClient, self).end(
+                persist_context=persist_context
+            )
+        )
 
 
 class McpBackend:
@@ -201,13 +169,9 @@ class McpBackend:
     def start(
         self, name: str, *, context_ref: str | None = None
     ) -> StartResult:
-        start = _mapped_call(
-            lambda: self._client.start(
-                name, context_ref=context_ref or self._context_ref
-            )
+        start = self._client.start(
+            name, context_ref=context_ref or self._context_ref
         )
-        if not start.cdp_url or not start.cdp_host:
-            raise McpBrowserError("browser_start carried no CDP endpoint")
         session = SteelSession.from_mcp(
             name=start.name,
             session_id=start.session_id,
@@ -231,12 +195,10 @@ class McpBackend:
         return [verb, *args]
 
     def exec(self, command: Sequence[str]) -> Mapping[str, Any]:
-        return _mapped_call(lambda: self._client.exec(command))
+        return self._client.exec(command)
 
     def end(self) -> Mapping[str, Any]:
-        report = dict(
-            _mapped_call(lambda: self._client.end(persist_context=False))
-        )
+        report = dict(self._client.end(persist_context=False))
         report["state_managed"] = True
         return report
 

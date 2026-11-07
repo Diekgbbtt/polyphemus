@@ -151,26 +151,21 @@ def test_webpage_profile_fail_open_and_steel_gate():
     res = webpage_profile({"base_url": "https://a"}, profile_fn=boom)
     assert res.classifications == [] and res.observations == [] and res.probes == []
 
-    # STEEL_API_KEY absent: the deeper probe is STILL emitted as a request, and the
+    # No browser pool: the deeper probe is STILL emitted as a request, and the
     # classifications still proceed from passive signals (graceful degrade)
     p = _proposal(rendering_fingerprint_only=True, rendering_confidence="High")
     res2 = webpage_profile({"base_url": "https://a"}, profile_fn=lambda s: p, steel_available=False)
     assert len(res2.classifications) == 2  # classification proceeds
-    assert len(res2.probes) == 1  # probe still emitted despite no Steel
+    assert len(res2.probes) == 1  # probe still emitted despite no browser pool
 
 
-def test_steel_available_accepts_a_key_or_a_keyless_endpoint(monkeypatch):
-    """#395 D359-12: a keyless deployment configured by
-    `STEEL_BROWSER_API_URL` alone must still report the deep probe as live."""
-    monkeypatch.delenv("STEEL_API_KEY", raising=False)
-    monkeypatch.delenv("STEEL_BROWSER_API_URL", raising=False)
+def test_steel_available_reads_the_browser_pool(monkeypatch):
+    """The deeper probe caps at the L1 boundary unless the browser pool is
+    configured; `KALI_BROWSER_MCP_URL` is the runtime."""
+    monkeypatch.delenv("KALI_BROWSER_MCP_URL", raising=False)
     assert anatomy._steel_available(None) is False
 
-    monkeypatch.setenv("STEEL_BROWSER_API_URL", "http://steel:3000/v1")
-    assert anatomy._steel_available(None) is True
-
-    monkeypatch.delenv("STEEL_BROWSER_API_URL")
-    monkeypatch.setenv("STEEL_API_KEY", "key")
+    monkeypatch.setenv("KALI_BROWSER_MCP_URL", "http://kali:8003/mcp")
     assert anatomy._steel_available(None) is True
     assert anatomy._steel_available(False) is False  # explicit override wins
 

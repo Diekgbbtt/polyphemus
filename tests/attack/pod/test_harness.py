@@ -269,20 +269,28 @@ def test_harness_dedupes_a_repeated_browser_command():
     @tool
     def browser(command: str, input: str | None = None) -> str:
         """One browser command."""
-        signature = browser_signature("v0", {"command": command, "input": input})
-        log.mark_executed(signature)
+        if command == "exec":
+            log.mark_executed(
+                browser_signature("v0", {"command": command, "input": input})
+            )
         calls.append((command, input))
         return "ok"
 
     _run_loop([
         AIMessage(content="", tool_calls=[
-            {"name": "browser", "args": {"command": "start", "input": None}, "id": "b1"},
+            {"name": "browser", "args": {"command": "exec", "input": "snapshot -i"}, "id": "b1"},
         ]),
         AIMessage(content="", tool_calls=[
-            {"name": "browser", "args": {"command": "start", "input": None}, "id": "b2"},
+            {"name": "browser", "args": {"command": "exec", "input": "snapshot -i"}, "id": "b2"},
+        ]),
+        AIMessage(content="", tool_calls=[
+            {"name": "browser", "args": {"command": "start", "input": None}, "id": "b3"},
+        ]),
+        AIMessage(content="", tool_calls=[
+            {"name": "browser", "args": {"command": "start", "input": None}, "id": "b4"},
         ]),
         AIMessage(content="concluded"),
     ], [browser], [harness])
 
-    assert calls == [("start", None)]
+    assert calls == [("exec", "snapshot -i"), ("start", None), ("start", None)]
     assert len(log.executed) == 1

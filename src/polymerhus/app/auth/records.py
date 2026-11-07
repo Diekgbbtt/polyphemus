@@ -295,7 +295,7 @@ def validate_overview(record: object) -> dict:
 
 
 def validate_account(record: object) -> dict:
-    """Validate one named account bundle (credentials, tokens, steel
+    """Validate one named account bundle (credentials, tokens, browser_context
     reference, request snapshot, the loop-asserted validity fact, the
     server-stamped recency fact): value in, validated value out."""
     if not isinstance(record, dict):

@@ -544,7 +544,7 @@ def test_runner_turn_binds_the_one_browser_tool(tmp_path):
     assert "browser" in seen
 
 
-def test_triager_turn_binds_the_read_only_browser_tool(tmp_path, monkeypatch):
+def test_triager_turn_binds_the_browser_tool(tmp_path, monkeypatch):
     log = ExperimentLog()
     store = PodMemoryStore(tmp_path)
     store.write_experiment_log(SPEC_ID, 0, {"order": 0, "variant_ref": "v0",
