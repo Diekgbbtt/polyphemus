@@ -2,7 +2,9 @@
 
 > RETIRED: the cloud/CLI bundle predates the pool convergence. The live gate is
 > `tests/e2e/test_steel_crawl_pool_e2e.py` (phase F); the pool contract is
-> `docs/design/steel-crawl-pool-convergence.md`.
+> `docs/design/steel-crawl-pool-convergence.md`. Body references to
+> `tests/e2e/test_steel_crawl_e2e.py` are historical and do not name the live
+> gate.
 
 **Status:** final assessment, 2026-11-03.
 **Scope:** the 64 functional requirements A1-O8 in `docs/design/steel-crawl-spec.md` section 2, the technical invariants, and the HTTP-history database change.

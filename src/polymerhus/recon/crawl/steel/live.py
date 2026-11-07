@@ -3,7 +3,7 @@
 Spec: `docs/design/steel-crawl-spec.md` sections 2, 4, 9, 10.4, 11, and 12.
 
 This module is the production wiring between the pure crawl engine and the
-runtime. It owns four adapters:
+runtime. It owns three adapters:
 
 - `LiveCdpTransport` reads the browser-level CDP websocket the Steel API
   returns, attaches to the session's page target, and satisfies the sidecar's

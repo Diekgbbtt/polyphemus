@@ -360,6 +360,24 @@ def test_a_failed_cli_start_quarantines_the_worker(tmp_path):
         harness.manager.start("mcp-2", "other")
 
 
+def test_a_cli_launch_failure_does_not_quarantine_the_worker(tmp_path):
+    harness = Harness(tmp_path, pool_wait_s=0.0)
+
+    def fail_launch() -> None:
+        raise CliError(
+            "the Steel CLI could not be started", session_may_exist=False
+        )
+
+    harness.cli_overrides["c1"] = {"start_hook": fail_launch}
+
+    with pytest.raises(CliError):
+        harness.manager.start("mcp-1", "hunt")
+
+    harness.cli_overrides.pop("c1", None)
+    view = harness.manager.start("mcp-2", "other")
+    assert view.name == "other"
+
+
 def test_pool_exhausted_after_the_bounded_wait(tmp_path):
     harness = Harness(
         tmp_path,

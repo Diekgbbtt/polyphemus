@@ -292,16 +292,15 @@ def test_curator_threads_registrable_scope_domain_to_curate_fn():
     assert curate_fn.calls[0]["scope_domain"] == "daytona.io"
 
 
-def test_crawl_node_forwards_state_and_browser_auth():
-    """The resolved state path and browser material ride into run_crawl_fn -
-    no interactive path, no prompt."""
+def test_crawl_node_forwards_browser_auth():
+    """The gate metadata rides into run_crawl_fn - no interactive path, no
+    prompt, and no retired state-file plumbing."""
     from polymerhus.recon.crawl.crawl_pod import build_crawl_pod
     from polymerhus.recon.domain.types import JobSpec
 
     seen = {}
 
-    def run_crawl_fn(target, *, scope, steel_state=None, browser_auth=None):
-        seen["steel_state"] = steel_state
+    def run_crawl_fn(target, *, scope, browser_auth=None):
         seen["browser_auth"] = browser_auth
         return dict(CANNED_MANIFEST)
 
@@ -314,13 +313,12 @@ def test_crawl_node_forwards_state_and_browser_auth():
     job = JobSpec(tool="steel_crawl", skill="agentic_crawl", command_template="",
                   produces=["BaseURL"], consumes="BaseURL", use_auth=True,
                   configurator_mode="agent")
-    material = {"cookies": [{"name": "sid", "value": "S"}],
-                "headers": {"X-Api-Key": "K"}}
+    material = {"auth_probe": "https://app.test/api/me",
+                "login_url": "https://app.test/login"}
     state = {"job": job, "input_asset": {"url": "https://app.example.com"},
-             "extra": {"steel_state": "/state/alice.json",
-                       "browser_auth": material},
+             "extra": {"browser_auth": material},
              "project_id": "p1"}
     result = graph.invoke(state)
-    assert seen["steel_state"] == "/state/alice.json"
     assert seen["browser_auth"] == material
+    assert "steel_state" not in seen
     assert result["export"].verdict == "success"

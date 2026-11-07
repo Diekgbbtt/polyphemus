@@ -75,8 +75,8 @@ def base_pod_state(job, extra=None):
 def test_auth_job_with_browser_material_forwards_it_and_crawls_plain():
     run_calls = []
 
-    def run_crawl_fn(target, *, scope, steel_state=None, browser_auth=None):
-        run_calls.append((target, scope, steel_state, browser_auth))
+    def run_crawl_fn(target, *, scope, browser_auth=None):
+        run_calls.append((target, scope, browser_auth))
         return dict(CANNED_MANIFEST)
 
     pod = crawl_pod.build_crawl_pod(
@@ -86,17 +86,17 @@ def test_auth_job_with_browser_material_forwards_it_and_crawls_plain():
         curate_fn=make_capturing_curate_fn(),
     )
 
-    browser_auth = {"cookies": COOKIES,
-                    "headers": {"X-Api-Key": "K"}}
+    browser_auth = {"auth_probe": "https://app.test/api/me",
+                    "login_url": "https://app.test/login"}
     result = pod.invoke(base_pod_state(
         AUTH_JOB,
-        extra={"steel_state": "/state/alice.json", "browser_auth": browser_auth},
+        extra={"browser_auth": browser_auth},
     ))
     export = result["export"]
 
     # scope folds to the registrable domain at the crawl-node resolution point
     assert run_calls == [(
-        "https://app.example.com", ["example.com"], "/state/alice.json", browser_auth)]
+        "https://app.example.com", ["example.com"], browser_auth)]
     assert export.verdict == "success"
     assert not (export.stats or {}).get("viewer_url")  # no operator prompt, ever
 
@@ -104,8 +104,8 @@ def test_auth_job_with_browser_material_forwards_it_and_crawls_plain():
 def test_non_auth_crawl_runs_anonymous():
     run_calls = []
 
-    def run_crawl_fn(target, *, scope, steel_state=None, browser_auth=None):
-        run_calls.append((steel_state, browser_auth))
+    def run_crawl_fn(target, *, scope, browser_auth=None):
+        run_calls.append((browser_auth,))
         return dict(CANNED_MANIFEST)
 
     pod = crawl_pod.build_crawl_pod(
@@ -117,7 +117,7 @@ def test_non_auth_crawl_runs_anonymous():
 
     result = pod.invoke(base_pod_state(NON_AUTH_JOB, extra={}))
     assert result["export"].verdict == "success"
-    assert run_calls == [(None, None)]
+    assert run_calls == [(None,)]
 
 
 def test_auth_job_without_material_runs_anonymous():
@@ -125,8 +125,8 @@ def test_auth_job_without_material_runs_anonymous():
     # so the crawl runs anonymous (fail-open) rather than prompting.
     run_calls = []
 
-    def run_crawl_fn(target, *, scope, steel_state=None, browser_auth=None):
-        run_calls.append((steel_state, browser_auth))
+    def run_crawl_fn(target, *, scope, browser_auth=None):
+        run_calls.append((browser_auth,))
         return dict(CANNED_MANIFEST)
 
     pod = crawl_pod.build_crawl_pod(
@@ -138,7 +138,7 @@ def test_auth_job_without_material_runs_anonymous():
 
     result = pod.invoke(base_pod_state(AUTH_JOB, extra={}))
     assert result["export"].verdict == "success"
-    assert run_calls == [(None, None)]
+    assert run_calls == [(None,)]
 
 
 def test_crawl_node_best_effort_on_run_failure():

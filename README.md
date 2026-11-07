@@ -8,6 +8,10 @@ All images build in-repo from Dockerfiles (`docker images` to check):
 `polymerhus-agent:latest` (`Dockerfile`), `redamon-kali-sandbox:latest`
 (`Dockerfile.kali`, slim recon-tools image), `polyphemus-ingestion:latest`
 (`src/polymerhus/Dockerfile.ingestion`). The rest are pulled public images.
+The browser pool needs `steel-browser-api:v0.5.5-beta`, built once from the
+upstream tag for the host architecture; see
+`eval/deploy/steel/POOL-RUNBOOK.md` section 1. It is not built in-repo and not
+pulled from a registry.
 
 ## Run
     cp .env.example .env
@@ -18,7 +22,8 @@ All images build in-repo from Dockerfiles (`docker images` to check):
     # thin (no browser pool):
     docker compose -f docker-compose.yml -f docker-compose.thin.yml up -d
 
-Services: agent `:8080/health` · kali fastmcp `:8000/mcp` · browser MCP `http://kali:8003/mcp` · neo4j `:7474`/`:7687` (neo4j/polymerhus) · postgres `:5432`.
+Services (host-published): agent `:8080/health` · kali fastmcp `:8000/mcp` · neo4j `:7474`/`:7687` (neo4j/polymerhus) · postgres `:5432`.
+Compose-network only: browser MCP `http://kali:8003/mcp` (the agent reaches it; it is not published on the host).
 
 ## Verify
 
@@ -131,15 +136,15 @@ Everything below is optional except `target_domain`, which a run requires (a tar
 | Setting | Type | Purpose |
 |---|---|---|
 | `target_domain` | string | The recon target. `example.com` / `app.example.com` = exact host (discovery suppressed); `*.example.com` = wildcard/zone (subdomain discovery fans out). See "Exact vs wildcard seed hosts" below. **Required to launch.** |
-| `auth_context` | object | Authentication material, threaded into every `use_auth` job (httpx, katana, ffuf, steel_crawl, arjun). **Header-agnostic:** besides the reserved structural keys below (`cookies`, `scope`, `credentials`), any other key is treated as an arbitrary HTTP request header. All sub-fields optional; omit `auth_context` entirely for an anonymous run. |
-| `auth_context.cookies` | list of `{name, value}` | Session cookies. Joined into the `Cookie: k=v; k2=v2` header for the **request-based** tools, and injected into the Steel browser context for a **non-interactive** authenticated agentic crawl. Each entry may also carry optional `domain`/`path`. This is the one source of the `Cookie` header; a literal `Cookie` header key is rejected. |
-| `auth_context.<Header-Name>` | string | Any other key is an **arbitrary request header** sent verbatim by the request-based tools, e.g. `"Authorization": "Bearer <token>"` or `"X-Api-Key": "<key>"`. Header names must be HTTP tokens (letters/digits/hyphen); values are non-empty strings with no CR/LF (header-injection guard). Applies to the request-based tools only (not the Steel browser context yet). |
+| `auth_context` | object | Request material for every `use_auth` request job (httpx, katana, ffuf, arjun). The Steel crawl does not consume it: the crawl mounts the stable browser key and receives only `auth_probe` and `login_url` through `browser_auth`. **Header-agnostic:** besides the reserved structural keys below (`cookies`, `scope`, `credentials`), any other key is an arbitrary HTTP request header. All sub-fields optional; omit `auth_context` entirely for an anonymous run. |
+| `auth_context.cookies` | list of `{name, value}` | Session cookies. Joined into the `Cookie: k=v; k2=v2` header for the **request-based** tools. The Steel crawl's cookies live in the pool store under its `steel.state` key. Each entry may also carry optional `domain`/`path`. This is the one source of the `Cookie` header; a literal `Cookie` header key is rejected. |
+| `auth_context.<Header-Name>` | string | Any other key is an **arbitrary request header** sent verbatim by the request-based tools, e.g. `"Authorization": "Bearer <token>"` or `"X-Api-Key": "<key>"`. Header names must be HTTP tokens (letters/digits/hyphen); values are non-empty strings with no CR/LF (header-injection guard). Applies to the request-based tools only. |
 | `auth_context.scope` | string | Optional auth scope hint. Reserved structural key, not sent as a header. |
-| `auth_context.credentials` | object | **Autonomous agentic-crawl login (D23).** The Steel crawl agent logs itself in with these before crawling - the credentials channel drives the *agentic* crawl, while `cookies` drive the *request-based* tools. |
-| `auth_context.credentials.username` | string | Login username/email. **Required** inside `credentials`. |
-| `auth_context.credentials.password` | string | Login password. **Required** inside `credentials`. Sent to the target you authorize; may appear in the crawl LLM trace (accepted under the pen-test threat model). |
-| `auth_context.credentials.login_url` | string | URL of the sign-in page to navigate to. **Required** inside `credentials`. May be a different origin than the target (e.g. `login.example.com`); login succeeds only if it yields an in-scope target session. |
-| `auth_context.credentials.domain` | string | Optional. Restricts which target host the login is attempted against (else derived from `login_url`), so one app's credentials are not submitted to every host in a run. |
+| `auth_context.credentials` | object | **Legacy login metadata.** The auth gateway signs in or mints before collection; the crawl never signs in. Only `login_url` reaches the crawl, through `browser_auth`. |
+| `auth_context.credentials.username` | string | Login username/email. The gateway uses the account's stored credentials; this legacy field is not the crawl's sign-in path. |
+| `auth_context.credentials.password` | string | Login password. The gateway uses the account's stored credentials; the crawl never reads it. |
+| `auth_context.credentials.login_url` | string | Sign-in page URL. The crawl receives it as `browser_auth.login_url` for the legacy surface gate. |
+| `auth_context.credentials.domain` | string | Optional legacy scope hint. |
 | `auth_context.credentials.username_selector` | string | Optional CSS selector override for the username field (else auto-detected). |
 | `auth_context.credentials.password_selector` | string | Optional CSS selector override for the password field (else `input[type=password]`). |
 | `auth_context.credentials.submit_selector` | string | Optional CSS selector override for the submit control (else the form's submit). |
@@ -248,7 +253,7 @@ The pipeline schedules 17 tools (`src/polymerhus/recon/control/jobs.py::JOBS`). 
 | `katana` | 4 | active · auth | crawler; mints the `.js`/`.mjs` Endpoints `jsluice` consumes |
 | `ffuf` | 4 | active · auth | content discovery; rate-throttled under WAF steering |
 | `paramspider` | 4 | active | passive URL/param harvest |
-| `steel_crawl` | 4 | active · auth | agentic browser crawl (cookies + autonomous credentialed login) |
+| `steel_crawl` | 4 | active · auth | deterministic browser crawl through the in-stack Steel pool (stable session + JEV) |
 | `jsluice` | 5 | active | gated to `.js`/`.mjs` Endpoints; batched; JS URLs + secrets + sourcemaps |
 | `httpx_reprofile` | 6 | active · auth | re-probes every BaseURL (incl. crawler/JS-minted) to assign `profile`; reuses the `httpx` parser |
 | `kiterunner` | 7 | active · auth | *api enumeration*; gated to `profile == restapi` |

@@ -71,11 +71,15 @@ class CliError(RuntimeError):
         returncode: int | None = None,
         payload: dict | None = None,
         stderr_tail: str = "",
+        session_may_exist: bool = True,
     ) -> None:
         super().__init__(message)
         self.returncode = returncode
         self.payload = payload
         self.stderr_tail = stderr_tail
+        # A start that could not even launch the CLI cannot have created a
+        # session; a timeout or an ambiguous envelope may have.
+        self.session_may_exist = session_may_exist
 
 
 class RestoreError(RuntimeError):
@@ -336,7 +340,10 @@ class SteelCli:
         except subprocess.TimeoutExpired as exc:
             raise CliError("the Steel CLI timed out") from exc
         except OSError as exc:
-            raise CliError("the Steel CLI could not be started") from exc
+            raise CliError(
+                "the Steel CLI could not be started",
+                session_may_exist=False,
+            ) from exc
         stdout = completed.stdout or ""
         stderr = completed.stderr or ""
         try:

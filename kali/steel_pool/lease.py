@@ -16,9 +16,11 @@ runs the cheap CLI ``get url`` command, and updates ``last_heartbeat``.
 The TTL is authoritative: when neither a browsing command nor a heartbeat has
 succeeded for the TTL, the same capture-stop-release path runs.
 
-A failed stop and a failed API release quarantine the worker, so an orphan
-session is never leased again in the same run. A failed heartbeat does not
-release the lease; the TTL is the backstop.
+A failed stop, a failed API release, or a start failure that may have created
+a session quarantines the worker, so an orphan session is never leased again
+in the same run. A start that could not launch the CLI at all is not a
+quarantine (no session can exist). A failed heartbeat does not release the
+lease; the TTL is the backstop.
 
 The module is stdlib-only and performs no I/O at import.
 """
@@ -444,10 +446,18 @@ class LeaseManager:
                 warnings=len(lease.restore_warnings),
             )
             return lease.view()
-        except BaseException:
+        except BaseException as exc:
             if worker is not None:
                 self._abandon_start(
-                    worker, proxy, cli, cli_session, lease, start_attempted=True
+                    worker,
+                    proxy,
+                    cli,
+                    cli_session,
+                    lease,
+                    start_attempted=True,
+                    start_may_have_session=bool(
+                        getattr(exc, "session_may_exist", True)
+                    ),
                 )
             elif proxy is not None:
                 self._stop_proxy(proxy)
@@ -627,18 +637,20 @@ class LeaseManager:
         lease: Lease | None,
         *,
         start_attempted: bool,
+        start_may_have_session: bool,
     ) -> None:
         """Compensate a failed start and free or quarantine the worker.
 
         A start that failed before returning a session id may still have
         created one on the worker. Without a session id there is no safe stop
         target, so the worker is quarantined instead of being handed to the
-        next lease.
+        next lease. A failure that provably did not launch the CLI frees the
+        worker.
         """
         healthy = True
         if cli is not None and cli_session is not None:
             healthy = self._stop_and_release(cli, cli_session)
-        elif start_attempted and cli is not None:
+        elif start_attempted and cli is not None and start_may_have_session:
             healthy = False
         if proxy is not None:
             self._stop_proxy(proxy)

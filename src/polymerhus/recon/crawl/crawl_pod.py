@@ -117,7 +117,6 @@ def live_run_crawl_fn(
     target: str,
     *,
     scope: list[str],
-    steel_state=None,
     browser_auth=None,
     extra=None,
 ):
@@ -129,9 +128,6 @@ def live_run_crawl_fn(
     factory, the Jev policy, and the bounded DFS, and returns the v2 manifest
     dict the pod's parser consumes. Every runtime failure is raised to the
     pod's `fail` node, which records reduced coverage.
-
-    `steel_state` is accepted for the contract tier but is not used by this
-    engine: the pool store is the only browser-state store.
     """
     import os  # noqa: PLC0415
 
@@ -216,8 +212,8 @@ def _resolve_crawl_scope(extra: dict, target: str) -> list[str]:
 
 def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn):
     """Build the compiled crawl-pod subgraph, injecting the side-effecting
-    collaborators: run_crawl_fn(target, scope=scope, steel_state=...,
-    browser_auth=..., extra=...) -> manifest dict, parse_fn(stdout) ->
+    collaborators: run_crawl_fn(target, scope=scope, browser_auth=...,
+    extra=...) -> manifest dict, parse_fn(stdout) ->
     list[AssetDelta], triage_fn(exec_result, assets, job) ->
     list[Observation] (called with a synthetic exec_result carrying the
     manifest JSON as stdout, mirroring pod.py's triager signature),
@@ -251,11 +247,9 @@ def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn):
         # crawl frontier and the retained BaseURLs share one definition.
         scope = _resolve_crawl_scope(extra, target)
 
-        steel_state = extra.get("steel_state") or None
         browser_auth = extra.get("browser_auth") or None
         kwargs = {
             "scope": scope,
-            "steel_state": steel_state,
             "browser_auth": browser_auth,
         }
         if accepts_extra:

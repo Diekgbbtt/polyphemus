@@ -3,7 +3,9 @@
 > RETIRED: the cloud/CLI bundle predates the pool convergence. The live gate is
 > `tests/e2e/test_steel_crawl_pool_e2e.py` (phase F). The 300-action cap and
 > 900-second budget below are historical; the production contract is 600
-> seconds with no action cap.
+> seconds with no action cap. Body references to
+> `tests/e2e/test_steel_crawl_e2e.py` are historical and do not name the live
+> gate.
 
 **Source:** `docs/design/steel-crawl-spec.md` (sections 2, 4, 9, 10.4, 11, and 14); ticket stream SC-00..SC-21.
 **Seams under assertion:** the Steel CLI envelope; the authenticated-context oracle; the compact snapshot and element map; the policy port; the DFS frontier; the command mapper; the form ledger/executor; the passive CDP sidecar; the flow normalizer and HTTP-history edge; the v2 manifest; the run ledger/finalize; the auth context validator; the `steel_crawl` job inside the real recon pipeline.

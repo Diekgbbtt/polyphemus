@@ -232,10 +232,11 @@ def project_steel_state(
 ) -> str | None:
     """The account's stable pool key, or None.
 
-    `accounts.<account>.steel.state` is authoritative when present. A missing
-    reference falls back to the deterministic key for the project and account,
-    so a gateway turn that could not write the key still mounts the same
-    durable browser state. The retired `steel.profile` key is ignored (Q5).
+    When the project and account are known, the deterministic key is
+    authoritative: a legacy file reference or another project's key is never
+    mounted. Without that context, a stored `steel-...` reference is returned
+    only when it is a valid pool name. The retired `steel.profile` key is
+    ignored (Q5).
     """
     if not isinstance(account, dict):
         return None

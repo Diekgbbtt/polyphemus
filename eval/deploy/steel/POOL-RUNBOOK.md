@@ -130,7 +130,9 @@ Drain an active lease before scaling down.
 The eval orchestrator resolves the replicas with:
 
 ```bash
-docker compose -p ph-<short> ps -q steel-worker
+docker compose -p ph-<short> \
+  -f docker-compose.yml -f docker-compose.pool.yml \
+  ps -q steel-worker
 ```
 
 It writes the synthetic host into every replica's `/etc/hosts`.

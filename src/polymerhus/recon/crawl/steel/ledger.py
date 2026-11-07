@@ -262,7 +262,7 @@ def finalize(
         errors.append(flush_error)
         ledger.append_error("http_history_flush_failed", flush_error, stage="flush")
         manifest = _append_error(
-            manifest, "http_history_flush_failed", flush_error
+            manifest, "http_history_flush_failed", flush_error, stage="flush"
         )
         partial = True
     elif cursor is not None:
@@ -280,7 +280,9 @@ def finalize(
     if ingest_error is not None:
         errors.append(ingest_error)
         ledger.append_error("graph_ingest_failed", ingest_error, stage="ingest")
-        manifest = _append_error(manifest, "graph_ingest_failed", ingest_error)
+        manifest = _append_error(
+            manifest, "graph_ingest_failed", ingest_error, stage="ingest"
+        )
         manifest = _mark_partial(manifest)
         partial = True
 
@@ -301,12 +303,14 @@ def _mark_partial(manifest: Manifest) -> Manifest:
     )
 
 
-def _append_error(manifest: Manifest, code: str, message: str) -> Manifest:
+def _append_error(
+    manifest: Manifest, code: str, message: str, *, stage: str
+) -> Manifest:
     return manifest.model_copy(
         update={
             "errors": [
                 *manifest.errors,
-                ErrorRecord(code=code, message=message, stage="finalize"),
+                ErrorRecord(code=code, message=message, stage=stage),
             ]
         }
     )
