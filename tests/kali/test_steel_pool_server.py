@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from kali.steel_pool.cli import CliError, RestoreError
+from kali.steel_pool.cli import CliError, RestoreError, RestoreReport
 from kali.steel_pool.lease import (
     EndReport,
     LeaseInUse,
@@ -44,6 +44,9 @@ class FakeManager:
             steel_session_id="steel-1",
             mcp_session_id="mcp-1",
             warnings=("a cookie attribute is not restorable",),
+            restored=RestoreReport(2, 1, 3, ()),
+            cdp_url="ws://172.20.0.5:3000/",
+            cdp_host="localhost:3000",
         )
         self.payload: dict = {"success": True, "data": {"title": "app"}}
         self.end_report = EndReport(
@@ -69,6 +72,9 @@ class FakeManager:
             steel_session_id=self.view.steel_session_id,
             mcp_session_id=mcp_session_id,
             warnings=self.view.warnings,
+            restored=self.view.restored,
+            cdp_url=self.view.cdp_url,
+            cdp_host=self.view.cdp_host,
         )
 
     def exec(self, mcp_session_id: str, args):
@@ -199,7 +205,7 @@ class TestCommandGrammar:
 
 
 class TestBrowserService:
-    def test_start_returns_the_name_and_session_id(self):
+    def test_start_returns_the_name_session_id_restore_and_cdp_endpoint(self):
         service, _ = _service()
 
         result = service.start("mcp-1", "hunt", "https://app.test")
@@ -208,9 +214,17 @@ class TestBrowserService:
             "success": True,
             "session": {"name": "hunt", "session_id": "steel-1"},
             "warnings": ["a cookie attribute is not restorable"],
+            "restored": {
+                "cookies": 2,
+                "origins": 1,
+                "storage_keys": 3,
+                "warnings": [],
+            },
+            "cdp_url": "ws://172.20.0.5:3000/",
+            "cdp_host": "localhost:3000",
         }
 
-    def test_start_never_carries_the_worker(self):
+    def test_start_hides_the_http_worker_origin(self):
         manager = FakeManager()
         service, _ = _service(manager)
 
@@ -218,9 +232,10 @@ class TestBrowserService:
 
         body = json.dumps(result)
         assert "http://" not in body
-        assert "localhost" not in body
         assert "container" not in body
         assert "worker" not in body.lower()
+        assert result["cdp_url"] == "ws://172.20.0.5:3000/"
+        assert result["cdp_host"] == "localhost:3000"
 
     def test_pool_exhausted_is_retryable(self):
         manager = FakeManager()
@@ -352,8 +367,63 @@ class TestBrowserService:
 
         result = service.end("mcp-1")
 
-        assert result["success"] is True
+        assert result["success"] is False
         assert result["ended"] is False
+        assert result["error"]["code"] == "browser_error"
+
+    def test_end_is_successful_when_the_session_is_stopped(self):
+        manager = FakeManager()
+        manager.end_report = EndReport(
+            ended=True,
+            reason="explicit",
+            captured=False,
+            saved=False,
+            stopped=True,
+        )
+        service, _ = _service(manager)
+
+        result = service.end("mcp-1")
+
+        assert result["success"] is True
+        assert result["stopped"] is True
+        assert result["saved"] is False
+
+    def test_end_is_successful_when_the_api_release_succeeded(self):
+        manager = FakeManager()
+        manager.end_report = EndReport(
+            ended=True,
+            reason="explicit",
+            captured=False,
+            saved=False,
+            stopped=False,
+            released=True,
+        )
+        service, _ = _service(manager)
+
+        result = service.end("mcp-1")
+
+        assert result["success"] is True
+        assert result["released"] is True
+
+    def test_end_fails_when_neither_stop_nor_release_succeeded(self):
+        manager = FakeManager()
+        manager.end_report = EndReport(
+            ended=True,
+            reason="explicit",
+            captured=False,
+            saved=False,
+            stopped=False,
+            released=None,
+            warnings=("stop failed",),
+        )
+        service, _ = _service(manager)
+
+        result = service.end("mcp-1")
+
+        assert result["success"] is False
+        assert result["stopped"] is False
+        assert result["released"] is None
+        assert result["error"]["retryable"] is False
 
     def test_close_session_never_raises(self):
         manager = FakeManager()
@@ -651,8 +721,7 @@ class TestConfig:
         assert config.port == 8003
         assert config.mcp_path == "/mcp"
         assert config.pool_label == "polymerhus.steel-pool=true"
-        assert config.pool_size == 4
-        assert config.worker_host == "localhost"
+        assert config.public_port_base == 3100
         assert config.pool_wait_s == pytest.approx(30.0)
         assert config.heartbeat_s == pytest.approx(120.0)
         assert config.lease_ttl_s == pytest.approx(600.0)
@@ -664,9 +733,6 @@ class TestConfig:
         env.update(
             {
                 "STEEL_MCP_PORT": "9003",
-                "STEEL_POOL_LABEL": "pool=one",
-                "STEEL_POOL_SIZE": "2",
-                "STEEL_WORKER_HOST": "host.docker.internal",
                 "STEEL_POOL_WAIT_S": "5",
                 "STEEL_POOL_HEALTH_S": "3",
                 "STEEL_HEARTBEAT_S": "60",
@@ -680,9 +746,6 @@ class TestConfig:
         config = BrowserServerConfig.from_env(env)
 
         assert config.port == 9003
-        assert config.pool_label == "pool=one"
-        assert config.pool_size == 2
-        assert config.worker_host == "host.docker.internal"
         assert config.pool_wait_s == pytest.approx(5.0)
         assert config.health_timeout_s == pytest.approx(3.0)
         assert config.heartbeat_s == pytest.approx(60.0)
@@ -690,6 +753,23 @@ class TestConfig:
         assert config.cli_timeout_s == pytest.approx(120.0)
         assert config.worker_api_suffix == ""
         assert config.mcp_path == "/browser"
+
+    def test_hardcoded_pool_values_ignore_the_environment(self, tmp_path):
+        env = self._env(tmp_path)
+        env.update(
+            {
+                "STEEL_POOL_LABEL": "pool=wrong",
+                "STEEL_WORKER_HOST": "host.docker.internal",
+                "STEEL_POOL_SIZE": "99",
+            }
+        )
+
+        config = BrowserServerConfig.from_env(env)
+
+        assert config.pool_label == "polymerhus.steel-pool=true"
+        assert config.public_port_base == 3100
+        assert not hasattr(config, "pool_size")
+        assert not hasattr(config, "worker_host")
 
     def test_missing_socket_fails_loud(self, tmp_path):
         env = self._env(tmp_path)
@@ -729,9 +809,9 @@ class TestConfig:
 
     def test_invalid_numbers_fail_loud(self, tmp_path):
         env = self._env(tmp_path)
-        env["STEEL_POOL_SIZE"] = "zero"
+        env["STEEL_POOL_WAIT_S"] = "zero"
 
-        with pytest.raises(ValueError, match="STEEL_POOL_SIZE"):
+        with pytest.raises(ValueError, match="STEEL_POOL_WAIT_S"):
             BrowserServerConfig.from_env(env)
 
     def test_invalid_suffix_fails_loud(self, tmp_path):
@@ -739,13 +819,6 @@ class TestConfig:
         env["STEEL_WORKER_API_SUFFIX"] = "/v2"
 
         with pytest.raises(ValueError, match="suffix"):
-            BrowserServerConfig.from_env(env)
-
-    def test_invalid_worker_host_fails_loud(self, tmp_path):
-        env = self._env(tmp_path)
-        env["STEEL_WORKER_HOST"] = "http://worker"
-
-        with pytest.raises(ValueError, match="worker host"):
             BrowserServerConfig.from_env(env)
 
     def test_build_service_wires_the_manager(self, tmp_path):
@@ -769,15 +842,12 @@ class TestConfig:
             [
                 {
                     "Id": "a",
-                    "Names": ["/steel-1"],
-                    "Ports": [
-                        {
-                            "IP": "127.0.0.1",
-                            "PrivatePort": 3000,
-                            "PublicPort": 59999,
-                            "Type": "tcp",
+                    "Names": ["/ph-test-steel-worker-1"],
+                    "NetworkSettings": {
+                        "Networks": {
+                            "polymerhus-net": {"IPAddress": "172.20.0.5"}
                         }
-                    ],
+                    },
                 }
             ]
         )

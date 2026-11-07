@@ -132,6 +132,14 @@ class WorkerSource(Protocol):
     def refresh(self) -> PoolReport: ...
 
 
+class Proxy(Protocol):
+    """The per-replica reverse proxy the lease manager owns."""
+
+    def start(self) -> None: ...
+
+    def stop(self) -> None: ...
+
+
 class HeartbeatRunner(Protocol):
     def start(self) -> None: ...
 
@@ -140,12 +148,20 @@ class HeartbeatRunner(Protocol):
 
 @dataclass(frozen=True)
 class LeaseView:
-    """The agent-visible lease result. It never carries the worker URL."""
+    """The agent-visible lease result.
+
+    The HTTP worker origin stays hidden. The CDP endpoint is the one exception:
+    the crawl's passive capture needs the raw Chrome address, and the generic
+    browser tool strips it before the model sees it.
+    """
 
     name: str
     steel_session_id: str
     mcp_session_id: str
     warnings: tuple[str, ...] = ()
+    restored: RestoreReport | None = None
+    cdp_url: str = ""
+    cdp_host: str = ""
 
 
 @dataclass(frozen=True)
@@ -178,6 +194,8 @@ class Lease:
     state: str = "acquiring"
     heartbeat_failures: int = 0
     restore_warnings: tuple[str, ...] = ()
+    restored: RestoreReport | None = None
+    proxy: Proxy | None = None
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def view(self) -> LeaseView:
@@ -186,6 +204,11 @@ class Lease:
             steel_session_id=self.cli_session.session_id,
             mcp_session_id=self.mcp_session_id,
             warnings=self.restore_warnings,
+            restored=self.restored,
+            cdp_url=(
+                f"ws://{self.worker.container_ip}:{self.worker.api_port}/"
+            ),
+            cdp_host=f"localhost:{self.worker.api_port}",
         )
 
 
@@ -284,11 +307,14 @@ class LeaseManager:
         sleep: Callable[[float], None] = time.sleep,
         emit: Callable[..., None] | None = None,
         runner_factory: Callable[["LeaseManager", Lease], HeartbeatRunner] | None = None,
+        proxy_factory: Callable[[Worker], Proxy] | None = None,
     ) -> None:
         if not callable(registry.refresh):
             raise ValueError("the worker registry must expose refresh()")
         if not callable(cli_factory):
             raise ValueError("the CLI factory must be callable")
+        if proxy_factory is not None and not callable(proxy_factory):
+            raise ValueError("the proxy factory must be callable or None")
         if account is not None and not isinstance(account, str):
             raise ValueError("the account must be a string or None")
         self._registry = registry
@@ -307,6 +333,7 @@ class LeaseManager:
                 manager, lease, interval_s=manager._tick_s
             )
         )
+        self._proxy_factory = proxy_factory
         self._lock = threading.RLock()
         self._discovery_lock = threading.Lock()
         self._leases: dict[str, Lease] = {}
@@ -356,12 +383,18 @@ class LeaseManager:
             self._names.add(name)
 
         worker: Worker | None = None
+        proxy: Proxy | None = None
         cli: CliAdapter | None = None
         cli_session: CliSession | None = None
         previous: BrowserSessionRecord | None = None
         lease: Lease | None = None
         try:
             worker = self._acquire_worker()
+            # The CLI addresses the worker through the loopback proxy, so the
+            # listener must accept before the first CLI process starts.
+            if self._proxy_factory is not None:
+                proxy = self._proxy_factory(worker)
+                proxy.start()
             previous = self._store.load(name)
             cli = self._cli_factory(worker)
             cli_session = cli.start(name)
@@ -378,11 +411,13 @@ class LeaseManager:
                 last_activity=now,
                 last_heartbeat=now,
                 state="mounting",
+                proxy=proxy,
             )
             restored = cli.restore(
                 cli_session,
                 previous if previous is not None else BrowserSessionRecord(name=name),
             )
+            lease.restored = restored
             lease.restore_warnings = restored.warnings
             lease.state = "active"
             lease.last_activity = self._clock()
@@ -409,7 +444,9 @@ class LeaseManager:
             return lease.view()
         except BaseException:
             if worker is not None:
-                self._abandon_start(worker, cli, cli_session, lease)
+                self._abandon_start(worker, proxy, cli, cli_session, lease)
+            elif proxy is not None:
+                self._stop_proxy(proxy)
             with self._lock:
                 self._starting.discard(mcp_session_id)
                 self._names.discard(name)
@@ -580,6 +617,7 @@ class LeaseManager:
     def _abandon_start(
         self,
         worker: Worker,
+        proxy: Proxy | None,
         cli: CliAdapter | None,
         cli_session: CliSession | None,
         lease: Lease | None,
@@ -588,6 +626,8 @@ class LeaseManager:
         healthy = True
         if cli is not None and cli_session is not None:
             healthy = self._stop_and_release(cli, cli_session)
+        if proxy is not None:
+            self._stop_proxy(proxy)
         with self._lock:
             self._reserved.discard(worker.container_id)
             if lease is not None:
@@ -614,47 +654,63 @@ class LeaseManager:
             captured = False
             saved = False
             try:
-                captured_context = lease.cli.capture(
-                    lease.cli_session, lease.previous
+                try:
+                    captured_context = lease.cli.capture(
+                        lease.cli_session, lease.previous
+                    )
+                    captured = True
+                    warnings.extend(captured_context.warnings)
+                    record = self._record_from_capture(lease, captured_context)
+                    self._store.save(record)
+                    saved = True
+                except (
+                    CaptureError,
+                    CliError,
+                    WorkerAPIError,
+                    SessionStoreError,
+                ) as exc:
+                    warnings.append(f"the session state was not saved: {exc}")
+                except Exception as exc:  # noqa: BLE001 - stop must still run
+                    warnings.append(f"the session state was not saved: {exc}")
+                stopped, released, healthy = self._stop_and_release_report(
+                    lease.cli, lease.cli_session
                 )
-                captured = True
-                warnings.extend(captured_context.warnings)
-                record = self._record_from_capture(lease, captured_context)
-                self._store.save(record)
-                saved = True
-            except (
-                CaptureError,
-                CliError,
-                WorkerAPIError,
-                SessionStoreError,
-            ) as exc:
-                warnings.append(f"the session state was not saved: {exc}")
-            stopped, released, healthy = self._stop_and_release_report(
-                lease.cli, lease.cli_session
-            )
-            with self._lock:
-                lease.state = "released"
-                self._leases.pop(lease.mcp_session_id, None)
-                if not healthy:
-                    self._quarantined.add(lease.worker.container_id)
+                with self._lock:
+                    lease.state = "released"
+                    self._leases.pop(lease.mcp_session_id, None)
+                    if not healthy:
+                        self._quarantined.add(lease.worker.container_id)
+                self.emit(
+                    "lease.released",
+                    session=lease.session_name,
+                    reason=reason,
+                    captured=captured,
+                    saved=saved,
+                    stopped=stopped,
+                    released=released,
+                    quarantined=not healthy,
+                )
+                return EndReport(
+                    ended=True,
+                    reason=reason,
+                    captured=captured,
+                    saved=saved,
+                    stopped=stopped,
+                    released=released,
+                    warnings=tuple(warnings),
+                )
+            finally:
+                if lease.proxy is not None:
+                    self._stop_proxy(lease.proxy)
+
+    def _stop_proxy(self, proxy: Proxy) -> None:
+        """Stop one proxy; a cleanup failure is logged and never raised."""
+        try:
+            proxy.stop()
+        except Exception as exc:  # noqa: BLE001 - cleanup is best-effort
             self.emit(
-                "lease.released",
-                session=lease.session_name,
-                reason=reason,
-                captured=captured,
-                saved=saved,
-                stopped=stopped,
-                released=released,
-                quarantined=not healthy,
-            )
-            return EndReport(
-                ended=True,
-                reason=reason,
-                captured=captured,
-                saved=saved,
-                stopped=stopped,
-                released=released,
-                warnings=tuple(warnings),
+                "lease.proxy_stop_failed",
+                error=f"{type(exc).__name__}: {exc}",
             )
 
     def _record_from_capture(

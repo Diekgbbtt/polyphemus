@@ -57,7 +57,12 @@ try:  # package layout
         NoLease,
         PoolExhausted,
     )
-    from kali.steel_pool.pool import Worker, WorkerRegistry
+    from kali.steel_pool.pool import (
+        PUBLIC_PORT_BASE,
+        Worker,
+        WorkerRegistry,
+    )
+    from kali.steel_pool.proxy import WorkerProxy
     from kali.steel_pool.store import (
         CorruptSessionRecord,
         SessionStore,
@@ -86,7 +91,12 @@ except ImportError:  # flat deployment beside mcp_server.py
         NoLease,
         PoolExhausted,
     )
-    from steel_pool.pool import Worker, WorkerRegistry  # type: ignore[no-redef]
+    from steel_pool.pool import (  # type: ignore[no-redef]
+        PUBLIC_PORT_BASE,
+        Worker,
+        WorkerRegistry,
+    )
+    from steel_pool.proxy import WorkerProxy  # type: ignore[no-redef]
     from steel_pool.store import (  # type: ignore[no-redef]
         CorruptSessionRecord,
         SessionStore,
@@ -96,7 +106,6 @@ except ImportError:  # flat deployment beside mcp_server.py
 DEFAULT_MCP_PORT = 8003
 DEFAULT_MCP_PATH = "/mcp"
 DEFAULT_POOL_LABEL = "polymerhus.steel-pool=true"
-DEFAULT_POOL_SIZE = 4
 DEFAULT_POOL_HEALTH_S = 30.0
 DEFAULT_CLI_TIMEOUT_S = 300.0
 DEFAULT_WORKER_API_SUFFIX = "/v1"
@@ -300,6 +309,7 @@ class BrowserService:
             return error_envelope(
                 "internal_error", f"{type(exc).__name__}: {exc}", retryable=True
             )
+        restored = view.restored
         return {
             "success": True,
             "session": {
@@ -307,6 +317,16 @@ class BrowserService:
                 "session_id": view.steel_session_id,
             },
             "warnings": list(view.warnings),
+            "restored": {
+                "cookies": restored.cookies_set if restored is not None else 0,
+                "origins": restored.origins_visited if restored is not None else 0,
+                "storage_keys": (
+                    restored.storage_keys_set if restored is not None else 0
+                ),
+                "warnings": list(restored.warnings) if restored is not None else [],
+            },
+            "cdp_url": view.cdp_url,
+            "cdp_host": view.cdp_host,
         }
 
     def exec(self, mcp_session_id: str, command: object) -> dict:
@@ -358,8 +378,11 @@ class BrowserService:
             return error_envelope(
                 "internal_error", f"{type(exc).__name__}: {exc}", retryable=True
             )
-        return {
-            "success": True,
+        # The session is gone when the CLI stopped it or the API released it.
+        # A capture or save miss is evidence loss, not a live session.
+        success = report.stopped or report.released is True
+        result = {
+            "success": success,
             "ended": report.ended,
             "reason": report.reason,
             "captured": report.captured,
@@ -368,6 +391,13 @@ class BrowserService:
             "released": report.released,
             "warnings": list(report.warnings),
         }
+        if not success:
+            result["error"] = {
+                "code": "browser_error",
+                "message": "the browser session was neither stopped nor released",
+                "retryable": False,
+            }
+        return result
 
     def close_session(self, mcp_session_id: str) -> EndReport | None:
         """The MCP session close hook. It never raises into the transport."""
@@ -411,8 +441,7 @@ class BrowserServerConfig:
     cli_path: str
     guard_path: str
     pool_label: str = DEFAULT_POOL_LABEL
-    pool_size: int = DEFAULT_POOL_SIZE
-    worker_host: str = "localhost"
+    public_port_base: int = PUBLIC_PORT_BASE
     pool_wait_s: float = DEFAULT_POOL_WAIT_S
     health_timeout_s: float = DEFAULT_POOL_HEALTH_S
     heartbeat_s: float = DEFAULT_HEARTBEAT_S
@@ -434,18 +463,12 @@ class BrowserServerConfig:
         ):
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"the {label} is required")
-        for label, value in (
-            ("pool size", self.pool_size),
+        if (
+            not isinstance(self.public_port_base, int)
+            or isinstance(self.public_port_base, bool)
+            or not 0 < self.public_port_base < 65536
         ):
-            if not isinstance(value, int) or isinstance(value, bool) or value < 1:
-                raise ValueError(f"the {label} must be a positive integer")
-        if not isinstance(self.worker_host, str) or not self.worker_host.strip():
-            raise ValueError("the worker host is required")
-        host = self.worker_host.strip()
-        if host != self.worker_host or "://" in host or "/" in host or any(
-            character.isspace() for character in host
-        ):
-            raise ValueError("the worker host is not a hostname or address")
+            raise ValueError("the public port base must be a positive integer")
         for label, value in (
             ("pool wait", self.pool_wait_s),
             ("health timeout", self.health_timeout_s),
@@ -522,12 +545,10 @@ class BrowserServerConfig:
             session_store=session_store,
             cli_path=cli_path,
             guard_path=guard_path,
-            pool_label=(source.get("STEEL_POOL_LABEL") or "")
-            .strip()
-            or DEFAULT_POOL_LABEL,
-            pool_size=integer("STEEL_POOL_SIZE", DEFAULT_POOL_SIZE),
-            worker_host=(source.get("STEEL_WORKER_HOST") or "").strip()
-            or "localhost",
+            # The label and the port base are deployment constants, not
+            # operator inputs. The compose topology owns both.
+            pool_label=DEFAULT_POOL_LABEL,
+            public_port_base=PUBLIC_PORT_BASE,
             pool_wait_s=number("STEEL_POOL_WAIT_S", DEFAULT_POOL_WAIT_S),
             health_timeout_s=number(
                 "STEEL_POOL_HEALTH_S", DEFAULT_POOL_HEALTH_S
@@ -568,10 +589,9 @@ def build_service(
     registry = WorkerRegistry(
         docker,
         config.pool_label,
-        config.pool_size,
         health_timeout_s=config.health_timeout_s,
         emit=logger,
-        worker_host=config.worker_host,
+        public_port_base=config.public_port_base,
     )
     try:
         registry.refresh()
@@ -602,6 +622,7 @@ def build_service(
         heartbeat_s=config.heartbeat_s,
         ttl_s=config.lease_ttl_s,
         emit=logger,
+        proxy_factory=WorkerProxy,
     )
     return BrowserService(manager, emit=logger)
 

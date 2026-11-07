@@ -29,6 +29,7 @@ try:
     )
     from kali.steel_pool.pool import (
         HEALTH_PATH,
+        PUBLIC_PORT_BASE,
         STEEL_API_PRIVATE_PORT,
         PoolReport,
         Worker,
@@ -37,6 +38,7 @@ try:
         discover_workers,
         parse_worker,
     )
+    from kali.steel_pool.proxy import ProxyError, WorkerProxy
     from kali.steel_pool.store import (
         BrowserSessionRecord,
         CorruptSessionRecord,
@@ -74,6 +76,7 @@ except ImportError:  # flat deployment beside mcp_server.py
     )
     from steel_pool.pool import (  # type: ignore[no-redef]
         HEALTH_PATH,
+        PUBLIC_PORT_BASE,
         STEEL_API_PRIVATE_PORT,
         PoolReport,
         Worker,
@@ -82,6 +85,7 @@ except ImportError:  # flat deployment beside mcp_server.py
         discover_workers,
         parse_worker,
     )
+    from steel_pool.proxy import ProxyError, WorkerProxy  # type: ignore[no-redef]
     from steel_pool.store import (  # type: ignore[no-redef]
         BrowserSessionRecord,
         CorruptSessionRecord,
@@ -113,6 +117,8 @@ __all__ = [
     "LeaseView",
     "PoolExhausted",
     "PoolReport",
+    "ProxyError",
+    "PUBLIC_PORT_BASE",
     "RestoreError",
     "RestoreReport",
     "STEEL_API_PRIVATE_PORT",
@@ -122,6 +128,7 @@ __all__ = [
     "Worker",
     "WorkerAPI",
     "WorkerAPIError",
+    "WorkerProxy",
     "WorkerRegistry",
     "check_worker_health",
     "discover_workers",

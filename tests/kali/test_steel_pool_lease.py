@@ -124,24 +124,39 @@ class ManualRunner:
         self.stopped = True
 
 
+class FakeProxy:
+    def __init__(self, worker: Worker) -> None:
+        self.worker = worker
+        self.started = False
+        self.stopped = False
+        self.start_error: Exception | None = None
+
+    def start(self) -> None:
+        self.started = True
+        if self.start_error is not None:
+            raise self.start_error
+
+    def stop(self) -> None:
+        self.stopped = True
+
+
 def _worker(container_id: str = "c1", port: int = 3110) -> Worker:
     return Worker(
         container_id=container_id,
         container_name=f"steel-{container_id}",
-        api_port=port,
+        container_ip=f"172.20.0.{int(container_id[-1], 16) + 2}",
+        public_port=port,
     )
 
 
 def _report(
     healthy: tuple[Worker, ...] = (),
     unhealthy: tuple[Worker, ...] = (),
-    configured: int = 2,
 ) -> PoolReport:
     return PoolReport(
         workers=healthy + unhealthy,
         healthy=healthy,
         unhealthy=unhealthy,
-        configured_size=configured,
         warning=None,
     )
 
@@ -161,6 +176,8 @@ class Harness:
         self.created: list[FakeCli] = []
         self.cli_overrides: dict[str, dict] = {}
         self.runners: list[ManualRunner] = []
+        self.proxies: list[FakeProxy] = []
+        self.proxy_start_error: Exception | None = None
         self.events: list[tuple[str, dict]] = []
         self.manager = LeaseManager(
             self.registry,
@@ -171,7 +188,14 @@ class Harness:
             sleep=self.clock.sleep,
             emit=self._emit,
             runner_factory=self._runner_factory,
+            proxy_factory=self._proxy_factory,
         )
+
+    def _proxy_factory(self, worker: Worker) -> FakeProxy:
+        proxy = FakeProxy(worker)
+        proxy.start_error = self.proxy_start_error
+        self.proxies.append(proxy)
+        return proxy
 
     def _cli_factory(self, worker: Worker) -> FakeCli:
         cli = FakeCli(worker, session_id=f"steel-{len(self.created) + 1}")
@@ -580,6 +604,72 @@ def test_the_lease_view_does_not_carry_the_worker_url(harness):
 
     assert "http://" not in repr(view)
     assert "3110" not in repr(view)
+
+
+def test_start_starts_the_proxy_before_the_cli_and_reports_the_cdp_endpoint(
+    harness,
+):
+    view = harness.manager.start("mcp-1", "hunt")
+
+    assert harness.proxies[0].started is True
+    assert harness.proxies[0].stopped is False
+    assert view.cdp_url == "ws://172.20.0.3:3000/"
+    assert view.cdp_host == "localhost:3000"
+
+
+def test_start_reports_the_restore_counts(harness):
+    harness.cli_overrides["c1"] = {
+        "restore_report": RestoreReport(2, 1, 3, ())
+    }
+
+    view = harness.manager.start("mcp-1", "hunt")
+
+    assert view.restored is not None
+    assert view.restored.cookies_set == 2
+    assert view.restored.origins_visited == 1
+    assert view.restored.storage_keys_set == 3
+
+
+def test_end_stops_the_proxy(harness):
+    harness.manager.start("mcp-1", "hunt")
+
+    harness.manager.end("mcp-1")
+
+    assert harness.proxies[0].stopped is True
+
+
+def test_a_failed_start_stops_the_proxy(harness):
+    harness.cli_overrides["c1"] = {"restore_error": RestoreError("bad state")}
+
+    with pytest.raises(RestoreError):
+        harness.manager.start("mcp-1", "hunt")
+
+    assert harness.proxies[0].stopped is True
+
+
+def test_a_proxy_start_failure_frees_the_worker(harness):
+    harness.proxy_start_error = RuntimeError("port is taken")
+
+    with pytest.raises(RuntimeError):
+        harness.manager.start("mcp-1", "hunt")
+
+    assert harness.manager.active_count() == 0
+    harness.proxy_start_error = None
+    harness.manager.start("mcp-1", "hunt")
+    assert harness.manager.active_count() == 1
+
+
+def test_shutdown_stops_every_proxy(tmp_path):
+    harness = Harness(
+        tmp_path,
+        reports=[_report((_worker("c1", 3110), _worker("c2", 3111)))],
+    )
+    harness.manager.start("mcp-1", "one")
+    harness.manager.start("mcp-2", "two")
+
+    harness.manager.shutdown()
+
+    assert [proxy.stopped for proxy in harness.proxies] == [True, True]
 
 
 def test_start_rejects_an_invalid_name(harness):
