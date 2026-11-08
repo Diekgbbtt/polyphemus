@@ -176,6 +176,14 @@ def _parser() -> argparse.ArgumentParser:
         "(skips project creation, settings, the auth mutation, and the L1 "
         "scaffold); the target must start at hunting (#277)",
     )
+    run_parser.add_argument(
+        "--skip-up",
+        action="store_true",
+        help="the instance and target are already up (the operator's `up` or the "
+        "chain's next_target owns the bring-up); do not bring them up again, so "
+        "a target whose port or session state is minted after that up is not "
+        "recreated under the trial",
+    )
     run_parser.add_argument("--recon-run", help="the recon run a later phase drains")
     run_parser.add_argument(
         "--target-run-id",
@@ -749,9 +757,15 @@ def _run_trial(args, setup: EvalSetup, config: OrchestratorConfig, out: TextIO, 
     orchestrator = Orchestrator(setup, config, runner=runner)
     # Scope the bring-up to this trial's target: a multi-target setup must not
     # start its whole serial pipeline when one trial runs (the chain's
-    # next-target already brought this target up).
+    # next-target already brought this target up). `--skip-up` leaves the
+    # bring-up to the operator (or to next_target) when it has already happened
+    # and the target's port/session state must not be recreated under the trial.
+    bring_up = (
+        None if getattr(args, "skip_up", False)
+        else (lambda: orchestrator.up(target_id=_run.target_id))
+    )
     record = engine.run(
-        bring_up=lambda: orchestrator.up(target_id=_run.target_id),
+        bring_up=bring_up,
         repair=trial.InstanceRepair(paths, runner),
     )
     print(f"trial {record.trial_id}: {record.terminal} (project {record.project_id})", file=out)
