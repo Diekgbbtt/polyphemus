@@ -147,6 +147,23 @@ if [ "$API_READY" -ne 1 ]; then
 fi
 echo "== agent API ready"
 
+# The app's project skills live in the `skills-procedures` volume at
+# /srv/skills/target-specific-procedure. The trial's host-side predicate reads
+# <skills-root>/target-specific-procedure/<project_id>/authn/SKILL.md, so the
+# host view is one symlink from the worktree to that volume.
+SKILLS_HOST="$INSTANCE_DIR/skills-host"
+SKILLS_VOLUME="$(docker volume inspect "${COMPOSE_PROJECT}_skills-procedures" --format '{{.Mountpoint}}' 2>/dev/null || true)"
+if [ -z "$SKILLS_VOLUME" ]; then
+  echo "== cannot resolve the skills volume; stopping"
+  exit 1
+fi
+mkdir -p "$SKILLS_HOST"
+if [ -e "$SKILLS_HOST/target-specific-procedure" ] && [ ! -L "$SKILLS_HOST/target-specific-procedure" ]; then
+  rm -rf "$SKILLS_HOST/target-specific-procedure"
+fi
+ln -sfn "$SKILLS_VOLUME" "$SKILLS_HOST/target-specific-procedure"
+echo "== skills host $SKILLS_HOST -> $SKILLS_VOLUME"
+
 echo "== seed project and browser context $(date -u +%FT%TZ)"
 PROJECT_ID="$(python3 "$EVAL_REPO/docs/experiments/hunt-enhancement/iteration-e-siyucms-2026-11-08/seed_iteration_e.py" \
   --setup "$SETUP" \
@@ -183,7 +200,7 @@ python3 -m orchestrator trial "$SETUP" "$INSTANCE" "$TARGET" \
   --api "$PH_API" \
   --project-id "$PROJECT_ID" \
   --data-root "$EVAL_DATA_ROOT" \
-  --skills-root "$INSTANCE_DIR/skills" \
+  --skills-root "$SKILLS_HOST" \
   --runs-root "$EVAL_RUNS_ROOT" \
   --target-run-id "$EVAL_TARGET_RUN_ID" \
   --eval-sha "$EVAL_SHA" \
