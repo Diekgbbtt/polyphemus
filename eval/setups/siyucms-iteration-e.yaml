@@ -1,0 +1,70 @@
+# Iteration E - the full local Steel pool on siyucms.
+#
+# One fresh target, one fresh project, full recon -> analysis -> hunting. The
+# leg evaluates the one `browser` tool and the deterministic `steel_crawl`
+# phase against the in-stack pool, without the Steel cloud.
+#
+# The frozen hunting policy:
+#   pipeline_sync            batched
+#   pod_batch_size           2
+#   promotion_risk_threshold 2.5  (inclusive, CVSS 4.0 points)
+#   risk_threshold           156.25 (the code default, CVSS 4.0 points)
+#   token_budget             7000000
+#
+# The recon subset keeps the single-host contract and adds `steel_crawl`.
+# This is the leg's subject: the browser crawl runs on the local pool.
+#
+# Instance `.env` for this arm:
+#   HUNT_RISK_THRESHOLD=156.25
+#   HUNT_POD_SESSION_TIMEOUT_S=5400
+#   SKILL_EVOLUTION_ENABLED=0
+#   LLM_HUNTING_THREAT_MODELLER=opencode-go:deepseek-v4.1-flash
+#   LLM_HUNTING_HUNTER=opencode-go:deepseek-v4.1-flash
+#   LLM_ANALYSER=opencode-go:deepseek-v4.1-flash
+#
+# The local thinking patch raises the two analysis proposers and the two
+# hunting design roles to `max`; the pod runner and triager stay `high`.
+#
+# The first work item is the data-dependency alignment: the siyucms auth
+# context moves from the retired steel profile to the designed browser
+# context (`accounts.<account>.browser_context.ref`), and the authn skill
+# teaches the one `browser` tool. The live paths and the versioned template
+# are recorded under docs/experiments/hunt-enhancement/iteration-e-siyucms-2026-11-08/.
+
+schema_version: 1
+
+artifact_store: /srv/eval-artifacts
+
+datasets:
+  - webexploitbench
+
+work_items:
+  - name: steel-browser-sessions
+    status: complete
+    required: true
+  - name: auth-bootstrap
+    status: complete
+    required: false
+  - name: l1-surface
+    status: complete
+  - name: hunting-artifacts
+    status: complete
+
+instances:
+  - instance_id: eval-server-2
+    env_file: eval-server-2/.env
+    targets:
+      - target_key: webexploitbench/siyucms
+        target_id: siyucms-web
+        target_run_id: itere-siyucms-web
+        start_phase: recon
+        token_budget: 7000000
+        target_config:
+          operator_kb: /root/eval-dd/data/siyucms/operator_kb.md
+          data_dir: /root/eval-dd/data/siyucms
+          recon_jobs: [httpx, httpx_reprofile, katana, jsluice, arjun, steel_crawl]
+        hunting:
+          pipeline_sync: batched
+          pod_batch_size: 2
+          promotion_risk_threshold: 2.5
+          risk_threshold: 156.25

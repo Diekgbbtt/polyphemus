@@ -139,14 +139,15 @@ A CSR SPA with webpack code-splitting (e.g. white-jotter) serves its real API
 surface in LAZY-LOADED CHUNKS: the shell bundle carries the router paths and
 an axios `baseURL="/api"` config, while the actual calls (`POST /login`,
 `/api/search`, `/api/file/`, ...) live in chunk files whose URLs are only in
-the webpack runtime's chunk map (`manifest.js`). The current fleet never
-resolves that map, so the observed surface is SHELL-LEVEL: the router paths
-and the bundles katana's JS parsing finds, with the `/api` prefix invisible.
-This is a recon-platform limitation (a webpack chunk-map resolver, or a
-browser crawl that is excluded for private-VM reachability), tracked dev-side,
-NOT a harness defect and NOT improvable by configuration. When judging such a
-target, expect the backend API loci to be unobserved and grade accordingly -
-never inflate a verdict because the surface is known to be incomplete.
+the webpack runtime's chunk map (`manifest.js`).
+A request-only fleet observes the SHELL-LEVEL surface: the router paths and
+the bundles katana's JS parsing finds, with the `/api` prefix invisible.
+The `webpack_chunks` job (when present) resolves the chunk map.
+The local browser crawl can also execute the runtime and observe the lazy
+requests, but only when the leg adds `steel_crawl` to `recon_jobs`.
+When `steel_crawl` is absent, the ceiling stands.
+When it is present, measure the delta; never inflate a verdict because the
+surface is known to be incomplete.
 
 #### The seed and the front
 
@@ -204,13 +205,22 @@ Recon launch (`ph.py recon launch`):
 ```
 
 `with_analysis` stays the default (combined recon+analysis). NEVER add
-subfinder, amass, whois, dnsx, puredns, subdomain_takeover, naabu, steel_crawl,
-ffuf, or kiterunner to the subset.
+subfinder, amass, whois, dnsx, puredns, subdomain_takeover, naabu, ffuf, or
+kiterunner to the subset.
 
-The production pipeline default is the full `PHASES` plan, and that plan includes
-`steel_crawl` in the crawl phase. This eval contract subset omits it
-deliberately: the browser crawl needs a live Steel session and adds minutes to
-every trial. The omission is a trial-cost decision, not the pipeline default.
+`steel_crawl` is the one declared exception.
+The quick-start contract omits it as a trial-cost decision.
+A browser-pool leg adds it explicitly to `recon_jobs`, because the instance
+pool (section 2.14) can now reach the private target and the leg exists to
+measure the crawl.
+When `steel_crawl` is present, the auth gateway and the crawl share the
+account's decoupled `browser_context.ref`; the crawl is the only
+browser-capable job.
+The other excluded families stay excluded.
+
+The production pipeline default is the full `PHASES` plan, and that plan
+includes `steel_crawl` in the crawl phase.
+The quick-start subset is narrower; it is not the pipeline default.
 
 ### 1.3. The execution discipline (you are the driver of failure handling)
 
