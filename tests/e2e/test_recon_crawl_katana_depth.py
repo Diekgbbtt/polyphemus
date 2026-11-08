@@ -567,6 +567,9 @@ def _assert_katana_command(call: dict, production_template: str) -> dict:
         .replace(prod_depth.group(0), f" -d {DEPTH} ")
         .replace("{target}", target_used)
         .replace("{auth_header}", "")
+        # The template carries the per-account auth flags placeholder too; an
+        # anonymous run expands it to nothing.
+        .replace("{auth_flags}", "")
     )
     if command != expected:
         first_diff = next(

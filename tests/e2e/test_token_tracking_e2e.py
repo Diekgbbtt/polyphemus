@@ -44,10 +44,16 @@ _PER_CALL = 18
 
 
 class _FakeRuntime:
-    """The stop verb's runtime stub: records the run it was asked to cancel."""
+    """The stop verb's runtime stub: records the run it was asked to cancel.
+
+    The project-wide stop also records the HTTP calls the trial makes, because
+    the stop endpoint now enumerates the project's live runs from Postgres and
+    cancels each one; an empty fake database cannot produce a per-run cancel.
+    """
 
     def __init__(self) -> None:
         self.cancelled: list[tuple[str, str]] = []
+        self.calls: list[tuple[str, str]] = []
 
     def cancel_run(self, module: str, run_id: str) -> None:
         self.cancelled.append((module, run_id))
@@ -68,6 +74,12 @@ def server(monkeypatch):
     monkeypatch.setattr(runtime_mod, "get_active_runtime", lambda: fake)
 
     app = FastAPI()
+
+    @app.middleware("http")
+    async def _record(request, call_next):
+        fake.calls.append((request.method, request.url.path))
+        return await call_next(request)
+
     app.include_router(app_router)
 
     sock = socket.socket()
@@ -191,7 +203,9 @@ def test_eval_probe_stops_the_run_on_token_overflow_concurrently(server):
     assert spend.spent >= budget
     assert spend.spent == trial._spend.spent
     assert spend.by_agent and "hunter" in spend.by_agent
-    assert fake.cancelled == [("recon", "r0")]
+    # The budget stop is PROJECT-wide now: the trial calls the execution-stop
+    # endpoint, which enumerates the project's live runs and cancels each one.
+    assert ("POST", f"/projects/{PROJECT}/execution/stop") in fake.calls
 
 
 def test_eval_probe_does_not_stop_below_budget(server):
@@ -205,4 +219,4 @@ def test_eval_probe_does_not_stop_below_budget(server):
         sleep=lambda _s: None,
     )
     assert trial._check_spend(PROJECT) is None
-    assert fake.cancelled == []
+    assert ("POST", f"/projects/{PROJECT}/execution/stop") not in fake.calls

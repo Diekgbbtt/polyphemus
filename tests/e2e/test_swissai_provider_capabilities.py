@@ -30,7 +30,8 @@ pytestmark = pytest.mark.skipif(
     reason="live SwissAI key required (API_KEY_SWISSAI)",
 )
 
-_MODEL = os.environ.get("LIVE_SWISSAI_MODEL", "Qwen/Qwen3.5-397B-A17B-ETar")
+_MODEL = os.environ.get(
+    "LIVE_SWISSAI_MODEL", "CSCS-Inference/Qwen/Qwen3.8-27B-FP8")
 
 _REPORT = (
     "Quarterly maintenance log: Turbine unit 3 was taken offline on March 4th "
