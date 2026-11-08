@@ -68,7 +68,7 @@ services:
       POSTGRES_USER: polymerhus
       POSTGRES_PASSWORD: polymerhus
       POSTGRES_DB: polymerhus
-    ports: ["5432:5432"]
+    ports: ["127.0.0.1:${POSTGRES_PORT:-5432}:5432"]
     volumes:
       - pg-data:/var/lib/postgresql/data
       - ./db/postgres/init.sql:/docker-entrypoint-initdb.d/10-init.sql:ro
@@ -84,7 +84,10 @@ services:
     image: neo4j:5.26-community
     environment:
       NEO4J_AUTH: neo4j/polymerhus
-    ports: ["7474:7474", "7687:7687"]
+    ports: [
+      "127.0.0.1:${NEO4J_HTTP_PORT:-7474}:7474",
+      "127.0.0.1:${NEO4J_BOLT_PORT:-7687}:7687",
+    ]
     volumes: [neo4j-data:/data]
     networks: [polymerhus-net]
     healthcheck:
@@ -109,7 +112,9 @@ services:
     # SIGKILL the end path and orphan the API session until the worker's own
     # timeout fires. Without an active lease the process exits at once.
     stop_grace_period: 330s
-    ports: ["8000:8000"]
+    # Host-side eval scripts and the operator reach kali on loopback only.
+    # The agent reaches it on the compose network, never through this port.
+    ports: ["127.0.0.1:${KALI_MCP_PORT:-8000}:8000"]
     environment:
       # Browser capability (#221): the steel CLI resolves auth from the
       # environment, so the key is wired here and never into an argv.
@@ -296,7 +301,8 @@ services:
     env_file:
       - path: .env
         required: false
-    ports: ["8080:8080"]
+    # The eval driver polls the API from the host on loopback only.
+    ports: ["127.0.0.1:${AGENT_PORT:-8080}:8080"]
     depends_on:
       postgres: { condition: service_healthy }
       neo4j: { condition: service_healthy }

@@ -22,6 +22,24 @@ def test_agent_data_root_is_a_host_bind():
     assert "${INSTANCE_DATA_ROOT:-./data}:/srv/data" in volumes
 
 
+def test_every_plain_service_publishes_on_loopback_only():
+    """Host-facing stack services are loopback-only.
+
+    SSH is the only internet-facing listener on the eval host. The eval front
+    and the target ports are the container-reachable exception, fenced by
+    `eval/host_firewall.py`; every service in the base compose binds loopback.
+    """
+    config = yaml.safe_load(open("docker-compose.yml", encoding="utf-8"))
+
+    for name, service in config["services"].items():
+        for entry in service.get("ports") or []:
+            if isinstance(entry, dict):
+                host_ip = entry.get("host_ip")
+            else:
+                host_ip = str(entry).split(":", 1)[0]
+            assert host_ip == "127.0.0.1", f"{name} publishes on {host_ip!r}"
+
+
 def test_lightrag_is_baseline_config():
     r = subprocess.run(["docker", "compose", "config"], capture_output=True, text=True, cwd=".")
     assert r.returncode == 0, r.stderr
