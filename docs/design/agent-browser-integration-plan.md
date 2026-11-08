@@ -100,7 +100,18 @@ Out: `assigner`, `skill_evolver`, one-shot roles, `configurator`, `crawler` (rem
 - Integration tier: 324 passed, 44 skipped. The one failure is the live
   Postgres schema test, which needs a local Postgres the host does not run;
   production and CI point `POSTGRES_DSN` at the compose service.
-- E2E tier: 161 tests collected; the live walkthroughs stay operator-gated.
+- E2E tier: the branch ran live on the eval host (`ph-dd131acc`, arm64) with
+  `docker-compose.pool.yml`. The one-browser-tool e2e passed in-network, and
+  the deterministic crawl passed for the anonymous ComfyUI target and the
+  authenticated White Jotter target (the pool restored the persisted context;
+  the oracle classified the run `authenticated`). The host-side suite ran 99
+  passed, 40 skipped, 4 failed: the remaining failures are live-model
+  structured-output flakiness (`test_compaction_live`), eval-host venv drift
+  (`test_compaction_walkthrough`, green on the pinned local venv), and the
+  unreachable `soupmarket.shop` reprofile target. Six files were excluded
+  because they need a disposable or sibling `polymerhus` topology. The live
+  run found and fixed the CLI socket-path bound on the derived session name.
+  Evidence: `docs/design/evidence/steel-pool-mcp/browser-integration-e2e-2026-11-08.md`.
 - Environment note: the local Neo4j database had entered a critical
   no-space state; the Docker build cache was pruned (22 GB) and the container
   restarted before the integration run.

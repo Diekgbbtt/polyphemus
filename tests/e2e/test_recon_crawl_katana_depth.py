@@ -1158,6 +1158,15 @@ def test_recon_crawl_only_with_katana_depth(tmp_path, monkeypatch):
     run_dir = _run_dir()
     print(f"[artifacts] {run_dir}", flush=True)
 
+    # Pin the production template's depth IN PLACE. The env block above only
+    # sets the depth before THIS module's first import; in a full-suite run
+    # another module may import `jobs` first, so `JOBS["katana"]` keeps the
+    # production default of 1. Mutating the shared dict reaches every importer.
+    pinned = JOBS["katana"].command_template
+    pinned = _DEPTH_RE.sub(f" -d {DEPTH} ", pinned, count=1)
+    monkeypatch.setitem(JOBS, "katana",
+                        JOBS["katana"].model_copy(update={"command_template": pinned}))
+
     # --- A. Preflight ------------------------------------------------------
     health = _preflight_health()
     _preflight_llm()
