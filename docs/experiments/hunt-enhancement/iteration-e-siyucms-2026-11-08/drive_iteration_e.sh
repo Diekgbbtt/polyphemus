@@ -131,6 +131,22 @@ if [ "$UP_CODE" -ne 0 ]; then
   exit "$UP_CODE"
 fi
 
+echo "== wait for the agent API $(date -u +%FT%TZ)"
+API_READY=0
+for _ in $(seq 1 150); do
+  CODE="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 2 "$PH_API/app-state" 2>/dev/null || true)"
+  if [ "$CODE" = "200" ]; then
+    API_READY=1
+    break
+  fi
+  sleep 2
+done
+if [ "$API_READY" -ne 1 ]; then
+  echo "== the agent API did not answer /app-state; stopping"
+  exit 1
+fi
+echo "== agent API ready"
+
 echo "== seed project and browser context $(date -u +%FT%TZ)"
 PROJECT_ID="$(python3 "$EVAL_REPO/docs/experiments/hunt-enhancement/iteration-e-siyucms-2026-11-08/seed_iteration_e.py" \
   --setup "$SETUP" \
