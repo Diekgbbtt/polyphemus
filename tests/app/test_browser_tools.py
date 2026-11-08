@@ -121,10 +121,18 @@ def test_the_session_name_binds_project_account_role_and_instance():
     )
 
 
-def test_the_session_name_is_safe_and_bounded():
+def test_the_session_name_fits_the_steel_cli_socket_path():
+    """The name is ephemeral, not the 128-byte store key.
+
+    The CLI daemon listens on `/root/.config/steel/daemon-<name>.sock`; Linux
+    `sun_path` is 108 bytes including the terminator, so the name is capped at
+    75. A longer one fails every start with "path must be shorter than
+    SUN_LEN" (found live on the eval host).
+    """
     name = browser_session_name("My Project/One", "agent role", "a" * 200, "A B")
-    assert len(name) <= 128
-    assert re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", name)
+    assert len(name) <= 75
+    assert len("/root/.config/steel/daemon-") + len(name) + len(".sock") < 108
+    assert re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,74}", name)
     assert name == browser_session_name(
         "My Project/One", "agent role", "a" * 200, "A B"
     )

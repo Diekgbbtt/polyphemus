@@ -33,7 +33,12 @@ BROWSER_TOOL_NAME = "browser"
 BROWSER_SKILL = "steel-browser"
 BROWSER_CONTEXT_PREFIX = "steel-auth"
 BROWSER_SESSION_PREFIX = "steel"
-_SESSION_MAX = 128
+# The pool store accepts 128, but the Steel CLI daemon listens on
+# /root/.config/steel/daemon-<name>.sock, and Linux sun_path is 108 bytes
+# INCLUDING the terminator. The 27-byte prefix and the 5-byte suffix leave 75
+# bytes for the name; a longer one makes the CLI answer
+# "path must be shorter than SUN_LEN" and the session never starts.
+_SESSION_MAX = 75
 _SLUG = re.compile(r"[^A-Za-z0-9_-]+")
 
 __all__ = [
