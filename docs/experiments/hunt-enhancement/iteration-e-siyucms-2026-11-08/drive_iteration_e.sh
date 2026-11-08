@@ -101,7 +101,7 @@ set +a
 export PH_API EVAL_REPO EVAL_INSTANCES_ROOT EVAL_BRANCH EVAL_DATA_ROOT
 export EVAL_ALIGNMENT_STATE EVAL_RUNS_ROOT EVAL_GROUND_TRUTH EVAL_CORPUS
 export EVAL_TARGET_RUN_ID EVAL_REQUIRE_IMPACT_REVIEW
-export PYTHONPATH="$INSTANCE_DIR/eval:$EVAL_REPO/eval"
+export PYTHONPATH="$EVAL_REPO/eval:$INSTANCE_DIR/eval"
 
 COMPOSE_PROJECT="$(PYTHONPATH=eval python3 -c 'from orchestrator.ids import short_id; print("ph-" + short_id("eval-server-2"))')"
 echo "== compose project $COMPOSE_PROJECT"
@@ -199,6 +199,7 @@ python3 -m orchestrator trial "$SETUP" "$INSTANCE" "$TARGET" \
   --state "$EVAL_ALIGNMENT_STATE" \
   --api "$PH_API" \
   --project-id "$PROJECT_ID" \
+  --skip-up \
   --data-root "$EVAL_DATA_ROOT" \
   --skills-root "$SKILLS_HOST" \
   --runs-root "$EVAL_RUNS_ROOT" \

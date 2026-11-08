@@ -53,6 +53,8 @@ The local pool should:
 | Data dependencies | `/root/eval-dd/data/siyucms` (auth, authn skill, KB) |
 | Recon jobs | `httpx, httpx_reprofile, katana, jsluice, arjun, steel_crawl` |
 | Code identity | the `eval-e` branch at the run commit, recorded in `trial.yaml` |
+| Bring-up | one operator `up`; the trial runs with `--skip-up`, so it never recreates the target |
+| Browser context | the preflight mints the admin session after the up and seeds the deterministic context ref |
 | Thinking effort | design roles `max`, pod roles `high` (C.a patch) |
 | Pod watchdog | `HUNT_POD_SESSION_TIMEOUT_S=5400` |
 | Skill evolution | `SKILL_EVOLUTION_ENABLED=0` |
@@ -85,8 +87,9 @@ The alignment:
 - `accounts.admin-first_authn_bootstrap.steel.state` became
   `accounts.admin-first_authn_bootstrap.browser_context.ref =
   steel-auth-siyucms-web-admin-first-authn-bootstrap`;
-- the stale `valid` status became `not_valid`, so the gateway validates the
-  oracle and re-mints;
+- the admin account is asserted `valid` after the preflight's oracle; the
+  member account is `not_valid` for the browser candidate because it holds no
+  decoupled context, while its request material remains;
 - the admin snapshot was cleaned to the siyucms `PHPSESSID` only.
   The `cf_clearance`, `PrestaShop-*`, and `thinkphp_show_page_trace` cookies
   were leftovers from the C.a target substitution and did not belong to this

@@ -30,9 +30,12 @@ admin-first_authn_bootstrap:
 ```
 
 `steel.state: e2e-siyucms` is gone.
-The account `status` is `not_valid`, because the stored session is stale.
-The auth gateway validates the oracle in the one browser tool and re-mints the
-session when the context does not restore an authenticated state.
+The admin account is asserted `valid` because the operator preflight mints a
+fresh session after the single target bring-up; the auth gateway re-validates
+the oracle in the one browser tool.
+The member account is `not_valid` for the browser candidate because it holds
+no decoupled browser context; its request material remains.
+This keeps the gateway on the admin account, whose context is the seeded one.
 
 The admin snapshot was cleaned to the siyucms `PHPSESSID` only.
 The C.a target substitution had left `cf_clearance`, `PrestaShop-*`, and

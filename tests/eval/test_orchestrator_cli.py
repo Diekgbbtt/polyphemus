@@ -383,6 +383,52 @@ def _run_trial_cli(sample_setup, tmp_path, recording_runner, fake_result, extra_
     return code, yaml.safe_load(records[0].read_text(encoding="utf-8"))
 
 
+def test_trial_skip_up_leaves_the_bring_up_to_the_operator(
+    sample_setup, tmp_path, recording_runner, fake_result
+) -> None:
+    """`--skip-up`: the target is already up and the trial must not recreate it.
+
+    A recreated target gets a new random published port and loses the browser
+    session state minted after the operator's up, which is exactly the
+    iteration E gateway failure.
+    """
+    sample_setup["instances"][0]["targets"][0]["target_config"]["target_seed"] = "t.test"
+    setup_path = _write_setup(tmp_path, sample_setup)
+    runner = recording_runner(
+        routes={
+            "rev-parse HEAD": fake_result(0, "a" * 40 + "\n"),
+            "getent hosts": fake_result(0, "172.17.0.1 host.docker.internal\n"),
+            "curl": fake_result(0, "200"),
+            "ps -a --format json": fake_result(
+                0, '{"Service": "app", "Health": "healthy"}'
+            ),
+        }
+    )
+    api = _FakeApi(_trial_routes())
+
+    code = cli.main(
+        [
+            "trial",
+            setup_path,
+            "arm-a",
+            "jetlinks-1",
+            "--instances-root",
+            str(tmp_path / "instances"),
+            "--data-root",
+            str(tmp_path / "data"),
+            "--runs-root",
+            str(tmp_path / "runs"),
+            "--skip-up",
+        ],
+        runner_factory=lambda: runner,
+        api_factory=lambda base: api,
+    )
+
+    assert code == 0
+    assert not any("targetctl" in text for text in runner.argv_texts)
+    assert not any("docker compose" in text for text in runner.argv_texts)
+
+
 def test_trial_threads_the_setup_target_run_id_into_the_record(
     sample_setup, tmp_path, recording_runner, fake_result
 ) -> None:
