@@ -85,6 +85,19 @@ if [ "$UP_CODE" -ne 0 ]; then
   exit "$UP_CODE"
 fi
 
+echo "== seed project and browser context $(date -u +%FT%TZ)"
+PROJECT_ID="$(python3 "$EVAL_REPO/docs/experiments/hunt-enhancement/iteration-e-siyucms-2026-11-08/seed_iteration_e.py" \
+  --setup "$SETUP" \
+  --api "$PH_API" \
+  --compose-project "$COMPOSE_PROJECT" \
+  --instance "$INSTANCE" \
+  --target "$TARGET")"
+if [ -z "$PROJECT_ID" ]; then
+  echo "== the seed preflight returned no project id; stopping"
+  exit 1
+fi
+echo "== project id $PROJECT_ID"
+
 echo "== monitor start $(date -u +%FT%TZ)"
 nohup python3 "$MONITOR" \
   --api "$PH_API" \
@@ -106,6 +119,7 @@ python3 -m orchestrator trial "$SETUP" "$INSTANCE" "$TARGET" \
   --branch "$EVAL_BRANCH" \
   --state "$EVAL_ALIGNMENT_STATE" \
   --api "$PH_API" \
+  --project-id "$PROJECT_ID" \
   --data-root "$EVAL_DATA_ROOT" \
   --skills-root "$INSTANCE_DIR/skills" \
   --runs-root "$EVAL_RUNS_ROOT" \
