@@ -11,7 +11,7 @@ E4 is the integration truth of the whole T4 chain: ONE live completion through
 hits the co-located litellm proxy, the proxy resolves the registered name and
 routes to the opencode zen upstream, and a response returns. This is the first
 live round-trip of the D5 registered-name convention: the client sends the
-CANONICAL REGISTERED name (`opencode-go/deepseek-v4-flash`,
+CANONICAL REGISTERED name (`opencode-go/deepseek-v4.1-flash`,
 `sync_mapping.registered_model_name` - the name the sync pushed and the
 reader/keys resolve); the gateway resolves it to the zen/go upstream. The
 old verbatim-contract framing (client sends the operator string `deepseek/...`
@@ -30,8 +30,13 @@ skip = gs.skip_reason()
 pytestmark = pytest.mark.skipif(skip is not None, reason=skip or "agent stack not up for the gateway live tier")
 
 PROVIDER = "opencode-go"
-MODEL = "deepseek/deepseek-v4-flash"
+MODEL = "deepseek/deepseek-v4.1-flash"
 GATEWAY_ENV = {"LLM_GATEWAY_URL": gs.GATEWAY_URL}
+# The direct-mode probe must actually UNSET the gateway: the eval
+# deployment sets it in the container env, so a plain exec never
+# observes the unset branch. A blank value is the contract's
+# unset-equivalent.
+DIRECT_ENV = {"LLM_GATEWAY_URL": ""}
 
 
 # ---------------------------------------------------------------------------
@@ -56,12 +61,12 @@ def _mode_report(env: dict) -> dict:
 
 def test_c13_direct_mode_when_url_unset():
     """UNSET -> direct mode: base_url is the provider's own endpoint and the
-    zen-family id strip runs client-side (`deepseek/deepseek-v4-flash`
-    -> `deepseek-v4-flash`, the bare zen/go catalog id)."""
-    report = _mode_report({})
+    zen-family id strip runs client-side (`deepseek/deepseek-v4.1-flash`
+    -> `deepseek-v4.1-flash`, the bare zen/go catalog id)."""
+    report = _mode_report(DIRECT_ENV)
     assert report["base_url"] == report["direct_expected"] == (
         "https://opencode.ai/zen/go/v1")
-    assert report["model"] == "deepseek-v4-flash", (
+    assert report["model"] == "deepseek-v4.1-flash", (
         "direct mode must strip the provider prefix client-side (the zen "
         "gateway validates bare ids); got %r" % report["model"])
     assert report["max_retries"] == 0
@@ -78,7 +83,7 @@ def test_c13_gateway_mode_when_url_set():
     report = _mode_report(GATEWAY_ENV)
     assert report["base_url"] == gs.GATEWAY_URL, (
         "gateway mode must point the client at the gateway verbatim")
-    assert report["model"] == "opencode-go/deepseek-v4-flash", (
+    assert report["model"] == "opencode-go/deepseek-v4.1-flash", (
         "gateway mode must send the canonical registered name; got %r"
         % report["model"])
     assert report["max_retries"] == 0
@@ -104,11 +109,11 @@ def test_e4_live_completion_routes_through_gateway():
     assert result.returncode == 0, (
         f"the live completion through the gateway FAILED:\n{result.stderr}\n"
         "the D5 registered-name convention is the suspect: the client sends "
-        "'opencode-go/deepseek-v4-flash'; the gateway must resolve that "
+        "'opencode-go/deepseek-v4.1-flash'; the gateway must resolve that "
         "registered name to the synced record and route to the zen/go upstream")
     report = json.loads(result.stdout.strip().splitlines()[-1])
     assert report["base_url"] == gs.GATEWAY_URL
-    assert report["model"] == "opencode-go/deepseek-v4-flash"
+    assert report["model"] == "opencode-go/deepseek-v4.1-flash"
     assert report["content"], "the routed completion returned empty content"
     logs = gs.gateway_logs()
     assert "deepseek" in logs.lower(), (

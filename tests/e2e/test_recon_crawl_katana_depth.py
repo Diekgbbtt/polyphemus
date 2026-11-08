@@ -90,24 +90,28 @@ def _resolve_endpoint(raw: str, override: str | None, default: str, internal_hos
     return raw
 
 
-os.environ["NEO4J_URI"] = _resolve_endpoint(
+# The host view of the live stack. These are CONSTANTS, never module-level
+# `os.environ` writes: pytest imports every test module before it runs the
+# first test, so a write here would decide the environment of every later
+# test - including the `docker compose up` calls, which then interpolate
+# `localhost` into the CONTAINER and crash the agent. The autouse fixture
+# below applies the host view for this module's tests only.
+NEO4J_URI = _resolve_endpoint(
     os.environ.get("NEO4J_URI", ""), os.environ.get("E2E_NEO4J_URI"),
     "bolt://localhost:7687", "neo4j",
 )
-os.environ["POSTGRES_DSN"] = _resolve_endpoint(
+LIVE_POSTGRES_DSN = _resolve_endpoint(
     os.environ.get("POSTGRES_DSN", ""), os.environ.get("E2E_POSTGRES_DSN"),
     "postgresql://polymerhus:polymerhus@localhost:5432/polymerhus", "postgres",
 )
-os.environ["KALI_MCP_URL"] = _resolve_endpoint(
+MCP_URL = _resolve_endpoint(
     os.environ.get("KALI_MCP_URL", ""), os.environ.get("E2E_KALI_MCP_URL"),
     "http://localhost:8000/mcp", "kali",
 )
-if (os.environ.get("NEO4J_PASSWORD") or "").startswith("dummy-"):
-    os.environ["NEO4J_PASSWORD"] = "polymerhus"
-os.environ.setdefault("NEO4J_USER", "neo4j")
-
-MCP_URL = os.environ["KALI_MCP_URL"]
-LIVE_POSTGRES_DSN = os.environ["POSTGRES_DSN"]
+LIVE_NEO4J_USER = os.environ.get("NEO4J_USER") or "neo4j"
+LIVE_NEO4J_PASSWORD = os.environ.get("NEO4J_PASSWORD") or "polymerhus"
+if LIVE_NEO4J_PASSWORD.startswith("dummy-"):
+    LIVE_NEO4J_PASSWORD = "polymerhus"
 
 #: Cap on the stdout bytes written per invocation. Never truncate silently: an
 #: over-cap capture is written truncated AND labelled `captured-truncated` with
@@ -115,6 +119,9 @@ LIVE_POSTGRES_DSN = os.environ["POSTGRES_DSN"]
 MAX_CAPTURE_BYTES = 8 * 1024 * 1024
 
 # The knob's contract: `JOBS` is built at import, so the env must be set first.
+# The value is restored immediately after the import: the built `JOBS` keeps
+# the depth this module asserts, and later tests never see the knob.
+_previous_katana_depth = os.environ.get("KATANA_DEPTH")
 os.environ["KATANA_DEPTH"] = DEPTH
 
 import polymerhus.recon.domain.pod as pod_module  # noqa: E402
@@ -126,6 +133,11 @@ from polymerhus.recon.control.orchestrator_agent import ReconOrchestratorActor  
 from polymerhus.recon.control.scope import parse_scope  # noqa: E402
 from polymerhus.recon.domain import noise_filter  # noqa: E402
 from polymerhus.recon.domain.parsers import katana_parser  # noqa: E402
+
+if _previous_katana_depth is None:
+    os.environ.pop("KATANA_DEPTH", None)
+else:
+    os.environ["KATANA_DEPTH"] = _previous_katana_depth
 
 
 # --------------------------------------------------------------------------
@@ -143,16 +155,26 @@ def _live_infra_pointers(monkeypatch):
     """
     from polymerhus.app.config import config
 
-    # The class attributes were bound from the environment at import time. They
-    # already hold the resolved values when this module imported first; the
-    # explicit re-alignment covers the case where something else imported
-    # `app.config` before this module's env block ran.
+    # Apply the host view to THIS test only. `monkeypatch.setenv` restores the
+    # process environment at teardown, so a later `docker compose up` keeps the
+    # compose-network values its containers need.
+    for key, value in (
+        ("NEO4J_URI", NEO4J_URI),
+        ("NEO4J_USER", LIVE_NEO4J_USER),
+        ("NEO4J_PASSWORD", LIVE_NEO4J_PASSWORD),
+        ("POSTGRES_DSN", LIVE_POSTGRES_DSN),
+        ("KALI_MCP_URL", MCP_URL),
+    ):
+        monkeypatch.setenv(key, value)
+
+    # The config-backed clients were bound from the environment at import time;
+    # re-align the class attributes the same way.
     for attr, value in (
         ("POSTGRES_DSN", LIVE_POSTGRES_DSN),
         ("KALI_MCP_URL", MCP_URL),
-        ("NEO4J_URI", os.environ["NEO4J_URI"]),
-        ("NEO4J_USER", os.environ["NEO4J_USER"]),
-        ("NEO4J_PASSWORD", os.environ["NEO4J_PASSWORD"]),
+        ("NEO4J_URI", NEO4J_URI),
+        ("NEO4J_USER", LIVE_NEO4J_USER),
+        ("NEO4J_PASSWORD", LIVE_NEO4J_PASSWORD),
     ):
         if getattr(config, attr, None) != value:
             monkeypatch.setattr(config, attr, value, raising=False)

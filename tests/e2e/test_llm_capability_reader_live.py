@@ -33,7 +33,7 @@ pytestmark = pytest.mark.skipif(skip is not None, reason=skip or "agent stack no
 
 # The triager's configured model (LLM_TRIAGER=opencode-go:deepseek/...).
 PROVIDER = "opencode-go"
-MODEL = "deepseek/deepseek-v4-flash"
+MODEL = "deepseek/deepseek-v4.1-flash"
 
 GATEWAY_ENV = {"LLM_GATEWAY_URL": gs.GATEWAY_URL}
 
@@ -104,7 +104,7 @@ def test_c12_known_model_profile_matches_the_oracle():
     known = report["known"]
     oracle_by_name = {
         m.model_name: m for m in gs.oracle_desired()}
-    expected = oracle_by_name.get(f"opencode-go/deepseek-v4-flash")
+    expected = oracle_by_name.get(f"opencode-go/deepseek-v4.1-flash")
     assert expected is not None, "the triager model must be in the oracle set"
     assert expected.known
     expected_info = expected.model_info
@@ -116,7 +116,7 @@ def test_c12_known_model_profile_matches_the_oracle():
         f"{expected_info.get('max_output_tokens')}")
     assert known["supports_tool_calling"] == expected_info.get(
         "supports_function_calling"), "supports_tool_calling != oracle"
-    assert known["source"] == f"models.dev/opencode-go/deepseek-v4-flash"
+    assert known["source"] == f"models.dev/opencode-go/deepseek-v4.1-flash"
     # D11 reasoning surface per the matrix (interleaved {"field": ...}).
     assert known["reasoning_in_response"] is expected_info.get(
         "reasoning_in_response"), "reasoning_in_response != oracle"

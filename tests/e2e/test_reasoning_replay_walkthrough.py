@@ -19,7 +19,7 @@ The path under assertion:
    exactly the shape the gateway forwards (the T1-verified transport).
 4. `reasoning_readability` metadata: before turn 2, the persisted thread
    classifies as "replayed"; the observability line
-   (`llm-response: ... reasoning_readability=parsed ... cached_tokens=...`)
+   (`llm-response: reasoning replay (agent layer) readability=parsed ...`)
    fires for the turn.
 5. Turn 2 (a continuation on the same thread) completes with a non-empty
    answer over the replayed prefix.
@@ -198,6 +198,8 @@ def test_e7_reasoning_replay_round_trip_through_gateway():
     # default handler writes to STDERR, so it is captured on `result.stderr`,
     # alongside the scripted report JSON on `result.stdout`.
     probe_err = result.stderr
-    assert "llm-response: role=triager" in probe_err, (
-        "the llm-response observability line must be logged for the turn")
+    assert (
+        "llm-response: reasoning replay (agent layer) readability=parsed"
+        in probe_err
+    ), "the llm-response observability line must be logged for the turn"
     assert "cached_tokens=" in probe_err

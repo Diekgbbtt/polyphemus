@@ -37,6 +37,10 @@ services:
       NEO4J_PASSWORD: polymerhus
       POSTGRES_DSN: postgresql://polymerhus:polymerhus@postgres:5432/polymerhus
       KALI_MCP_URL: http://kali:8000/mcp
+      # The side-worktree agent binds the same one `browser` tool as the main
+      # agent. The pool is part of the full stack; a thin stack leaves the
+      # capability degraded (fail-open), never a boot failure.
+      KALI_BROWSER_MCP_URL: ${KALI_BROWSER_MCP_URL:-http://kali:8003/mcp}
       PROJECT_ID: e2e
       LIGHTRAG_API_URL: http://lightrag:9621
       LIGHTRAG_BASE_API_URL: http://lightrag:9621

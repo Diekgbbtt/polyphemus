@@ -29,7 +29,7 @@ STEEL_VERSION_PIN = "0.5.0-preview.6"
 ENVELOPE_KEYS = {"stdout", "stderr", "returncode", "duration_ms"}
 # The binary guard appends its per-invocation trace when it observed a
 # Steel call, and preserves the composition rc when the guard fails.
-GUARD_KEYS = {"steel_events", "shell_returncode"}
+GUARD_KEYS = {"steel_events", "shell_returncode", "error"}
 
 
 def _assert_envelope(out: dict) -> None:

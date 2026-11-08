@@ -402,7 +402,7 @@ def test_c8_live_diff_update_converges_after_record_corruption():
 
     desired = gs.oracle_desired()
     by_name = {m.model_name: m for m in desired if m.known}
-    target_name = "opencode-go/deepseek-v4-flash"
+    target_name = "opencode-go/deepseek-v4.1-flash"
     if target_name not in by_name:
         target_name = sorted(by_name)[0]
     target = by_name[target_name]
@@ -573,7 +573,7 @@ def test_c8_live_virtual_key_provisioned_and_converges():
 
 def test_c8_live_independent_oracle_value_checks():
     """A catalog-derived literal check against ONE live registered record
-    (opencode-go/deepseek-v4-flash), computed inline from a fresh models.dev
+    (opencode-go/deepseek-v4.1-flash), computed inline from a fresh models.dev
     fetch - NOT via build_desired, so a self-referential mapping bug (a wrong
     join, a wrong unit conversion, a wrong registered name all reproducing
     themselves) cannot mask itself. The catalog's absolute values are
@@ -588,7 +588,7 @@ def test_c8_live_independent_oracle_value_checks():
         response.raise_for_status()
         catalog = response.json()
 
-    record = catalog["providers"]["opencode-go"]["models"]["deepseek-v4-flash"]
+    record = catalog["providers"]["opencode-go"]["models"]["deepseek-v4.1-flash"]
     base = record.get("base_model")
     if isinstance(base, str) and base in catalog.get("models", {}):
         resolved = dict(catalog["models"][base])
@@ -613,9 +613,9 @@ def test_c8_live_independent_oracle_value_checks():
     # instead of silently re-baselining this guard.
     assert limits.get("context") == 1000000
     assert limits.get("output") == 384000
-    assert costs.get("input") == 0.22
-    assert costs.get("output") == 0.66
-    assert costs.get("cache_read") == 0.007
+    assert costs.get("input") == 0.15
+    assert costs.get("output") == 0.6
+    assert costs.get("cache_read") == 0.003
     assert isinstance(interleaved, dict) \
         and interleaved.get("field") == "reasoning_content"
 
@@ -624,8 +624,8 @@ def test_c8_live_independent_oracle_value_checks():
     expected_cache_read = round(costs["cache_read"] / 1_000_000, 12)
 
     matches = [e for e in gs.model_info()
-               if e.get("model_name") == "opencode-go/deepseek-v4-flash"]
-    assert matches, "opencode-go/deepseek-v4-flash is not registered live"
+               if e.get("model_name") == "opencode-go/deepseek-v4.1-flash"]
+    assert matches, "opencode-go/deepseek-v4.1-flash is not registered live"
     info = matches[0].get("model_info") or {}
     assert info.get("max_input_tokens") == limits["context"]
     assert info.get("max_output_tokens") == limits["output"]
@@ -634,7 +634,7 @@ def test_c8_live_independent_oracle_value_checks():
     assert info.get("cache_read_input_token_cost") == expected_cache_read
     assert info.get("reasoning_in_response") is True
     assert info.get("reasoning_field") == "reasoning_content"
-    assert info.get("capability_source") == "models.dev/opencode-go/deepseek-v4-flash"
+    assert info.get("capability_source") == "models.dev/opencode-go/deepseek-v4.1-flash"
 
 
 def test_c8_live_provider_cost_override_authors_the_effective_rate():
