@@ -51,7 +51,8 @@ context carrying the bounded set), so the frontmatter description of every
 skill a role may load is rendered into that role's system message.
 
 #234 adds the write half of the same domain (ADR B1): the per-project skill
-store (`SkillStore`) under the app-owned data root, the `write_skill` tool bound
+store (`SkillStore`) under the live skills root's `target-specific-procedure`
+branch, the `write_skill` tool bound
 to one project, and the `meta-usage-skill` reading protocol appended by the read
 path to every load except meta-family skills (`skills/meta/`). Loader, store,
 writer, and protocol injection are one domain
@@ -76,6 +77,7 @@ role that lists freely and loads a named body.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import threading
 from collections.abc import Mapping
@@ -92,6 +94,21 @@ logger = logging.getLogger(__name__)
 # The skills/ mount lives at the repo root (mounted at /srv/skills in dev, baked
 # by the Dockerfile in prod), OUTSIDE the src/ package tree.
 _SKILLS_ROOT = Path(__file__).resolve().parents[4] / "skills"
+
+# The experiment switch for the whole skill-evolution system. The default is
+# on; `0`/`false`/`no`/`off` disables the project evolver controller, the
+# `meta/meta-write-skill` binding, the `record_skill_lesson` tool, and the
+# lesson line in the pod prompts. It is read at CALL time, never cached, so a
+# container recreate is enough to switch an experiment arm.
+SKILL_EVOLUTION_ENV = "SKILL_EVOLUTION_ENABLED"
+_OFF_VALUES = frozenset({"0", "false", "no", "off"})
+
+
+def skill_evolution_enabled() -> bool:
+    """True unless `SKILL_EVOLUTION_ENABLED` carries an off value."""
+    raw = (os.environ.get(SKILL_EVOLUTION_ENV) or "1").strip().lower()
+    return raw not in _OFF_VALUES
+
 
 # The suite's logical root (taxonomy spec R1/D-T1): the identity of the whole
 # well-formed suite. It never appears as a segment of a reported skill name -
@@ -229,6 +246,20 @@ def list_suite_leaves(catalogue: "SkillCatalogue | None" = None) -> list[str]:
     if catalogue is not None:
         return catalogue.suite_leaves()
     return _live_catalogue().suite_leaves()
+
+
+def list_suite_parents(
+    catalogue: "SkillCatalogue | None" = None,
+) -> dict[str, str]:
+    """Every suite skill's class parent, for the filtered listing cascade.
+
+    A class parent maps to itself. A variant leaf maps to its level-1 class
+    directory. The map is derived from the mounted tree, so an abbreviated
+    leaf such as `bfla-alternate-path` resolves to
+    `broken-function-level-authorization` without a hand-written index."""
+    if catalogue is not None:
+        return catalogue.suite_parents()
+    return _live_catalogue().suite_parents()
 
 
 def read_suite_raw(name: str, catalogue: "SkillCatalogue | None" = None) -> str:
@@ -435,6 +466,26 @@ class SkillCatalogue:
             if suite_root in bundle.resolve().parents
         )
 
+    def suite_parents(self) -> dict[str, str]:
+        """Map every suite skill to its class parent.
+
+        A class parent maps to itself. A variant leaf maps to its level-1
+        class directory. Names outside the suite are absent. The map is
+        derived from the mounted tree, so an abbreviated leaf such as
+        `bfla-alternate-path` still resolves to
+        `broken-function-level-authorization`."""
+        suite_root = (self._root / self._logical_root).resolve()
+        parents: dict[str, str] = {}
+        for name, bundle in self._bundles.items():
+            resolved = bundle.resolve()
+            if suite_root not in resolved.parents:
+                continue
+            if resolved.parent == suite_root:
+                parents[name] = name
+            else:
+                parents[name] = resolved.parent.name
+        return parents
+
     def read_raw(self, name: str) -> str:
         """The named skill's `SKILL.md` text with the frontmatter INTACT (the
         suite seam's listing parses it; the seam strips the body on load). An
@@ -510,34 +561,19 @@ def _reset_live_catalogue() -> None:
 # every binding so no agent receives a divergent contract (#222, the #197
 # graph_view precedent). Mirrors `skills/README.md` - update both together.
 SKILL_LOAD_CONTRACT = (
-    "Load a skill by name at runtime: returns the skill body with its YAML "
-    "frontmatter stripped - identical semantics to the shared skill_for loader "
-    "(cached, fail-open to '' on an unknown skill) - plus the meta-usage-skill "
-    "reading protocol appended after a `---` separator (body, separator, "
-    "protocol).\n\n"
-    "Your system prompt lists the skills available to you (name + when-to-use). "
-    "Call load_skill once per skill whose discipline bears on your turn, then "
-    "reason from the returned body; loading the same skill twice returns the "
-    "cached body unchanged.\n\n"
-    "A missing protocol appends nothing, an unknown skill still degrades to "
-    "`''`, and loading a meta-family skill (any skill under `skills/meta/`, "
-    "including the protocol skills themselves) returns its bare body (no "
-    "protocol on the protocol skills: no blackloops). The appended protocol "
-    "always reads from the shared catalogue - a per-project bundle never "
-    "shadows it.\n\n"
-    "EVERY skill carries a data section (frontmatter with name, description, "
-    "metadata.version) so callers can tell what was loaded.\n\n"
-    "LISTING MODE - call load_skill with no name to list the catalogue's skill "
-    "descriptions (name + when-to-use), optionally narrowed by `pattern` (a "
-    "regex searched against each skill's name and description). The listing is "
-    "the discovery surface for a skill outside your bound index, it never "
-    "returns a body, it excludes the meta-family skills, and it is capped (the "
-    "omitted count is stated).\n\n"
-    "PHASE-GATING CONVENTION - load at phase entry, once per thread, never "
-    "speculatively mid-reasoning: call load_skill once when your phase starts "
-    "for each skill your phase needs, then reason from the returned body. "
-    "Repeat loads are cache-cheap but a second load buys nothing new. "
-    "`refresh` is the development hot-reload path only - never set it mid-run."
+    "Load a skill by name at runtime: the body with YAML frontmatter stripped, "
+    "plus the meta-usage-skill protocol after a `---` separator.\n\n"
+    "Your system prompt carries the direct references. Discover the full set "
+    "with the `listing` (no name lists all; `pattern` narrows). Load once per "
+    "skill whose discipline bears on the turn; repeat loads return the cached "
+    "body.\n\n"
+    "An unknown skill degrades to `''`; a missing protocol appends nothing; a "
+    "meta-family skill returns its bare body. The protocol reads from the "
+    "shared catalogue.\n\n"
+    "LISTING MODE: no name lists descriptions (name + when-to-use), optionally "
+    "filtered by `pattern`; no body, excludes meta-family skills.\n\n"
+    "PHASE-GATING: load at phase entry, once per thread. `refresh` is "
+    "development-only."
 )
 
 # The listing-mode header: the header teaching the discovery move, followed by
@@ -741,7 +777,13 @@ def skills_for_role(role_id: str) -> tuple[str, ...]:
     """The role's bounded skill set: `ROLE_SKILLS[role_id]`, or `()` for an
     unknown role (which `skill_agent_binding` refuses - an undeclared role is a
     wiring defect, not an exemption). `()` for a DECLARED role means exempt: no
-    skill surface is bound."""
+    skill surface is bound.
+
+    With the skill-evolution system disabled, the evolver's meta-write-skill
+    binding is empty: the disabled system must not read the authoring meta
+    skill even if a caller reaches the binding directly."""
+    if role_id == "skill_evolver" and not skill_evolution_enabled():
+        return ()
     return ROLE_SKILLS.get(role_id, ())
 
 
@@ -975,7 +1017,8 @@ def _context_project_id(context):
     `context=` mapping that carries `skills` (`context={"skills": [...],
     "project_id": "..."}`). Absent or unshaped -> None, so the index stays
     catalogue-only. This is what makes a project-authored skill (a bundle that
-    exists only under `<data_root>/<project_id>/skills/`) render its frontmatter
+    exists only under `skills/target-specific-procedure/<project_id>/`) render
+    its frontmatter
     description into the system prompt."""
     if isinstance(context, dict):
         project_id = context.get("project_id")
@@ -991,8 +1034,8 @@ def skill_index_middleware(store=None):
     message passes through byte-identical. When the context also carries a
     `project_id`, the index resolves per-project bundles first, so a
     project-authored skill (e.g. `authn`) is collected only when its bundle is
-    at the designed data-dir location and renders its own frontmatter
-    description.
+    at the canonical `target-specific-procedure/<project_id>/` branch and
+    renders its own frontmatter description.
 
     The names arrive through the native `context=` seam - `skill_agent_binding`
     fills that context from `ROLE_SKILLS`, so the middleware itself stays
@@ -1012,6 +1055,49 @@ def skill_index_middleware(store=None):
         return f"{base}\n\n{index}" if base else index
 
     return _skill_index
+
+
+SKILL_REFERENCE_HEADER = "SKILLS - direct references:"
+
+
+def render_skill_references(names) -> str:
+    """The direct-reference line for the auth-capable bindings.
+
+    The full L1 index is deliberately replaced here: the system prompt names
+    the bounded skills (the internal skills plus the project `authn`) and
+    points at the `load_skill` listing for the rest. The line carries no
+    per-skill description, so it stays small, stable, and cache-friendly.
+    Unknown or empty names render nothing (fail-open)."""
+    refs = sorted({name for name in names if isinstance(name, str) and name})
+    if not refs:
+        return ""
+    return (
+        f"{SKILL_REFERENCE_HEADER} "
+        + ", ".join(f"`{name}`" for name in refs)
+        + ". Discover every available skill with the `load_skill` listing "
+        "(call it with no name to list all, or pass `pattern`); load a skill "
+        "only when its discipline applies and only once."
+    )
+
+
+def skill_reference_middleware():
+    """The auth-capable direct-reference middleware: a `dynamic_prompt` that
+    appends `render_skill_references` for the invocation context's bounded
+    set. No bound skills -> the system message passes through byte-identical.
+    The project scope is irrelevant here: the names already include the
+    project `authn`, and the listing tool resolves the store seam itself."""
+    from langchain.agents.middleware import dynamic_prompt  # noqa: PLC0415
+
+    @dynamic_prompt
+    def _skill_references(request) -> str:
+        context = getattr(getattr(request, "runtime", None), "context", None)
+        base = request.system_prompt or ""
+        refs = render_skill_references(_bound_skills(context))
+        if not refs:
+            return base
+        return f"{base}\n\n{refs}" if base else refs
+
+    return _skill_references
 
 
 # The reading-protocol skill (#234): the first-class usage-protocol skill in
@@ -1183,10 +1269,11 @@ def validate_skill(
 
 # --- The per-project skill store (#234) ---------------------------------------
 #
-# The per-project skill bundle lives under the app-owned data root beside the
-# loader's shared catalogue, in the canonical skill layout:
+# The per-project skill bundle lives under the live skills root's
+# `target-specific-procedure/<project_id>/` branch, beside the loader's shared
+# catalogue, in the canonical skill layout:
 #
-#     <data_root>/<project_id>/skills/<skill_name>/
+#     skills/target-specific-procedure/<project_id>/<skill_name>/
 #     ├── SKILL.md
 #     ├── references/
 #     ├── scripts/
@@ -1350,9 +1437,11 @@ class SkillStore:
     `_SKILLS_ROOT`), whose `target-specific-procedure/<project_id>/` branch is
     the project's own skill area: the bootstrapper's procedures and the evolved
     or newly mined project-specific skills live there, laid out like the
-    catalogue bundles. The explicit-root constructor is kept for the tests'
-    temp stores (the `hunt_store` / #220 auth-store precedent). Import performs
-    no I/O."""
+    catalogue bundles. The data root holds the AuthContext and the runtime
+    module state; it never holds a project-specific skill.
+
+    The explicit-root constructor is kept for the tests' temp stores (the
+    `hunt_store` / #220 auth-store precedent). Import performs no I/O."""
 
     def __init__(self, root_dir: str | Path | None = None):
         """Rooted under `root_dir` (default: the live `skills/` root)."""
@@ -1363,6 +1452,11 @@ class SkillStore:
     def _project_skills_root(self, project_id: str) -> Path:
         validate_path_component(project_id, "project_id")
         return self._root / PROCEDURE_BRANCH / project_id
+
+    def _project_bundle_paths(self, project_id: str, skill: str):
+        """The project SKILL.md candidate: the canonical
+        `skills/target-specific-procedure/<project_id>/<skill>/` bundle."""
+        yield self._bundle_dir(project_id, skill) / "SKILL.md"
 
     def _bundle_dir(self, project_id: str, skill: str) -> Path:
         validate_path_component(skill, "skill")
@@ -1396,12 +1490,12 @@ class SkillStore:
 
     def list_skills(self, project_id: str | None = None) -> list[str]:
         """The project's own skill-bundle names, sorted: every directory under
-        the project `skills/` bucket that carries a `SKILL.md`, minus the
-        scaffold-owned reserved names (`lessons`, `evolution` - directories, not
-        bundles). The listing surface's project half (#236): a project-authored
-        skill such as `authn` is discoverable. A missing bucket is the valid
-        empty; an unreadable one and an unsafe project id degrade to `[]` - a
-        listing never raises."""
+        the canonical `target-specific-procedure/<project_id>/` branch that
+        carries a `SKILL.md`, minus the scaffold-owned reserved names
+        (`lessons`, `evolution` - directories, not bundles). The listing
+        surface's project half (#236): a project-authored skill such as `authn`
+        is discoverable. A missing bucket is the valid empty; an unreadable one
+        and an unsafe project id degrade to `[]` - a listing never raises."""
         if project_id is None:
             return []
         try:
@@ -1428,10 +1522,12 @@ class SkillStore:
         serves the baseline."""
         if project_id is not None:
             try:
-                path = self._bundle_dir(project_id, name) / "SKILL.md"
+                paths = list(self._project_bundle_paths(project_id, name))
             except (OSError, ValueError):
-                path = None
-            if path is not None and path.is_file():
+                paths = []
+            for path in paths:
+                if not path.is_file():
+                    continue
                 try:
                     return _strip_frontmatter(path.read_text(encoding="utf-8"))
                 except (OSError, ValueError):
@@ -1454,10 +1550,12 @@ class SkillStore:
         render depends on this."""
         if project_id is not None:
             try:
-                path = self._bundle_dir(project_id, name) / "SKILL.md"
+                paths = list(self._project_bundle_paths(project_id, name))
             except (OSError, ValueError):
-                path = None
-            if path is not None and path.is_file():
+                paths = []
+            for path in paths:
+                if not path.is_file():
+                    continue
                 try:
                     meta = _parse_frontmatter(path.read_text(encoding="utf-8"))
                 except (OSError, ValueError):
@@ -1827,8 +1925,9 @@ WRITE_SKILL_CONTRACT = (
     "directory holding the procedure your project accumulates, so sibling and "
     "later agents start from known ground instead of rediscovering it.\n\n"
     "DOMAIN MODEL - a skill bundle is the project's "
-    "`data/<project_id>/skills/<skill>/` directory (SKILL.md, references/, "
-    "scripts/, assets/). The `procedure` target carries the SKILL.md body "
+    "`skills/target-specific-procedure/<project_id>/<skill>/` directory "
+    "(SKILL.md, references/, scripts/, assets/). The `procedure` target "
+    "carries the SKILL.md body "
     "alone; `references/<name>` writes one bulky target file (endpoint "
     "snapshots, header dumps, role matrices) so the procedure stays compact "
     "and carries only a context pointer. The bundle is created on first write. "
@@ -1929,26 +2028,16 @@ def build_write_skill_tool(project_id: str, store: "SkillStore | None" = None):
 # `meta-usage-skill` (D232-3: the three prose sites - this contract, the usage
 # protocol, the evolver prompt - state the same semantics).
 RECORD_LESSON_CONTRACT = (
-    "Record ONE skill-usage lesson: a reusable observation about a skill you "
-    "used, grounded in this run's evidence, persisted in the project's lesson "
-    "shard for that skill.\n\n"
-    "FIELDS - `skill`: the skill the lesson is about (one flat name). `type`: "
-    "`specification` (knowledge specific to the target's attack surface), "
-    "`extension` (an extension of the procedure: new steps, an optimised "
-    "grouping, an anti-pattern - steps that must not be done - or an extension "
-    "of the technique's scope), or `defect` (a genuine error in the illustrated "
-    "procedure). `lesson`: the reusable lesson in prose. `expected`: what the "
-    "skill states or implies, extracted as close to its wording as possible. "
-    "`evidence`: concrete identifiers from this run (http-history artifact "
-    "ids, request/response entries, run ids).\n\n"
-    "THE STORE STAMPS the key, the skill's base version, the writing agent's "
-    "identity, and the timestamp - never supply them. A skill whose version "
-    "does not resolve is refused.\n\n"
-    "OUTCOMES - one in-band envelope: `{ok: true, key, base_version}` or "
-    "`{ok: false, error, detail}` with error one of `lesson_invalid`, "
-    "`skill_unknown`, `store_unavailable`. Nothing raises into the turn.\n\n"
-    "Record once per material observation; the SkillEvolver consumes the "
-    "accumulated lessons, so not every step needs one."
+    "Record ONE skill-usage lesson grounded in this run's evidence, persisted "
+    "in the project lesson shard.\n\n"
+    "Fields: `skill` (flat name); `type` = `specification`, `extension`, or "
+    "`defect`; `lesson` (reusable prose); `expected` (what the skill states); "
+    "`evidence` (run identifiers, artifact ids).\n\n"
+    "The store stamps the key, base version, agent identity, and timestamp; "
+    "never supply them. An unresolved skill version is refused.\n\n"
+    "Outcome: `{ok: true, key, base_version}` or `{ok: false, error, detail}`, "
+    "error in `lesson_invalid`, `skill_unknown`, `store_unavailable`. Nothing "
+    "raises."
 )
 
 
@@ -2067,10 +2156,12 @@ def build_skill_tools(
     stamped by the symbolic layer (the binding), never supplied by the model;
     `lesson_store` is the injectable lesson seam (tests)."""
     project_id = _resolve_project_id(project_id)
-    tools = [
-        build_load_skill_tool(project_id, store=store),
-        build_record_lesson_tool(project_id, store=lesson_store, role_id=role_id),
-    ]
+    tools = [build_load_skill_tool(project_id, store=store)]
+    if skill_evolution_enabled():
+        tools.append(
+            build_record_lesson_tool(
+                project_id, store=lesson_store, role_id=role_id)
+        )
     if with_write_skill:
         if not project_id:
             raise ValueError(
@@ -2461,6 +2552,7 @@ __all__ = [
     "PROTOCOL_SEPARATOR",
     "RECORD_LESSON_CONTRACT",
     "ROLE_SKILLS",
+    "SKILL_EVOLUTION_ENV",
     "SKILL_INDEX_HEADER",
     "SKILL_LIST_HEADER",
     "SKILL_LOAD_CONTRACT",
@@ -2480,12 +2572,14 @@ __all__ = [
     "build_record_lesson_tool",
     "build_skill_tools",
     "build_write_skill_tool",
+    "skill_evolution_enabled",
     "clear_cache",
     "is_meta_skill",
     "list_skill_descriptions",
     "list_skills",
     "list_suite_classes",
     "list_suite_leaves",
+    "list_suite_parents",
     "read_suite_raw",
     "render_skill_index",
     "skill_agent_binding",

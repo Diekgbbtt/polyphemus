@@ -25,6 +25,7 @@ read must be the name the census already reports.
 from __future__ import annotations
 
 import copy
+import json
 import logging
 from typing import Any
 
@@ -105,10 +106,17 @@ AUTH_STORE_CONTRACT = (
     "and the server-stamped recency fact `updated_at` (refreshed on every "
     "write and seed; a value you supply is overwritten, never trusted). "
     "Full state shape: `{\"overview\": ..., \"accounts\": ...}`.\n\n"
-    "READ/WRITE RULES - reads are field-arbitrary: an empty path returns the "
-    "full state, a dot-path (`accounts.alice`, `accounts.alice.tokens.session`, "
-    "`overview.notes`) projects that field, and a missing path is a valid "
-    "empty (`{}`), never an error. Writes are single-field merges: one field "
+    "READ/WRITE RULES - reads are field-arbitrary. An empty path returns the "
+    "concise `summary` view by default: the overview plus the account names, "
+    "origins, procedures, role names, default roles, statuses, and token "
+    "METADATA (location, target, expiry) - never a credential value, token "
+    "value, form selector, role credential set, steel reference, snapshot, or "
+    "notes body. `view=\"full\"` returns the full state; `view=\"overview\"` "
+    "or `view=\"account\"` returns one half; `fields` projects several "
+    "dot-paths at once. A dot-path (`accounts.alice`, "
+    "`accounts.alice.tokens.session`, `overview.notes`) projects that field, "
+    "and a missing path is a valid empty (`{}`), never an error. Writes are "
+    "single-field merges: one field "
     "per call, siblings untouched, and a null value removes an optional "
     "field. Creating an account writes its record mapping at "
     "`accounts.<name>`; writing deeper (`accounts.<name>.tokens.session`) "
@@ -134,46 +142,20 @@ REDACTED = "<redacted>"
 # path, and the redaction rule is load-bearing usage information (what the model
 # may conclude from what it reads).
 AUTH_STORE_READ_CONTRACT = (
-    "Read the run's per-project auth store in its READ-ONLY form: the one "
-    "shared bucket of recorded session material (the login-mechanism overview "
-    "plus the account records), so a request shape can be typed against what "
-    "was actually recorded instead of inferred from responses.\n\n"
-    "DOMAIN MODEL - the store is the per-project `data/<project_id>/auth/` "
-    "bucket. An overview is the login-mechanism header: `login_endpoint`, "
-    "`required_headers` (header NAMES), `mechanism`, `defences`, "
-    "`fingerprinting`, `technical_conditions` (a list of `{name, check}` "
-    "pairs), `auth_probe` (`{url}` - the authenticated-context oracle: a "
-    "browser request to it answers 2xx only for an authenticated context; "
-    "401/403/3xx is not authenticated), `notes`. An account record is one named bundle: `origin` "
-    "(operator or agent), an optional `procedure` label, optional "
-    "`credentials` (`username`, `login_url`, `domain`, form selectors), "
-    "optional `roles` (role -> credential set) with `default_role`, optional "
-    "`tokens` (each `{value, location: cookie | header | storage, target?, "
-    "expiry?}`), an optional `browser_context` reference, an optional "
-    "concrete `snapshot` (`{headers, cookies, params, captured_at}` - the "
-    "point-in-time request state a follower replays), `notes`, the "
-    "loop-asserted `status` (`valid` | `not_valid`, absent until asserted), "
-    "and the server-stamped `updated_at`.\n\n"
-    "REDACTION - this view carries NAMES, SHAPES, AND STATUSES, NEVER SECRET "
-    "VALUES: every password, every token value, and every snapshot cookie, "
-    "header, or param value reads as the literal " + REDACTED + " marker. Type "
-    "the request shape FROM the names, the locations, and the statuses - the "
-    "cookie and header NAMES, a token's `location` / `target` / `expiry`, the "
-    "account identity, the login endpoint. Never ask for a value, never try to "
-    "reconstruct or replay the material, and never quote a credential or a "
-    "session value into a proposal.\n\n"
-    "READ RULES - reads are field-arbitrary: an empty path returns the full "
-    "redacted state (`{\"command\": \"read\", \"path\": \"\"}`), a dot-path "
-    "(`overview`, `accounts.alice`, `accounts.alice.tokens`) projects that "
-    "field, and a missing path is a valid empty (`{}`), never an error. The "
-    "redaction is applied BEFORE the projection, so a narrow path cannot "
-    "address a raw value either.\n\n"
-    "NO WRITE RULES - this binding is READ-ONLY (D223-5): the analysis turns "
-    "read the store, they never write it and never authenticate from it. Every "
-    "command but `read` refuses with `auth_readonly`; a store that cannot be "
-    "read degrades fail-open to an empty value, and a read that itself fails "
-    "refuses `store_unavailable`. Every outcome arrives as an in-band coded "
-    "envelope; nothing raises into the turn."
+    "Read the run's per-project auth store in READ-ONLY form: the `overview` "
+    "(login endpoint, `required_headers`, mechanism) plus `account` records "
+    "(`tokens`, `snapshot`, `browser_context`, `status`).\n\n"
+    "Names, shapes, and statuses only: passwords, token values, and snapshot "
+    "cookie/header/param values read as " + REDACTED + ". Never reconstruct or "
+    "replay a secret.\n\n"
+    "An empty path returns `summary`: the login header plus the account index. "
+    "`overview` or `account` selects one half; `fields` projects dot-paths; a "
+    "missing path is a valid empty (`{}`). `view=\"full\"` is retired here: use "
+    "`fields` or a narrow path. A read "
+    "over 12000 characters returns its keys and a narrowing hint. Redaction "
+    "precedes projection.\n\n"
+    "No write: every command but `read` refuses with `auth_readonly`. A read "
+    "failure returns `store_unavailable`."
 )
 
 
@@ -194,10 +176,10 @@ class AuthStoreArgs(BaseModel):
         default="",
         description=(
             "Dot-path selecting the field. On read an empty path returns "
-            "the full state for orientation (`{\"command\": \"read\", "
-            "\"path\": \"\"}`), while a narrow path keeps the turn small "
-            "and precise (`overview` for the login-mechanism header, "
-            "`accounts.alice` for one account, "
+            "the concise summary view for orientation (`{\"command\": "
+            "\"read\"}`); set `view=\"full\"` for the full state, while a "
+            "narrow path keeps the turn small and precise (`overview` for "
+            "the login-mechanism header, `accounts.alice` for one account, "
             "`accounts.alice.tokens.session` for one token, "
             "`overview.technical_conditions` for the procedure "
             "conditions). On write it names the single field to merge: "
@@ -205,6 +187,24 @@ class AuthStoreArgs(BaseModel):
             "`accounts.alice.tokens.session` with a token entry merges "
             "one token, `overview.notes` merges into the login-mechanism "
             "header."
+        ),
+    )
+    view: str = Field(
+        default="summary",
+        description=(
+            "Read view for an empty path: `summary` (default) returns the "
+            "concise core - overview, account names, roles, and token "
+            "metadata; `overview` or `account` returns one half; `full` "
+            "returns the whole state (redacted on the read-only binding). "
+            "A non-empty `path` takes precedence."
+        ),
+    )
+    fields: tuple[str, ...] = Field(
+        default=(),
+        description=(
+            "Optional list of dot-paths to project together when `path` is "
+            "empty (for example [\"overview.login_endpoint\", "
+            "\"accounts.alice.status\"]). A non-empty `path` takes precedence."
         ),
     )
     value: Any = Field(
@@ -244,13 +244,31 @@ class AuthStoreReadArgs(BaseModel):
         default="",
         description=(
             "Dot-path selecting the field to project. An empty path returns "
-            "the full redacted state (`{\"command\": \"read\", \"path\": \"\"}`) "
-            "for orientation, while a narrow path keeps the turn small and "
+            "the concise summary view; set `view=\"full\"` for the full "
+            "redacted state, while a narrow path keeps the turn small and "
             "precise (`overview` for the login-mechanism header, "
             "`accounts.alice` for one account, `accounts.alice.tokens` for its "
             "token names, locations, and statuses). Secret values read as the "
             "redaction marker, never as the value - a narrow path cannot reach "
             "one either."
+        ),
+    )
+    view: str = Field(
+        default="summary",
+        description=(
+            "Read view for an empty path: `summary` (default) returns the "
+            "concise core - overview, account names, roles, and token "
+            "metadata; `overview` or `account` returns one half; `full` "
+            "returns the full redacted state. A non-empty `path` takes "
+            "precedence."
+        ),
+    )
+    fields: tuple[str, ...] = Field(
+        default=(),
+        description=(
+            "Optional list of dot-paths to project together when `path` is "
+            "empty (for example [\"overview.login_endpoint\", "
+            "\"accounts.alice.status\"]). A non-empty `path` takes precedence."
         ),
     )
 
@@ -317,6 +335,137 @@ def redact_auth_state(state: Any) -> dict:
         for record in accounts.values():
             _redact_account(record)
     return out
+
+
+# The concise read views. `summary` is the default for an empty path; `full`
+# is explicit because it carries the whole redacted/full state.
+_READ_VIEWS = ("summary", "overview", "account", "full")
+
+# The summary overview projection: the login-mechanism header, not the whole
+# free-form bucket. The full overview stays reachable through `path="overview"`.
+_SUMMARY_OVERVIEW_FIELDS = (
+    "login_endpoint", "required_headers", "mechanism", "defences",
+)
+_SUMMARY_NOTES_MAX_CHARS = 500
+
+# The read response bound. A larger projection is a narrowing instruction, not
+# a payload: the agent gets the keys and a hint instead of a 70K blob.
+_AUTH_READ_MAX_CHARS = 12_000
+
+
+def _summary_overview(overview: Any) -> dict:
+    """The concise overview: the canonical login fields plus a bounded note."""
+    if not isinstance(overview, dict):
+        return {}
+    out = {
+        key: overview[key] for key in _SUMMARY_OVERVIEW_FIELDS if key in overview
+    }
+    notes = str(overview.get("notes") or "")
+    if notes:
+        out["notes"] = (
+            notes[:_SUMMARY_NOTES_MAX_CHARS]
+            + ("..." if len(notes) > _SUMMARY_NOTES_MAX_CHARS else ""))
+    return out
+
+
+def _bounded_read(result: dict) -> dict:
+    """Bound one read: a projection over the cap becomes a narrowing hint."""
+    if len(json.dumps(result, default=str)) <= _AUTH_READ_MAX_CHARS:
+        return result
+    value = result.get("value")
+    keys = sorted(value) if isinstance(value, dict) else []
+    return {
+        "ok": True,
+        "view": result.get("view"),
+        "truncated": True,
+        "keys": keys,
+        "hint": (
+            f"the read exceeds the {_AUTH_READ_MAX_CHARS}-character bound; "
+            "use fields=[...] for the exact paths, or a narrow path such as "
+            "accounts.<name>.tokens"),
+    }
+
+
+def _summary_tokens(tokens: Any) -> dict:
+    """The token METADATA index: the token name plus its location, target, and
+    expiry. The value is never copied, so the summary cannot leak a secret."""
+    if not isinstance(tokens, dict):
+        return {}
+    out = {}
+    for name, entry in sorted(tokens.items()):
+        if not isinstance(entry, dict):
+            out[name] = {}
+            continue
+        out[name] = {
+            key: entry[key]
+            for key in ("location", "target", "expiry")
+            if key in entry
+        }
+    return out
+
+
+def _summary_account(name: str, record: Any) -> dict:
+    """One account-index entry: identity and shape only. Credentials, form
+    selectors, role credential sets, token values, steel references, snapshots,
+    and free-text notes are deliberately absent - a path reaches them."""
+    out: dict = {"name": name}
+    if not isinstance(record, dict):
+        return out
+    for key in ("origin", "procedure", "default_role", "status", "updated_at"):
+        if key in record:
+            out[key] = record[key]
+    roles = record.get("roles")
+    if isinstance(roles, dict) and roles:
+        out["roles"] = sorted(roles)
+    tokens = _summary_tokens(record.get("tokens"))
+    if tokens:
+        out["tokens"] = tokens
+    return out
+
+
+def _summary_accounts(state: Any) -> list[dict]:
+    accounts = state.get("accounts") if isinstance(state, dict) else None
+    if not isinstance(accounts, dict):
+        return []
+    return [_summary_account(name, record)
+            for name, record in sorted(accounts.items())]
+
+
+def _summary_state(state: Any) -> dict:
+    overview = state.get("overview") if isinstance(state, dict) else None
+    return {
+        "overview": _summary_overview(overview),
+        "accounts": _summary_accounts(state),
+    }
+
+
+def _read_projection(state: Any, path: str, view: str,
+                     fields: tuple[str, ...]) -> dict:
+    """Project one read: a path wins, then explicit fields, then the named
+    view. The state is already redacted on the read-only binding, so the
+    projection never has a second redaction rule to keep in sync."""
+    if path:
+        return {"value": AuthStore._project(state, path)}
+    if fields:
+        return {
+            "fields": list(fields),
+            "value": {field: AuthStore._project(state, field)
+                      for field in fields},
+        }
+    if view not in _READ_VIEWS:
+        return {
+            "error": "auth_invalid",
+            "detail": f"auth_invalid: view must be one of {_READ_VIEWS}",
+        }
+    if view == "overview":
+        overview = state.get("overview") if isinstance(state, dict) else None
+        return {"view": view,
+                "value": {"overview": overview if isinstance(overview, dict) else {}}}
+    if view == "account":
+        return {"view": view, "value": {"accounts": _summary_accounts(state)}}
+    if view == "full":
+        return {"view": view, "value": state}
+    return {"view": "summary", "value": _summary_state(state)}
 
 
 # --- #384 (arm L): the canonical-origin resolution --------------------------
@@ -439,7 +588,9 @@ def build_auth_store_tool(project_id: str | None = None, store: AuthStore | None
 
     if read_only:
         @tool(args_schema=AuthStoreReadArgs)
-        def auth_store(command: str = "read", path: str = "") -> dict:
+        def auth_store(command: str = "read", path: str = "",
+                       view: str = "summary",
+                       fields: tuple[str, ...] = ()) -> dict:
             """Placeholder - the read-only contract is assigned below."""
             if command != "read":
                 return {"ok": False, "error": "auth_readonly",
@@ -447,6 +598,16 @@ def build_auth_store_tool(project_id: str | None = None, store: AuthStore | None
                                   f"{command!r} is not available - read the "
                                   f"store, never write it"}
             at = path or ""
+            if view == "full" and not at:
+                return {
+                    "ok": False,
+                    "error": "auth_full_view_retired",
+                    "detail": (
+                        "view=\"full\" is retired on the read-only binding: it "
+                        "returned the whole redacted bucket and dominated the "
+                        "session context. Use fields=[...] or a narrow path "
+                        "(overview, accounts.<name>, accounts.<name>.tokens)."),
+                }
             try:
                 # Redact the WHOLE state first, project second: the projection
                 # is the store's own (#247 name canonicalisation included), so
@@ -454,8 +615,12 @@ def build_auth_store_tool(project_id: str | None = None, store: AuthStore | None
                 # resolution rides between (a host, never a secret).
                 state = redact_auth_state(seam.read(project_id, ""))
                 state = _resolve_canonical_origin(state, _origin_once())
+                projected = _read_projection(state, at, view, fields)
+                if "error" in projected:
+                    return {"ok": False, "error": projected["error"],
+                            "detail": projected["detail"]}
                 return {"ok": True, "command": "read", "path": at,
-                        "value": AuthStore._project(state, at)}
+                        **_bounded_read(projected)}
             except Exception as exc:  # noqa: BLE001 - fail-open, never a raise
                 return {"ok": False, "error": "store_unavailable",
                         "detail": f"store_unavailable: {exc}"}
@@ -466,7 +631,9 @@ def build_auth_store_tool(project_id: str | None = None, store: AuthStore | None
         return tool_obj
 
     @tool(args_schema=_ARGS_SCHEMA)
-    def auth_store(command: str, path: str = "", value: Any = None) -> dict:
+    def auth_store(command: str, path: str = "", value: Any = None,
+                   view: str = "summary",
+                   fields: tuple[str, ...] = ()) -> dict:
         """Placeholder - the real contract is assigned below (the `@tool`
         decorator reads the docstring at decoration time, so the interpolated
         `AUTH_STORE_CONTRACT` is set on the returned tool explicitly)."""
@@ -480,8 +647,12 @@ def build_auth_store_tool(project_id: str | None = None, store: AuthStore | None
                 # projection, so a narrow read cannot address a raw leaf.
                 state = redact_auth_state(seam.read(project_id, ""))
                 state = _resolve_canonical_origin(state, _origin_once())
+                projected = _read_projection(state, at, view, fields)
+                if "error" in projected:
+                    return {"ok": False, "error": projected["error"],
+                            "detail": projected["detail"]}
                 return {"ok": True, "command": "read", "path": at,
-                        "value": AuthStore._project(state, at)}
+                        **_bounded_read(projected)}
             except Exception as exc:  # noqa: BLE001 - fail-open, never a raise
                 return {"ok": False, "error": "store_unavailable",
                         "detail": f"store_unavailable: {exc}"}

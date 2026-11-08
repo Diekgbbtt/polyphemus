@@ -53,15 +53,21 @@ UNIT_C = "RESTApi"
 class _FakePg:
     """The fake pg accessors (the `test_hunting_runtime` seam contract): mint a
     deterministic run id, record every status write in order, carry the merged
-    run record (the `stats` JSONB the driver updates), fail on demand."""
+    run record (the `stats` JSONB the driver updates), fail on demand, and serve
+    the project's hunting config (default: the `batched` mode)."""
 
-    def __init__(self, *, fail_create: bool = False, resume_record: dict | None = None):
+    def __init__(self, *, fail_create: bool = False, resume_record: dict | None = None,
+                 hunting_settings: dict | None = None):
         self.fail_create = fail_create
         self.statuses: list[tuple[str, str]] = []
         self.stats_writes: list[tuple[str, str, dict | None]] = []
         self.records: dict[str, dict] = {}
+        self.hunting_settings: dict = dict(hunting_settings or {})
         if resume_record is not None:
             self.records[RUN] = dict(resume_record)
+
+    def get_hunting_settings(self, project_id: str) -> dict:
+        return dict(self.hunting_settings)
 
     def create_hunting_run(self, project_id: str) -> str:
         if self.fail_create:
@@ -101,7 +107,7 @@ class _FakePg:
 
 class _FakeControl:
     """The session-capable control-plane fake: RUNS the started sessions as
-    tasks on the current loop, mirrors the registry through the live-task set."""
+    tasks on the current threat, mirrors the registry through the live-task set."""
 
     def __init__(self, refuse: set[str] | None = None):
         self._refuse = set(refuse or ())
@@ -142,14 +148,21 @@ def _patch_pg(monkeypatch, fake):
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_stats", fake.set_hunting_run_stats)
     monkeypatch.setattr("polymerhus.app.clients.pg.get_hunting_run", fake.get_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
-
-
-async def _noop_hunter_dispatch(config):
-    return None
+    monkeypatch.setattr(
+        "polymerhus.app.clients.pg.get_hunting_settings",
+        fake.get_hunting_settings,
+    )
 
 
 def _noop_hunter_builder(*, run_id, project_id, hunter_store, **kw):
-    return _noop_hunter_dispatch, None
+    """Conclude the fake hunt immediately AND write its zero-spec terminal set:
+    the move is admission, the terminal set is completion (F-022)."""
+    async def dispatch(config):
+        hunt_key = config.get("dispatch_id")
+        if hunt_key:
+            hunter_store.finalize_specs(project_id, hunt_key, run_id=run_id)
+        return None
+    return dispatch, None
 
 
 async def _noop_pod_builder(spec, **kw):
@@ -283,7 +296,7 @@ def test_a_launched_unit_writes_its_model_through_the_real_store(
         tmp_path, monkeypatch):
     """S1 6/9.1: the production path runs the REAL modeller pass - the launched
     unit's five gate writes land in the threat model store as a COMPLETED,
-    valid model with its produced loop file."""
+    valid model with its produced threat file."""
     fake = _FakePg()
     _patch_pg(monkeypatch, fake)
     hunter, models = _stores(tmp_path)
@@ -301,8 +314,8 @@ def test_a_launched_unit_writes_its_model_through_the_real_store(
     model = models.read_model(PROJECT, UNIT_A)
     assert model["state"] == ModelState.COMPLETED.value
     assert model["validation"]["valid"] is True
-    assert [loop["loop_id"] for loop in models.read_loop_files(PROJECT, UNIT_A)] \
-        == ["loop-1"]
+    assert [threat["threat_id"] for threat in models.read_threat_files(PROJECT, UNIT_A)] \
+        == ["threat-1"]
     assert fake.statuses == [("running", RUN), (RUN, "complete")]
 
 
@@ -629,11 +642,17 @@ def test_the_run_scoped_actor_completes_every_unit_of_the_run(tmp_path, monkeypa
                 self._surface = build_modeller_tool_surface(
                     self.project_id, unit, self.tools)
                 built.append(self.run_id)
-            from tests.hunting_fixtures import modeller_gate_payloads
+            from tests.hunting_fixtures import modeller_gate_payloads, write_gate
 
-            self._surface["hunts_store"].invoke({
-                "cmd": "write", "state": turn_input.state.value,
-                "sections": modeller_gate_payloads()[turn_input.state]})
+            if turn_input.phase == "WELLFORMEDNESS":
+                self._surface["notes"].invoke({
+                    "cmd": "write", "option": "append",
+                    "note_name": "wellformedness", "kind": "wellformedness",
+                    "body": "every threat checked",
+                })
+                return None
+            write_gate(self._surface, turn_input.state,
+                       payload=modeller_gate_payloads()[turn_input.state])
             return None
 
         def last_degrade_cause(self):

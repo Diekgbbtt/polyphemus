@@ -1,21 +1,23 @@
 """T7 (#380): a dry mocked run through the prompt's pass protocol.
 
 The live edge - the LLM - is a scripted model emitting the REAL tool calls the
-production prompt tells the hunter to make: the five phase-summary notes, the
-batched all-`hypothesised` set write, the well-formedness note, and the terminal
-promote/declass set write. The real harness, the real pass tracker, and the real
-per-project `HunterMemoryStore` ride, so the artifact read back is the prompt's
-protocol executed end to end, not a live-model quality claim.
+production prompt tells the hunter to make: the five phase-summary notes, one
+`hypothesised` write per spec, the well-formedness note, one terminal status
+write per spec, and the finalize call. The real harness, the real pass tracker,
+and the real per-project `HunterMemoryStore` ride, so the artifact read back is
+the prompt's protocol executed end to end, not a live-model quality claim.
 
 The set is checked for the properties the prompt promises: a well-formed,
 disjoint spec set over the slice; every body the reduced D4 surface; the drops
-applied only at the terminal write; the mixed status set refused; a merged
-identity absorbed without breaking the whole set; and a [D2] phase-note
-rewrite that stays trail material.
+applied only at the one-spec terminal writes; a partial set refused at finalize;
+a merged identity absorbed without breaking the whole set; and a [D2]
+phase-note rewrite that stays trail material.
 """
 from __future__ import annotations
 
-from polymerhus.attack.hunting.spec_contract import SKILL_PROCEDURE_FIELDS
+from polymerhus.attack.hunting.spec_contract import (
+    SKILL_CONCRETISED_PROCEDURE_FIELDS,
+)
 from tests.hunting_fixtures import (
     HUNT_KEY,
     PROJECT,
@@ -39,28 +41,30 @@ def _phase_note(phase, *, action="append", body=None):
 
 
 def _spec(status, fault, strategy, *, symptom, assumption, rationale):
-    """One entry of the batched `specs` set at the reduced D4 surface (S3 8.6):
+    """One spec at the reduced D4 surface (S3 8.6):
     the target identity, the observable symptoms, the assumptions, the
     vulnerability-level rationale, and the typed provenance with the seven-field
     skill-procedure excerpt."""
     return {
         "status": status,
-        "fault_keyword": fault,
-        "strategy_keyword": strategy,
+        "discriminators": [
+            {"axis": "fault", "value": fault.replace("_", "-")},
+            {"axis": "technique", "value": strategy.replace("_", "-")},
+        ],
         "target_identity": {"url": URL, "unit_id": UNIT_ID},
         "verification_symptoms": [symptom],
         "assumptions": [assumption],
         "rationale": rationale,
         "provenance": {
-            "loop_id": "loop-1",
+            "threat_id": "threat-1",
             "unit_id": UNIT_ID,
             "canonical_class": "IDOR",
             "web_vulnerability_class": "idor",
             "baseline_ref": "http_01J0000000000000000000000A",
-            "skill_procedure": {
-                field: f"the class skill's {field} excerpt"
-                for field in SKILL_PROCEDURE_FIELDS
-            },
+        },
+        "skill_concretised_procedure": {
+            field: f"the class skill's {field} excerpt"
+            for field in SKILL_CONCRETISED_PROCEDURE_FIELDS
         },
     }
 
@@ -95,8 +99,12 @@ def _generated():
     ]
 
 
-def _set_write(specs):
-    return _tool_call("hunts_store", {"command": "write", "specs": specs})
+def _write_spec(spec):
+    return _tool_call("hunts_store", {"command": "write", "spec": spec})
+
+
+def _finalize():
+    return _tool_call("hunts_store", {"command": "finalize"})
 
 
 def _run(tmp_path, steps):
@@ -106,8 +114,8 @@ def _run(tmp_path, steps):
 
 def test_the_dry_run_produces_a_well_formed_persisted_spec_set(tmp_path):
     """The prompt's protocol end to end: ground, slice, collect, discriminate,
-    generate the whole set, check well-formedness, verify, and apply the drops
-    at the terminal write."""
+    generate one spec per call, check well-formedness, verify, apply the drops
+    one call per spec, and finalize."""
     generated = _generated()
     steps = [
         _phase_note("grounding", body="Frame explicit; failure modes: the lookup "
@@ -125,50 +133,49 @@ def test_the_dry_run_produces_a_well_formed_persisted_spec_set(tmp_path):
         _phase_note("discriminate", body="Separate on authorisation source x "
                     "delivery behaviour; narrow on the item id, broad on the "
                     "two delivery routes."),
-        _set_write(generated),                          # the GENERATE exit
+        *[_write_spec(spec) for spec in generated],    # the GENERATE exit
         _phase_note("well_formedness", body="No overlap: the direct read, the "
                     "signed URL, and the share route own disjoint sub-slices. "
                     "Coverage basis: both delivery routes and the minting "
                     "precondition are named. Planned drop: the share-route spec "
                     "if the viewer mint probe proves the route absent."),
-        _set_write([
-            {**generated[0], "status": "ratified"},
-            {**generated[1], "status": "ratified"},
-            {**generated[2], "status": "dropped"},
-        ]),                                             # the VERIFY-CLAIMS exit
+        _write_spec({**generated[0], "status": "ratified"}),
+        _write_spec({**generated[1], "status": "ratified"}),
+        _write_spec({**generated[2], "status": "dropped"}),
+        _finalize(),                                    # the VERIFY-CLAIMS exit
     ]
     store, result = _run(tmp_path, steps)
 
     assert result["state"] == "complete"
     assert "state: complete" in result["feedback"]
-    assert "ratified: id-unbound_direct-read" in result["feedback"]
+    assert "ratified: idor__id-unbound__direct-read" in result["feedback"]
 
     produced = (tmp_path / PROJECT / "hunting" / "hunter" / "test-specs"
                 / HUNT_KEY / "produced")
     # the derived identities are the file-name stems; the set is disjoint
     names = {path.stem for path in produced.glob("*.yaml")}
     assert names == {
-        "id-unbound_direct-read", "id-unbound_signed-url",
-        "share-route_mint-url"}
+        "idor__id-unbound__direct-read", "idor__id-unbound__signed-url",
+        "idor__share-route__mint-url"}
     assert store.read_spec(PROJECT, HUNT_KEY,
-                           "id-unbound_direct-read")["status"] == "ratified"
+                           "idor__id-unbound__direct-read")["status"] == "ratified"
     assert store.read_spec(PROJECT, HUNT_KEY,
-                           "id-unbound_signed-url")["status"] == "ratified"
+                           "idor__id-unbound__signed-url")["status"] == "ratified"
     assert store.read_spec(PROJECT, HUNT_KEY,
-                           "share-route_mint-url")["status"] == "dropped"
+                           "idor__share-route__mint-url")["status"] == "dropped"
 
     # every persisted body is the reduced D4 at its status
     for spec in store.read_specs(PROJECT, HUNT_KEY):
         assert spec["target_identity"] == {"url": URL, "unit_id": UNIT_ID}
         assert spec["verification_symptoms"]
         assert spec["assumptions"] and spec["rationale"]
-        assert set(spec["provenance"]["skill_procedure"]) == set(
-            SKILL_PROCEDURE_FIELDS)
+        assert set(spec["skill_concretised_procedure"]) == set(
+            SKILL_CONCRETISED_PROCEDURE_FIELDS)
         for retired in ("payload_vector_space", "interpretation_guidance",
                         "testing_pattern", "spec_id"):
             assert retired not in spec
-    # the generated draft set was the whole set in ONE write: the terminal write
-    # upserted the three identities in place, it did not create a fourth
+    # the three one-spec writes and the three terminal status writes upserted
+    # the same identities in place; no fourth identity appeared
     assert len(list(produced.glob("*.yaml"))) == 3
 
     # the five note exits persisted as the hunter-only phase kind
@@ -180,41 +187,43 @@ def test_the_dry_run_produces_a_well_formed_persisted_spec_set(tmp_path):
     assert "Planned drop" in phase["phase:well_formedness"]["body"]
 
 
-def test_a_mixed_status_set_is_refused_and_never_moves_the_tracker(tmp_path):
-    """The store protocol is unambiguous: a set mixing `hypothesised` with a
-    terminal status is not a lifecycle shape. It persists nothing, closes no
-    pass, and leaves the generated draft intact; the correct terminal write then
-    lands."""
+def test_a_partial_terminal_set_is_refused_until_finalize(tmp_path):
+    """A single terminal status write does not close the set. `finalize` while a
+    sibling is still hypothesised is a coded rejection: it persists no terminal
+    record, moves no state, and leaves the draft intact. The correct sibling
+    decision then lets finalize land."""
     generated = _generated()[:2]
-    mixed = [{**generated[0], "status": "ratified"},
-             {**generated[1], "status": "hypothesised"}]
-    correct = [{**generated[0], "status": "ratified"},
-               {**generated[1], "status": "dropped"}]
     steps = [
         _phase_note("grounding"),
         _phase_note("slice"),
         _phase_note("collect"),
         _phase_note("discriminate"),
-        _set_write(generated),
+        *[_write_spec(spec) for spec in generated],
         _phase_note("well_formedness"),
-        _set_write(mixed),        # refused: the tracker must stay in VERIFY-CLAIMS
-        _answer("still verifying"),
+        _write_spec({**generated[0], "status": "ratified"}),
+        _finalize(),              # refused: the sibling is still a draft
     ]
     store, result = _run(tmp_path, steps)
 
     assert result["state"] == "verify_claims"
     assert "state: complete" not in result["feedback"]
     assert [s["status"] for s in store.read_specs(PROJECT, HUNT_KEY)] == [
-        "hypothesised", "hypothesised"]
+        "ratified", "hypothesised"]
+    assert store.read_terminal_set(PROJECT, HUNT_KEY) is None
 
-    # the correct terminal write closes the chain
-    store, result = _run(tmp_path / "second", steps[:-2] + [_set_write(correct)])
+    # the correct sibling decision then finalizes the chain
+    correct = steps[:-1] + [
+        _write_spec({**generated[1], "status": "dropped"}),
+        _finalize(),
+    ]
+    store, result = _run(tmp_path / "second", correct)
     assert result["state"] == "complete"
     assert {name: store.read_spec(PROJECT, HUNT_KEY, name)["status"]
-            for name in ("id-unbound_direct-read", "id-unbound_signed-url")} == {
-        "id-unbound_direct-read": "ratified",
-        "id-unbound_signed-url": "dropped",
+            for name in ("idor__id-unbound__direct-read", "idor__id-unbound__signed-url")} == {
+        "idor__id-unbound__direct-read": "ratified",
+        "idor__id-unbound__signed-url": "dropped",
     }
+    assert store.read_terminal_set(PROJECT, HUNT_KEY) is not None
 
 
 def test_a_merge_widens_the_survivor_and_declasses_the_absorbed_identity(tmp_path):
@@ -264,18 +273,20 @@ def test_a_merge_widens_the_survivor_and_declasses_the_absorbed_identity(tmp_pat
                     "redirect, both carrying the item id."),
         _phase_note("discriminate", body="Separate on authorisation source x "
                     "route; narrow on the item id, broad on the routes."),
-        _set_write([direct, signed]),                       # the GENERATE exit
+        _write_spec(direct), _write_spec(signed),          # the GENERATE exit
         _phase_note("collect", action="update",             # the [D2] re-entry
                     body="[D2] re-entry: the export route is a new instance; "
                          "re-collect it under the same item-id boundary."),
-        _set_write([direct, signed, export]),               # a re-generate write
+        _write_spec(direct), _write_spec(signed),
+        _write_spec(export),                                # a re-generate write
         _phase_note("well_formedness", body="Merge: the direct-read identity "
                     "widens to name the direct and export routes; the export "
                     "identity is absorbed. No overlap remains; the absorbed "
                     "identity is carried as dropped at the terminal write."),
-        _set_write([{**widened, "status": "ratified"},
-                    {**signed, "status": "ratified"},
-                    {**export, "status": "dropped"}]),      # the VERIFY exit
+        _write_spec({**widened, "status": "ratified"}),
+        _write_spec({**signed, "status": "ratified"}),
+        _write_spec({**export, "status": "dropped"}),
+        _finalize(),                                        # the VERIFY exit
     ]
     store = build_memory_store(tmp_path)
     result = build_hunter_agent(store, steps=steps)(_hunter_payload())
@@ -284,21 +295,21 @@ def test_a_merge_widens_the_survivor_and_declasses_the_absorbed_identity(tmp_pat
     produced = (tmp_path / PROJECT / "hunting" / "hunter" / "test-specs"
                 / HUNT_KEY / "produced")
     assert {path.stem for path in produced.glob("*.yaml")} == {
-        "id-unbound_direct-read", "id-unbound_signed-url",
-        "export-route_export-read"}
+        "idor__id-unbound__direct-read", "idor__id-unbound__signed-url",
+        "idor__export-route__export-read"}
     # the whole set is terminal: the widened survivor is ratified, the signed
     # sibling survives, and the absorbed identity is declassed - no identity is
     # left in the draft state
     assert {spec["status"] for spec in store.read_specs(PROJECT, HUNT_KEY)} == {
         "ratified", "dropped"}
-    survivor = store.read_spec(PROJECT, HUNT_KEY, "id-unbound_direct-read")
+    survivor = store.read_spec(PROJECT, HUNT_KEY, "idor__id-unbound__direct-read")
     assert survivor["status"] == "ratified"
     assert len(survivor["verification_symptoms"]) == 2
     assert len(survivor["assumptions"]) == 2
     assert store.read_spec(PROJECT, HUNT_KEY,
-                           "id-unbound_signed-url")["status"] == "ratified"
+                           "idor__id-unbound__signed-url")["status"] == "ratified"
     assert store.read_spec(PROJECT, HUNT_KEY,
-                           "export-route_export-read")["status"] == "dropped"
+                           "idor__export-route__export-read")["status"] == "dropped"
     merge_note = [note for note in store.read_notes(PROJECT)
                   if note["note_name"] == "phase:well_formedness"]
     assert len(merge_note) == 1
@@ -318,12 +329,13 @@ def test_a_phase_note_update_on_a_reiteration_is_trail_material(tmp_path):
         _phase_note("slice"),
         _phase_note("collect", body="the first instance set"),
         _phase_note("discriminate"),
-        _set_write(generated),
+        *[_write_spec(spec) for spec in generated],
         _phase_note("collect", action="update",
                     body="[D2] re-iteration: the export route is a new instance"),
         _phase_note("well_formedness"),
-        _set_write([{**generated[0], "status": "ratified"},
-                    {**generated[1], "status": "dropped"}]),
+        _write_spec({**generated[0], "status": "ratified"}),
+        _write_spec({**generated[1], "status": "dropped"}),
+        _finalize(),
     ]
     store = build_memory_store(tmp_path)
     result = build_hunter_agent(store, steps=steps, seen=seen)(_hunter_payload())

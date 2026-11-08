@@ -750,6 +750,39 @@ def test_preserving_client_serialization_matches_stock_without_reasoning():
         {"content": "answer", "role": "assistant"}
     )
 
+def test_preserving_client_replays_empty_reasoning_after_thinking_rejection():
+    """F-009: the DeepSeek thinking relay rejects an assistant tool-call turn
+    without `reasoning_content` with a 400. The preserving client replays once
+    with the empty field it accepts, only after the relay itself asks for it.
+
+    The ordinary payload stays stock (the test above), so the fallback never
+    changes an unrelated provider's wire shape."""
+    model = _preserving_model()
+    tool_call = {"name": "probe", "args": {"path": "/"}, "id": "call-1"}
+    message = AIMessage(content="", tool_calls=[tool_call])
+    plain = model._get_request_payload([message])["messages"][0]
+    assert "reasoning_content" not in plain
+    assert model._replay_after_reasoning_rejection(
+        Exception(
+            "Error code: 400 - The `reasoning_content` in the thinking mode "
+            "must be passed back to the API."
+        )
+    ) is True
+    replayed = model._get_request_payload([message])["messages"][0]
+    assert replayed["reasoning_content"] == ""
+    assert replayed["tool_calls"]
+    # A second rejection is not replayed again: the fallback is bounded.
+    assert model._replay_after_reasoning_rejection(
+        Exception("reasoning_content must be passed back")) is False
+
+
+def test_preserving_client_ignores_unrelated_bad_requests():
+    model = _preserving_model()
+    assert model._replay_after_reasoning_rejection(
+        Exception("Error code: 400 - invalid tool schema")) is False
+
+
+
 
 def test_preserving_client_capture_fails_open_to_stock_conversion():
     """A reasoning-free wire and shapes the capture layer cannot read degrade

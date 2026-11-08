@@ -1,0 +1,193 @@
+trial_id: white-jotter-1-20261028T083326-1618c524
+instance_id: eval-server-1
+target_id: white-jotter-1
+project_id: fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5
+start_phase: hunting
+terminal: stopped
+phases:
+- phase: hunting
+  entered: true
+  status: stopped
+  run_id: aac5ecac-f119-4e26-9f21-fc259153ccf3
+  stop_run_id: aac5ecac-f119-4e26-9f21-fc259153ccf3
+  blocks: []
+  notes: []
+  failure: null
+started_at: '2026-10-27T21:53:51+00:00'
+finished_at: '2026-10-28T08:33:26+00:00'
+token_budget: 7000000
+spent_tokens: 4940868
+spend_overshoot: null
+spend_baseline: 0
+spend_by_agent:
+  hunting_threat_modeller:
+    context_tokens:
+      cached: 108093568
+      uncached: 1408714
+    generated_tokens:
+      reasoning: 380398
+      visible: 421171
+    total_tokens: 110303851
+    capped_tokens: 2210283
+    calls: 481
+    cache_detail_omitted: 0
+  hunting_hunter:
+    context_tokens:
+      cached: 10438784
+      uncached: 442456
+    generated_tokens:
+      reasoning: 109824
+      visible: 106070
+    total_tokens: 11097134
+    capped_tokens: 658350
+    calls: 217
+    cache_detail_omitted: 0
+  pod_runner:
+    context_tokens:
+      cached: 20542336
+      uncached: 1256280
+    generated_tokens:
+      reasoning: 278146
+      visible: 220004
+    total_tokens: 22296766
+    capped_tokens: 1754430
+    calls: 842
+    cache_detail_omitted: 0
+  pod_triager:
+    context_tokens:
+      cached: 416000
+      uncached: 274252
+    generated_tokens:
+      reasoning: 33012
+      visible: 10541
+    total_tokens: 733805
+    capped_tokens: 317805
+    calls: 39
+    cache_detail_omitted: 0
+usage:
+  project_id: fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5
+  context_tokens:
+    cached: 139490688
+    uncached: 3381702
+  generated_tokens:
+    reasoning: 801380
+    visible: 757786
+  total_tokens: 144431556
+  capped_tokens: 4940868
+  calls: 1579
+  cache_detail_omitted: 0
+  by_agent:
+    hunting_threat_modeller:
+      context_tokens:
+        cached: 108093568
+        uncached: 1408714
+      generated_tokens:
+        reasoning: 380398
+        visible: 421171
+      total_tokens: 110303851
+      capped_tokens: 2210283
+      calls: 481
+      cache_detail_omitted: 0
+    hunting_hunter:
+      context_tokens:
+        cached: 10438784
+        uncached: 442456
+      generated_tokens:
+        reasoning: 109824
+        visible: 106070
+      total_tokens: 11097134
+      capped_tokens: 658350
+      calls: 217
+      cache_detail_omitted: 0
+    pod_runner:
+      context_tokens:
+        cached: 20542336
+        uncached: 1256280
+      generated_tokens:
+        reasoning: 278146
+        visible: 220004
+      total_tokens: 22296766
+      capped_tokens: 1754430
+      calls: 842
+      cache_detail_omitted: 0
+    pod_triager:
+      context_tokens:
+        cached: 416000
+        uncached: 274252
+      generated_tokens:
+        reasoning: 33012
+        visible: 10541
+      total_tokens: 733805
+      capped_tokens: 317805
+      calls: 39
+      cache_detail_omitted: 0
+token_spectrum:
+  hunting_threat_modeller:
+    visible: 421171
+    reasoning: 380398
+    cached_input: 108093568
+    uncached_input: 1408714
+    generated: 801569
+    total: 110303851
+    capped: 2210283
+    calls: 481
+    cache_detail_omitted: 0
+  hunting_hunter:
+    visible: 106070
+    reasoning: 109824
+    cached_input: 10438784
+    uncached_input: 442456
+    generated: 215894
+    total: 11097134
+    capped: 658350
+    calls: 217
+    cache_detail_omitted: 0
+  pod_runner:
+    visible: 220004
+    reasoning: 278146
+    cached_input: 20542336
+    uncached_input: 1256280
+    generated: 498150
+    total: 22296766
+    capped: 1754430
+    calls: 842
+    cache_detail_omitted: 0
+  pod_triager:
+    visible: 10541
+    reasoning: 33012
+    cached_input: 416000
+    uncached_input: 274252
+    generated: 43553
+    total: 733805
+    capped: 317805
+    calls: 39
+    cache_detail_omitted: 0
+notes: []
+trial_dir: /opt/polymerhus-dev/eval/runs-iteration-d-20261027/white-jotter-1/white-jotter-1-20261028T083326-1618c524
+target_run_id: iterd-white-jotter
+seeded: true
+eval_sha: 5cadea78d4a4b8a88bf5284f29db14f29f1690ac
+worktree_dirty: true
+stack_fingerprint: 84d14309e4c4c4ebd9706f890f7bf04455e1068efb2ab9dfff8cc4a4d707b6e0
+trace_id: null
+assessment:
+  status: present
+  attempts:
+  - attempt: 1
+    outcome: dispatched
+    detail: null
+    at: '2026-10-28T15:27:32+00:00'
+  verdicts_path: /opt/polymerhus-dev/eval/runs-iteration-d-20261027/white-jotter-1/white-jotter-1-20261028T083326-1618c524/verdicts.yaml
+  failure: null
+diagnosis:
+  status: present
+  attempts:
+  - attempt: 1
+    outcome: dispatched
+    detail: null
+    at: '2026-10-28T15:40:28+00:00'
+  diagnoses_path: /opt/polymerhus-dev/eval/runs-iteration-d-20261027/white-jotter-1/white-jotter-1-20261028T083326-1618c524/diagnoses.yaml
+  entries_written: 5
+  issues_matched: 0
+  issues_proposed: 5
+  failure: null

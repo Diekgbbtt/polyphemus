@@ -375,6 +375,9 @@ def build_run_manifest(
         "terminal": record.get("terminal"),
         "phases": [_phase_pointer(phase) for phase in phases if isinstance(phase, Mapping)],
         "eval_sha": record.get("eval_sha"),
+        # True when the loaded worktree carried tracked edits at trial start: the
+        # SHA is then the base commit, and the fingerprint covers the edit.
+        "worktree_dirty": record.get("worktree_dirty"),
         "stack_fingerprint": record.get("stack_fingerprint"),
         "chain_sources": list(chain_sources),
         "diagnoses_present": bool(diagnoses_present),
@@ -450,7 +453,7 @@ def _chain_sources(rows: Sequence) -> list[str]:
             continue
         if not isinstance(chain, Mapping):
             raise StoreError("evidence_chain is not a mapping", failure="chain_unresolved")
-        for key in ("loop", "spec_dir", "pod_export"):
+        for key in ("threat", "spec_dir", "pod_export"):
             value = chain.get(key)
             if value:
                 paths.add(str(value))

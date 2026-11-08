@@ -36,7 +36,7 @@ from dataclasses import replace
 # The per-project authentication-procedure skill (the meta skill
 # `meta/authn-skill-writing` authors it). It is project-authored - no canonical
 # catalogue copy - so the L1 index renders it only when its bundle exists at
-# `<data_root>/<project_id>/skills/authn/SKILL.md`.
+# `<skills_root>/target-specific-procedure/<project_id>/authn/SKILL.md`.
 AUTHN_SKILL = "authn"
 
 
@@ -89,7 +89,7 @@ def auth_capable_binding(
         build_skill_tools,
         build_write_skill_tool,
         skill_agent_binding,
-        skill_index_middleware,
+        skill_reference_middleware,
     )
 
     binding = skill_agent_binding(
@@ -110,7 +110,7 @@ def auth_capable_binding(
                 project_id = config.PROJECT_ID
             return SkillAgentBinding(
                 role_id=role_id,
-                middleware=[skill_index_middleware(store=skill_store)],
+                middleware=[skill_reference_middleware()],
                 tools=[*build_skill_tools(
                     project_id, with_write_skill=True, store=skill_store,
                     lesson_store=lesson_store, role_id=role_id),
@@ -129,7 +129,7 @@ def auth_capable_binding(
                 project_id = config.PROJECT_ID
             return SkillAgentBinding(
                 role_id=role_id,
-                middleware=[skill_index_middleware(store=skill_store)],
+                middleware=[skill_reference_middleware()],
                 tools=[*build_skill_tools(
                     project_id, store=skill_store,
                     lesson_store=lesson_store, role_id=role_id),
@@ -147,11 +147,12 @@ def auth_capable_binding(
                 project_id = config.PROJECT_ID
             return SkillAgentBinding(
                 role_id=role_id,
-                middleware=[skill_index_middleware(store=skill_store)],
+                middleware=[skill_reference_middleware()],
                 tools=[*build_skill_tools(
                     project_id, store=skill_store,
                     lesson_store=lesson_store, role_id=role_id),
-                    build_auth_store_tool(project_id=project_id, store=store)],
+                    build_auth_store_tool(
+                        project_id=project_id, store=store, read_only=True)],
                 context={"skills": [AUTHN_SKILL], "project_id": project_id},
             )
         # An exempt role binds no skill surface: no auth capability either.
@@ -167,10 +168,17 @@ def auth_capable_binding(
         tools.append(build_write_skill_tool(context.get("project_id"), store=skill_store))
     return replace(
         binding,
+        middleware=[skill_reference_middleware()],
         tools=[*tools, build_auth_store_tool(
             project_id=context.get("project_id"),
             store=store,
-            read_only=with_readonly_auth_store and not with_write_skill,
+            # `arm_exempt_surface` is the site-declared READ-ONLY arming (the
+            # threat modeller). A role that also carries a bounded skill (the
+            # optional `steel-browser` mechanics skill) is still bound here, so
+            # the read-only promise must ride the bound-role path too.
+            read_only=(
+                with_readonly_auth_store or arm_exempt_surface
+            ) and not with_write_skill,
         )],
         context=context,
     )

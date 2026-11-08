@@ -44,13 +44,14 @@ FAULT_KEY = "Service:account-registration_CWE-266_Privilege Escalation"
 _MODELLER_FIELD_MAP = NotesFieldMap(
     key=None, read_key="key", action="option", note="body",
     note_id="note_id", attributes="attributes",
-    passthrough=("note_name", "kind", "evidence"),
+    note_name="note_name", kind="kind", evidence="evidence",
 )
 _HUNTER_FIELD_MAP = NotesFieldMap(
     key=None, read_key=None, action="action", note="body",
     note_id=None, attributes="attributes", key_keyword="key_keyword",
     body_keyword="body_keyword",
-    passthrough=("note_name", "kind", "evidence", "provenance"),
+    note_name="note_name", kind="kind", evidence="evidence",
+    passthrough=("provenance",),
 )
 
 
@@ -105,6 +106,23 @@ def test_modeller_notes_empty_call_teaches_the_discriminator(tmp_path):
     assert "read" in detail and "write" in detail
 
 
+def test_modeller_notes_description_front_loads_the_required_cmd(tmp_path):
+    """The C.a run rejected 38 notes writes that supplied `option` and `body`
+    but omitted `cmd`. The contract must state the requirement on the first
+    line, and the `cmd` field must repeat it, so a write-intent call cannot
+    read as a complete request."""
+    tool = _surface(ThreatModelStore(root_dir=tmp_path))["notes"]
+    first = tool.description.strip().splitlines()[0]
+    assert first.startswith("REQUIRED")
+    assert "cmd" in first
+    assert "every call" in first.lower()
+    assert "do not imply" in tool.description.lower()
+
+    cmd_field = ModellerNotesArgs.model_fields["cmd"]
+    assert "REQUIRED" in cmd_field.description
+    assert "every call" in cmd_field.description.lower()
+
+
 def test_modeller_notes_invalid_option_is_a_coded_rejection(tmp_path):
     """An invalid enum value is a rejected call the model can act on, not a
     raise - and nothing is persisted."""
@@ -133,7 +151,10 @@ def test_modeller_notes_write_without_option_is_rejected(tmp_path):
 
 def test_modeller_hunts_store_schema_carries_enum_and_descriptions(tmp_path):
     params = _params(_surface(ThreatModelStore(root_dir=tmp_path))["hunts_store"])
-    assert params["properties"]["cmd"]["enum"] == ["read", "write"]
+    assert params["properties"]["cmd"]["enum"] == ["read", "write", "query"]
+    assert params["properties"]["kind"]["description"].startswith("Query filter")
+    assert "filters" in params["properties"]
+    assert params["properties"]["limit"]["maximum"] == 50
     for name, prop in params["properties"].items():
         assert prop.get("description"), f"{name} has no description"
 
@@ -224,11 +245,11 @@ def test_builder_rejects_a_field_map_naming_an_absent_schema_field(tmp_path):
 
 def test_hunter_notes_tool_is_bound_to_its_own_config(tmp_path):
     """The hunt key is BOUND at construction (S3 8.9): two tools bound to
-    different loops read and write ONLY their own folder. The model never
-    supplies the key, and there is no cross-loop read."""
+    different threats read and write ONLY their own folder. The model never
+    supplies the key, and there is no cross-threat read."""
     store = HunterMemoryStore(root_dir=tmp_path)
-    key_a = "Service-aaa__loop-1"
-    key_b = "Service-bbb__loop-1"
+    key_a = "Service-aaa__threat-1"
+    key_b = "Service-bbb__threat-1"
     tool_a = notes_tool_for(store=store, project_id=PROJECT, hunt_key=key_a)
     tool_b = notes_tool_for(store=store, project_id=PROJECT, hunt_key=key_b)
     tool_a.invoke({"command": "write", "action": "append",

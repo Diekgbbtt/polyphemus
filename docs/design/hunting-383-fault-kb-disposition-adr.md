@@ -13,7 +13,7 @@ The unit threat model rewrite removed every producer of those facets:
 
 - the run's unit set is the frozen INTAKE over the L1 inventory (`unit_intake`), not a fault selection (T3 #376);
 - the modeller hypothesises faults from the trust model, never from an outside repository (tools ADR, R1-5 amendment); and
-- the hunter is dispatched per loop with a loop payload, not per config, and the materialisation render retired with the loop-payload rework (T6 #379; Q39/R2-16).
+- the hunter is dispatched per threat with a threat payload, not per config, and the materialisation render retired with the threat-payload rework (T6 #379; Q39/R2-16).
 
 At T10 the only live consumer of the catalogue was the app-boot existence check in `app/main.py`; the selection modules and their tests were dormant. The boot check verified a retired path's artifact at every process start.
 

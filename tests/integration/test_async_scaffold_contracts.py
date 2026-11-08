@@ -3,7 +3,7 @@ scaffold wrapping the legacy passes (#24). Mechanises C1-C5.
 
 The writing curator, the proposer cargo, and the async driver with an injected
 Store + inert observability. No live Neo4j/Postgres/Langfuse. Expected values from
-the spec. Verifier-gated; not selected by the tdd unit loop.
+the spec. Verifier-gated; not selected by the tdd unit threat.
 """
 import asyncio
 

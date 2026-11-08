@@ -274,8 +274,10 @@ def _auth_origin_errors(name: str, account: dict) -> list[str]:
 def check_auth(project_dir: Path) -> list[str]:
     """Presence + structural shape of the AuthContext and the authn skill.
 
-    `project_dir` mirrors the app-owned project data dir
-    (`<data_root>/<project_id>/`), so it holds `auth/` and `skills/authn/`.
+    `project_dir` is the staging upload source. It holds `auth/` for the app
+    data root and `skills/authn/` for the live skills root's
+    `target-specific-procedure/<project_id>/` branch. It is not a runtime data
+    root, and the data root never carries skills.
 
     The structural checks are backed by the app's OWN T1 seam
     (`records.validate_overview` / `records.validate_account`), the exact

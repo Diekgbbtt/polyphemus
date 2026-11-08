@@ -1,0 +1,159 @@
+{
+ "pods": {
+  "terminal": 37,
+  "raw_confirmed": 15,
+  "audited_confirmed": 15,
+  "false_positives": [],
+  "weak_attestations": [
+   {
+    "pod": "broken-function-level-authorization__authc-filter__menu-read__read",
+    "note": "Symptom confirmed per assumption 2 (headers decide). Inside the 04:12-04:13 window: GET /api/menu -> 302 + Set-Cookie JSESSIONID + Location /nowhere;jsessionid (filter running); GET /api/;/menu and /api/x/..;/menu -> 200 application/json, n"
+   }
+  ],
+  "verdicts": {
+   "unsuccessful": 22,
+   "successful": 15
+  },
+  "reasons": {
+   "no-symptom-evidence": 5,
+   "symptom-confirmed": 15,
+   "pod-watchdog-timeout": 13,
+   "technical-infeasibility": 2,
+   "node-timeout": 2
+  },
+  "families": {
+   "username-enumeration-oracle": {
+    "raw": 3,
+    "audited": 3,
+    "failed": 1
+   },
+   "broken-function-level-authorization": {
+    "raw": 1,
+    "audited": 1,
+    "failed": 7
+   },
+   "stored-artifact-disclosure": {
+    "raw": 4,
+    "audited": 4,
+    "failed": 0
+   },
+   "sql-injection": {
+    "raw": 1,
+    "audited": 1,
+    "failed": 4
+   },
+   "concurrent-duplication": {
+    "raw": 2,
+    "audited": 2,
+    "failed": 1
+   },
+   "xss-stored": {
+    "raw": 2,
+    "audited": 2,
+    "failed": 1
+   },
+   "idor": {
+    "raw": 1,
+    "audited": 1,
+    "failed": 2
+   },
+   "mass-assignment": {
+    "raw": 0,
+    "audited": 0,
+    "failed": 4
+   },
+   "account-recovery": {
+    "raw": 1,
+    "audited": 1,
+    "failed": 2
+   }
+  },
+  "audited_rate": 1.0
+ },
+ "model": {
+  "models": 27,
+  "units_with_threats": 8,
+  "rows": 28,
+  "threats": 14,
+  "precursors": 14,
+  "chain_rows": 3,
+  "impact_chain_rate": 0.107,
+  "cross_unit_refs": 2,
+  "risk_total": 106.9,
+  "bands": {
+   "none": 0,
+   "low": 0,
+   "medium": 7,
+   "high": 0,
+   "critical": 7
+  },
+  "saturation_ge_9": 7,
+  "assumed_penalty_count": 0,
+  "victim_action_penalty_count": 0,
+  "fence_hits": 0,
+  "gt": {
+   "white-jotter-001": {
+    "produced": false,
+    "risk": 0.0,
+    "unit": null,
+    "chained": false,
+    "queue_rank": null
+   },
+   "white-jotter-002": {
+    "produced": true,
+    "risk": 9.2,
+    "unit": "ReverseProxy",
+    "chained": false,
+    "queue_rank": 3
+   },
+   "white-jotter-003": {
+    "produced": true,
+    "risk": 9.3,
+    "unit": "Service:article-management",
+    "chained": true,
+    "queue_rank": 2
+   },
+   "white-jotter-004": {
+    "produced": false,
+    "risk": 0.0,
+    "unit": null,
+    "chained": false,
+    "queue_rank": null
+   },
+   "white-jotter-005": {
+    "produced": true,
+    "risk": 9.2,
+    "unit": "RESTApi:api",
+    "chained": false,
+    "queue_rank": 5
+   },
+   "white-jotter-006": {
+    "produced": false,
+    "risk": 0.0,
+    "unit": null,
+    "chained": false,
+    "queue_rank": null
+   },
+   "white-jotter-007": {
+    "produced": true,
+    "risk": 9.2,
+    "unit": "RESTApi:api",
+    "chained": false,
+    "queue_rank": 6
+   }
+  },
+  "xss": {
+   "produced": true,
+   "risk": 9.3,
+   "vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:P/VC:H/VI:H/VA:N/SC:H/SI:H/SA:N",
+   "chain": [
+    [
+     "ReverseProxy::P-4",
+     "ReverseProxy::P-4"
+    ]
+   ],
+   "queue_rank": 2,
+   "unit": "Service:article-management"
+  }
+ }
+}

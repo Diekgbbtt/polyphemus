@@ -39,7 +39,7 @@ TARGET_UNAVAILABLE_DIRECTIVE = (
     "overloaded), NOT that the route is absent. A restart can be self-inflicted: "
     "probing a destructive control route (for example a manager `reboot` / "
     "`restart` operation) makes the target restart, and the front then answers "
-    "502 for the whole restart window. Do NOT loop or retry on a 5xx and do not "
+    "502 for the whole restart window. Do NOT threat or retry on a 5xx and do not "
     "read it as 404-style route-absence: record that the target is temporarily "
     "unavailable, stop probing, and let a later check resume once it is back. A "
     "404 (or any 4xx) is the real route-absence signal; a 5xx is not."

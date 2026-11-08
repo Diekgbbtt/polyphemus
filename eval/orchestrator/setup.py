@@ -43,7 +43,7 @@ class PreloadedTestSpec:
     """One pre-mined hunter `TestImplementationSpec` and its dispatch identity.
 
     `path` is a host path (a spec file, or a directory of them); `dispatch_id`
-    is the loop dispatch id `<unit_name>__<loop_id>` whose `test-specs/`
+    is the threat dispatch id `<unit_name>__<threat_id>` whose `test-specs/`
     family produced/ inbox the pipeline's lazy read drains (S3 8.9).
     """
 
@@ -56,7 +56,7 @@ class PreloadedArtifacts:
     """Operator-supplied pre-mined hunting artifacts (#270 AC4; T10b #397).
 
     `models` is a host path to a threat-model unit directory (a model document
-    plus its loop files) or to a directory of unit directories, placed into the
+    plus its threat files) or to a directory of unit directories, placed into the
     threat-model store's `produced/` inbox. Each `test_specs` entry names one
     spec and its dispatch id, placed into that hunter family's `produced/`
     inbox. Both are the pipeline's own lazy-read locations, so the normal mover
@@ -81,7 +81,8 @@ class TargetConfig:
     `eval/data/<dataset>/<target>/` directory when unset.
 
     `data_dir` is the host directory holding the pre-built data dependencies
-    (`auth/overview.yaml`, `auth/credentials.yaml`, `skills/authn/`, and
+    (`auth/overview.yaml`, `auth/credentials.yaml`, `skills/authn/` as the
+    upload source, and
     `operator_kb.md`); the harness places them through the multipart endpoints.
     It defaults to `operator_kb`'s parent directory when unset. The retired
     inline `auth` / `l1_surface` mappings are no longer accepted.
@@ -94,6 +95,45 @@ class TargetConfig:
     # means the platform default phase plan; a non-empty tuple is sent as the
     # launch `jobs` list. The bring-up configuration has no job selector.
     recon_jobs: tuple[str, ...] = ()
+
+
+HUNTING_PIPELINE_SYNCS = ("serial", "batched", "parallel")
+
+
+@dataclass(frozen=True)
+class HuntingSettings:
+    """The project-side hunting policy an eval trial freezes before the hunt.
+
+    The three settings live on the project (`PUT /projects/{id}/hunting/config`)
+    and are read into the hunting run record at its start, so the trial applies
+    them during bootstrap, before recon launches.
+
+    `promotion_risk_threshold` is inclusive and explicit: `0` is a stored value
+    that promotes every threat (the control arm), while an unset field leaves
+    the project default in place. `risk_threshold` is the cumulative halt, a
+    different knob from the per-threat promotion floor. Both thresholds are
+    floats on the CVSS 4.0 `risk` scale (one decimal point is meaningful), so a
+    fractional setup value must survive unchanged.
+    """
+
+    pipeline_sync: str | None = None
+    pod_batch_size: int | None = None
+    promotion_risk_threshold: float | None = None
+    risk_threshold: float | None = None
+
+    def payload(self) -> dict[str, object]:
+        """Only the fields the setup set, so a partial block stays partial.
+
+        `0` is a real value for the two thresholds and must survive the filter,
+        which is why this tests `is not None` and never truthiness.
+        """
+        pairs = (
+            ("pipeline_sync", self.pipeline_sync),
+            ("pod_batch_size", self.pod_batch_size),
+            ("promotion_risk_threshold", self.promotion_risk_threshold),
+            ("risk_threshold", self.risk_threshold),
+        )
+        return {key: value for key, value in pairs if value is not None}
 
 
 @dataclass(frozen=True)
@@ -109,6 +149,9 @@ class TargetRun:
     target_key: str
     target_id: str
     target_config: TargetConfig = field(default_factory=TargetConfig)
+    # The frozen hunting policy the trial applies to the project before recon.
+    # An unset block leaves every project default in place.
+    hunting: HuntingSettings = field(default_factory=HuntingSettings)
     start_phase: str = "recon"
     # The per-trial bound on the project's token spend (spec token tracking).
     token_budget: int | None = None
@@ -347,6 +390,7 @@ def _parse_target_run(payload: object, where: str) -> TargetRun:
             "preloaded_hunting_artifacts",
             "target_run_id",
             "existing_project_id",
+            "hunting",
         ),
         where,
     )
@@ -385,6 +429,7 @@ def _parse_target_run(payload: object, where: str) -> TargetRun:
         target_key=target_key,
         target_id=target_id,
         target_config=target_config,
+        hunting=_parse_hunting(mapping.get("hunting"), f"{where}.hunting"),
         start_phase=start_phase,
         token_budget=token_budget,
         preloaded_hunting_artifacts=_parse_preloaded_artifacts(
@@ -394,6 +439,77 @@ def _parse_target_run(payload: object, where: str) -> TargetRun:
         target_run_id=_path_safe(mapping, "target_run_id", where),
         existing_project_id=existing_project_id,
     )
+
+
+def _parse_hunting(payload: object, where: str) -> HuntingSettings:
+    """The optional per-target hunting policy, validated like the REST body.
+
+    Unknown keys, an unknown sync mode, a non-number, and an out-of-range value
+    all fail loud and name the field, so a typo cannot silently leave the
+    project default in place. `pod_batch_size` stays an integer; the two
+    thresholds are CVSS 4.0 points and parse as floats.
+    """
+    if payload is None:
+        return HuntingSettings()
+    mapping = _mapping(payload, where)
+    _check_keys(
+        mapping,
+        (
+            "pipeline_sync",
+            "pod_batch_size",
+            "promotion_risk_threshold",
+            "risk_threshold",
+        ),
+        where,
+    )
+    mode = _optional_str(mapping, "pipeline_sync", where)
+    if mode is not None and mode not in HUNTING_PIPELINE_SYNCS:
+        raise SetupError(
+            f"{where}.pipeline_sync: expected one of "
+            f"{', '.join(HUNTING_PIPELINE_SYNCS)}, got {mode!r}"
+        )
+    return HuntingSettings(
+        pipeline_sync=mode,
+        pod_batch_size=_optional_int_at_least(
+            mapping, "pod_batch_size", where, minimum=1),
+        promotion_risk_threshold=_optional_float_at_least(
+            mapping, "promotion_risk_threshold", where, minimum=0.0),
+        risk_threshold=_optional_float_at_least(
+            mapping, "risk_threshold", where, minimum=0.0),
+    )
+
+
+def _optional_int_at_least(
+    mapping: Mapping, key: str, where: str, *, minimum: int,
+) -> int | None:
+    value = mapping.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise SetupError(f"{where}.{key}: expected an integer or null")
+    if value < minimum:
+        raise SetupError(
+            f"{where}.{key}: expected an integer >= {minimum}, got {value}")
+    return value
+
+
+def _optional_float_at_least(
+    mapping: Mapping, key: str, where: str, *, minimum: float,
+) -> float | None:
+    """A threshold on the CVSS 4.0 scale: an int or a float, never a bool.
+
+    A bool is an int in Python and a numeric string is not a number, so both are
+    refused by the type test rather than coerced; the comparison is inclusive.
+    """
+    value = mapping.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise SetupError(f"{where}.{key}: expected a number or null")
+    if value < minimum:
+        raise SetupError(
+            f"{where}.{key}: expected a number >= {minimum}, got {value}")
+    return float(value)
 
 
 def _parse_preloaded_artifacts(payload: object, where: str) -> PreloadedArtifacts | None:

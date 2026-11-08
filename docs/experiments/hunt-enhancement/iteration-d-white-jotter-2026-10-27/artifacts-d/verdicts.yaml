@@ -1,0 +1,142 @@
+- vuln_id: white-jotter-001
+  identified: partial
+  confidence: 0.5
+  matched:
+    unit: AuthenticationMechanism
+    web_vulnerability_class: session-management
+    fault: >-
+      F-1: session authority not bound to the credential; lifecycle events reach
+      only the acting session
+    symptom: >-
+      Inside the successful session-management status-change pod, POST /api/login
+      with the shipped default administrator pair admin/123 returned HTTP 200
+      {"code":200,"message":"成功","result":"admin"} with a fresh JSESSIONID, while
+      the wrong-credential control returned the account-not-found envelope. The
+      default-credential symptom is therefore confirmed at the exact /api/login
+      locus, but the pod's confirmed web vulnerability class and fault are
+      session-management / F-1, not weak-or-default credentials, and no threat or
+      test spec was scoped to that class, so the vulnerability is partial rather
+      than identified.
+  evidence_chain:
+    threat: fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5/hunting/threat_modeller/consumed/AuthenticationMechanism/threat-1.yaml
+    spec_dir: fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5/hunting/hunter/test-specs/AuthenticationMechanism__threat-1
+    experiment_logs:
+      - fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5/hunting/test-executor-pod/session-management__status-change__third-party/experiment-log/0.yaml
+    pod_export: fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5/hunting/test-executor-pod/session-management__status-change__third-party/aac5ecac-f119-4e26-9f21-fc259153ccf3.yaml
+  eval_sha: 5cadea78d4a4b8a88bf5284f29db14f29f1690ac
+  stack_fingerprint: 84d14309e4c4c4ebd9706f890f7bf04455e1068efb2ab9dfff8cc4a4d707b6e0
+
+- vuln_id: white-jotter-002
+  identified: identified
+  confidence: 0.93
+  matched:
+    unit: ReverseProxy
+    web_vulnerability_class: broken-function-level-authorization
+    fault: >-
+      F-1: inconsistent request-path normalization across the edge, the
+      authorization matcher and the dispatcher
+    symptom: >-
+      A forged JSESSIONID on GET /api/;/admin/role returned HTTP 200 with a
+      5469-byte role catalogue whose sha256 was identical to the
+      administrator-authenticated read, while the canonical /api/admin/role
+      returned HTTP 200 with a zero-length body on the same forged cookie. The
+      semicolon matrix segment reproduces the GT access-control bypass at the
+      /api/ locus; a companion pod under the same F-1 path-normalization fault
+      carried the same path form into the administrative write mapping.
+  evidence_chain:
+    threat: fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5/hunting/threat_modeller/consumed/ReverseProxy/threat-1.yaml
+    spec_dir: fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5/hunting/hunter/test-specs/ReverseProxy__threat-1
+    experiment_logs:
+      - fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5/hunting/test-executor-pod/broken-function-level-authorization__role-grant-read__direct-get/experiment-log/0.yaml
+    pod_export: fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5/hunting/test-executor-pod/broken-function-level-authorization__role-grant-read__direct-get/aac5ecac-f119-4e26-9f21-fc259153ccf3.yaml
+  eval_sha: 5cadea78d4a4b8a88bf5284f29db14f29f1690ac
+  stack_fingerprint: 84d14309e4c4c4ebd9706f890f7bf04455e1068efb2ab9dfff8cc4a4d707b6e0
+
+- vuln_id: white-jotter-003
+  identified: missed
+  confidence: 0.95
+  matched:
+    unit: null
+    web_vulnerability_class: null
+    fault: null
+    symptom: null
+  eval_sha: 5cadea78d4a4b8a88bf5284f29db14f29f1690ac
+  stack_fingerprint: 84d14309e4c4c4ebd9706f890f7bf04455e1068efb2ab9dfff8cc4a4d707b6e0
+
+- vuln_id: white-jotter-004
+  identified: missed
+  confidence: 0.95
+  matched:
+    unit: null
+    web_vulnerability_class: null
+    fault: null
+    symptom: null
+  eval_sha: 5cadea78d4a4b8a88bf5284f29db14f29f1690ac
+  stack_fingerprint: 84d14309e4c4c4ebd9706f890f7bf04455e1068efb2ab9dfff8cc4a4d707b6e0
+
+- vuln_id: white-jotter-005
+  identified: identified
+  confidence: 0.97
+  matched:
+    unit: 'RESTApi:api'
+    web_vulnerability_class: sql-injection
+    fault: >-
+      F-2: search term concatenated into the catalogue query instead of bound
+      as a parameter
+    symptom: >-
+      GET /api/search with an arity-aligned UNION SELECT returned a row at id 11
+      whose cover field carried /etc/passwd content
+      (root:x:0:0:root:/root:/bin/bash...) and a second marker row at id 12 whose
+      cover carried LOAD_FILE('/etc/hostname') output. Those marker values exist
+      in no book record and occupy the column the catalogue model populates from
+      the statement, while a bare keyword returned the ordinary result,
+      confirming caller-controlled statement text in the /api/search LIKE filter.
+  evidence_chain:
+    threat: fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5/hunting/threat_modeller/consumed/RESTApi-api/threat-2.yaml
+    spec_dir: fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5/hunting/hunter/test-specs/RESTApi-api__threat-2
+    experiment_logs:
+      - fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5/hunting/test-executor-pod/sql-injection__union-inband__appended-select-list/experiment-log/0.yaml
+      - fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5/hunting/test-executor-pod/sql-injection__union-inband__appended-select-list/experiment-log/1.yaml
+    pod_export: fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5/hunting/test-executor-pod/sql-injection__union-inband__appended-select-list/aac5ecac-f119-4e26-9f21-fc259153ccf3.yaml
+  eval_sha: 5cadea78d4a4b8a88bf5284f29db14f29f1690ac
+  stack_fingerprint: 84d14309e4c4c4ebd9706f890f7bf04455e1068efb2ab9dfff8cc4a4d707b6e0
+
+- vuln_id: white-jotter-006
+  identified: missed
+  confidence: 0.9
+  matched:
+    unit: null
+    web_vulnerability_class: null
+    fault: null
+    symptom: null
+  eval_sha: 5cadea78d4a4b8a88bf5284f29db14f29f1690ac
+  stack_fingerprint: 84d14309e4c4c4ebd9706f890f7bf04455e1068efb2ab9dfff8cc4a4d707b6e0
+
+- vuln_id: white-jotter-007
+  identified: partial
+  confidence: 0.6
+  matched:
+    unit: 'RESTApi:api'
+    web_vulnerability_class: mass-assignment-nested-relation-write
+    fault: >-
+      F-1: over-posting: the registration body binds the account's role
+      association
+    symptom: >-
+      POST /api/register with the five contract fields plus roles:[{"id":1}]
+      returned HTTP 200 注册成功; that account then authenticated at
+      POST /api/login and /api/menu returned the 1575-byte administrative tree
+      while /api/admin/role returned 5549 bytes, versus an empty menu for a
+      control account registered without roles. The exact GT /api/register
+      privilege-escalation symptom is shown in the pod's raw observations, but
+      the pod's own terminal was pod-watchdog-timeout (verdict unsuccessful, no
+      symptom-confirmed classification), so the verdict is partial rather than
+      identified.
+  evidence_chain:
+    threat: fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5/hunting/threat_modeller/consumed/RESTApi-api/threat-1.yaml
+    spec_dir: fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5/hunting/hunter/test-specs/RESTApi-api__threat-1
+    experiment_logs:
+      - fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5/hunting/test-executor-pod/mass-assignment-nested-relation-write__roles-array-by-id__sysadmin-role/experiment-log/0.yaml
+      - fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5/hunting/test-executor-pod/mass-assignment-nested-relation-write__roles-array-by-id__sysadmin-role/experiment-log/1.yaml
+    pod_export: fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5/hunting/test-executor-pod/mass-assignment-nested-relation-write__roles-array-by-id__sysadmin-role/aac5ecac-f119-4e26-9f21-fc259153ccf3.yaml
+  eval_sha: 5cadea78d4a4b8a88bf5284f29db14f29f1690ac
+  stack_fingerprint: 84d14309e4c4c4ebd9706f890f7bf04455e1068efb2ab9dfff8cc4a4d707b6e0

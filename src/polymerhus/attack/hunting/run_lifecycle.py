@@ -1,17 +1,20 @@
 """The run lifecycle: the risk accumulator, the halt, the run record, the resume
-rules and the commit order (S1 7.4-7.5, S2 7.4 and 9.2-9.4; T3 #376).
+rules and the commit order (S1 7.4-7.5, S2 7.4 and 9.2-9.4; T3 #376, T7 #410).
 
 The intake freeze and the ordering live in `unit_intake`; THIS module owns what
 the run does with the frozen order:
 
-- the **symbolic risk accumulator** (S2 7.4): the unit total is the sum of the
-  loop likelihood weights, the run total is their running sum, and the halt
-  comparison is INCLUSIVE (`run_total >= threshold`);
+- the **symbolic risk accumulator** (S2 7.4, amended by the CVSS 4.0 spec 6):
+  the unit total is the sum of the threats' mirrored CVSS 4.0 `risk` (a float in
+  `0.0 .. 10.0`, rounded to two decimals), the run total is their running sum,
+  and the halt comparison is INCLUSIVE (`run_total >= threshold`);
 - the **halt** (S1 7.4, ordering-halt ADR): the crossing unit completes and is
   dispatched, the NEXT unit in the intake order is never modelled, and the
   blocked unit is recorded. The halt never re-sorts or re-ranks the intake;
 - the **run record** (S2 9.2): the fixed keys the run row's `stats` carries, so
-  the halt is auditable after the process is gone;
+  the halt is auditable after the process is gone. The retired likelihood and
+  impact weight tables, and the impact breakdown, are NOT recorded: the risk is
+  one float total broken down by `SeverityBand` (T7 #410);
 - the **resume rules** (S1 7.5): a stopped run re-enters at `intake_position`,
   never re-models a unit whose model is complete, and RECOMPUTES `risk_total`
   from `model_sums` and the completed models - so a crash between the model
@@ -25,23 +28,27 @@ durable home.
 from __future__ import annotations
 
 import logging
+import math
 import os
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
-from .threat_model import DEFAULT_RISK_THRESHOLD, RISK_WEIGHTS, Likelihood
+from .threat_model import (
+    DEFAULT_RISK_THRESHOLD,
+    SeverityBand,
+    severity_band,
+)
 from .unit_intake import IntakeExclusion
 
 logger = logging.getLogger(__name__)
 
-# The five likelihood levels in ascending weight order: the breakdown's key
-# order, so a recorded breakdown is stable and readable.
-RISK_LEVELS: tuple[str, ...] = tuple(level.value for level in Likelihood)
-
-# The threshold's override variable and its recorded basis (S2 7.4).
+# The threshold's override variable and its recorded basis (S2 7.4). The DB
+# (`settings.hunting.risk_threshold`, ADR `hunting-pipeline-sync-adr.md`) wins
+# over the environment when set; the env stays the operator's fallback.
 RISK_THRESHOLD_ENV = "HUNT_RISK_THRESHOLD"
 THRESHOLD_BASIS_DEFAULT = "default"
 THRESHOLD_BASIS_OVERRIDE = "override"
+THRESHOLD_BASIS_DB = "db"
 
 # The run record's fixed key set (S1 7.4, S2 9.2): the run bootstrap writes the
 # intake order and the exclusions before the first unit, the accumulator updates
@@ -54,7 +61,6 @@ RUN_RECORD_KEYS: tuple[str, ...] = (
     "intake_excluded",
     "risk_threshold",
     "threshold_basis",
-    "risk_weights",
     "risk_total",
     "risk_breakdown",
     "model_sums",
@@ -66,31 +72,53 @@ RUN_RECORD_KEYS: tuple[str, ...] = (
 )
 
 
-def risk_weights() -> dict[str, int]:
-    """The recorded weight table (S2 7.1): the ONE likelihood-weight constant,
-    re-keyed by the enum's string value for the run record's JSON."""
-    return {level.value: RISK_WEIGHTS[level] for level in Likelihood}
+def _threshold_float(value: Any) -> float | None:
+    """A threshold as a finite float at least 0, or None when the value is not
+    one. A boolean is never a threshold (it would silently read as `0`/`1`), and
+    neither is a negative, infinite, or NaN value: any of those would disable
+    the halt or make it fire on the first unit."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(parsed) or parsed < 0:
+        return None
+    return parsed
 
 
-def threshold_config(env: Mapping[str, str] | None = None) -> tuple[int, str]:
-    """The effective risk threshold and its basis (S2 7.4).
+def threshold_config(
+    env: Mapping[str, str] | None = None, *, db_value: Any = None,
+) -> tuple[float, str]:
+    """The effective risk threshold and its basis (S2 7.4, T7 #410).
 
-    The default is a documented starting constant, not a calibrated value: the
-    calibration replays recorded runs in intake order against the fixed weights
-    (ordering-halt ADR consequences). `HUNT_RISK_THRESHOLD` overrides it; a
-    malformed override warns and falls back to the default, so a typo can never
-    silently disable the halt.
+    The default is a documented starting constant, not a calibrated value: it is
+    the old 250 scaled by the 0.625 ratio between the old 16-point maximum and
+    the CVSS 4.0 10-point maximum (ADR 8). The project's stored
+    `settings.hunting.risk_threshold` wins when set (basis `db`, ADR
+    `hunting-pipeline-sync-adr.md`); `HUNT_RISK_THRESHOLD` then overrides the
+    default; a malformed, negative, or non-finite value warns and falls back, so
+    a typo can never silently disable the halt.
     """
+    if db_value is not None:
+        threshold = _threshold_float(db_value)
+        if threshold is not None:
+            return threshold, THRESHOLD_BASIS_DB
+        logger.warning(
+            "run lifecycle: the stored risk_threshold %r is not a finite "
+            "number >= 0; falling back to the env/default basis", db_value,
+        )
     source = os.environ if env is None else env
     raw = (source.get(RISK_THRESHOLD_ENV) or "").strip()
     if not raw:
         return DEFAULT_RISK_THRESHOLD, THRESHOLD_BASIS_DEFAULT
-    try:
-        threshold = int(raw)
-    except ValueError:
+    threshold = _threshold_float(raw)
+    if threshold is None:
         logger.warning(
-            "run lifecycle: %s=%r is not an integer; using the default "
-            "threshold %d", RISK_THRESHOLD_ENV, raw, DEFAULT_RISK_THRESHOLD,
+            "run lifecycle: %s=%r is not a finite number >= 0; using the "
+            "default threshold %s", RISK_THRESHOLD_ENV, raw,
+            DEFAULT_RISK_THRESHOLD,
         )
         return DEFAULT_RISK_THRESHOLD, THRESHOLD_BASIS_DEFAULT
     return threshold, THRESHOLD_BASIS_OVERRIDE
@@ -98,90 +126,118 @@ def threshold_config(env: Mapping[str, str] | None = None) -> tuple[int, str]:
 
 @dataclass(frozen=True)
 class ModelSum:
-    """One modelled unit's contribution (S2 9.2 `model_sums` entry)."""
+    """One modelled unit's contribution (S2 9.2 `model_sums` entry): the summed
+    CVSS 4.0 risk of its threats, and their count by severity band."""
 
     unit_id: str
-    total: int
-    breakdown: dict[str, int]
+    total: float
+    breakdown: dict[SeverityBand, int]
 
     def record(self) -> dict[str, Any]:
         return {
             "unit_id": self.unit_id,
             "total": self.total,
-            "breakdown": dict(self.breakdown),
+            "breakdown": {
+                str(band): count for band, count in self.breakdown.items()
+            },
         }
 
 
-def _empty_breakdown() -> dict[str, int]:
-    return {level: 0 for level in RISK_LEVELS}
+def _empty_breakdown() -> dict[SeverityBand, int]:
+    return {band: 0 for band in SeverityBand}
+
+
+def _threat_risk(unit_id: str, threat: Mapping[str, Any]) -> float:
+    """The threat's mirrored risk, tolerant of a malformed record: a missing or
+    non-numeric `risk` contributes zero (and counts in the `none` band)."""
+    raw = (threat or {}).get("risk")
+    if raw is None:
+        return 0.0
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        logger.warning(
+            "run lifecycle: model %s carries a threat with a non-numeric risk "
+            "%r; the threat contributes no budget", unit_id, raw,
+        )
+        return 0.0
+    return float(raw)
+
+
+def _stored_total(value: Any) -> float:
+    """One recorded `total` as a float, or `0.0` for a malformed value: a resume
+    is fail-open and re-accumulates the entries it can read."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0.0
+    return float(value)
 
 
 def model_sum(unit_id: str, model: Mapping[str, Any] | None) -> ModelSum:
-    """The harness-owned sum of ONE persisted model (S2 7.3).
+    """The harness-owned sum of ONE persisted model (S2 7.3, amended T7 #410).
 
-    The total and the breakdown come from the model's loops by the fixed weight
-    table; the store computes the same profile at the COMPLETED write and the
-    completion checker regression-checks it, so the recorded sum always restates
-    the loops the model carries. A model with no loops (a zero-loop unit, or a
-    partial document) sums to zero - it consumes no budget.
+    The total sums every threat's mirrored CVSS 4.0 `risk` and rounds to two
+    decimals, as the score is. The breakdown counts every threat by its
+    `SeverityBand`. The store computes the same profile at the COMPLETED write
+    and the completion checker regression-checks it, so the recorded sum always
+    restates the threats the model carries. A model with no threats (a
+    zero-threat unit, or a partial document) sums to zero - it consumes no
+    budget. A threat without a numeric risk contributes zero and counts in the
+    `none` band.
     """
     breakdown = _empty_breakdown()
-    total = 0
-    for loop in (model or {}).get("loops") or []:
-        likelihood = str((loop or {}).get("likelihood") or "")
-        if likelihood not in RISK_LEVELS:
-            logger.warning(
-                "run lifecycle: model %s carries an unknown loop likelihood %r; "
-                "the loop contributes no budget", unit_id, likelihood,
-            )
-            continue
-        breakdown[likelihood] += 1
-        total += RISK_WEIGHTS[Likelihood(likelihood)]
-    return ModelSum(unit_id=unit_id, total=total, breakdown=breakdown)
+    total = 0.0
+    for threat in (model or {}).get("threats") or []:
+        risk = _threat_risk(unit_id, threat)
+        breakdown[severity_band(risk)] += 1
+        total += risk
+    return ModelSum(
+        unit_id=unit_id, total=round(total, 2), breakdown=breakdown)
 
 
 @dataclass
 class RiskAccumulator:
-    """The symbolic run accumulator (S1 7.4, S2 7.4).
+    """The symbolic run accumulator (S1 7.4, S2 7.4, T7 #410).
 
-    `total` is the running sum of the completed units' totals, `breakdown` the
-    summed per-level loop counts, and `model_sums` the per-unit entries the run
+    `threshold` and `total` are floats on the CVSS 4.0 scale, `breakdown` the
+    summed per-band threat counts, and `model_sums` the per-unit entries the run
     record carries. `crossing_unit`, `blocked_unit` and `halt` are the halt's
     audit trail: the crossing unit completed (and is dispatched), the blocked
     unit is the next unit in the intake order that was never modelled.
     """
 
-    threshold: int = DEFAULT_RISK_THRESHOLD
+    threshold: float = DEFAULT_RISK_THRESHOLD
     basis: str = THRESHOLD_BASIS_DEFAULT
-    weights: dict[str, int] = field(default_factory=risk_weights)
-    total: int = 0
-    breakdown: dict[str, int] = field(default_factory=_empty_breakdown)
+    total: float = 0.0
+    breakdown: dict[SeverityBand, int] = field(default_factory=_empty_breakdown)
     model_sums: list[ModelSum] = field(default_factory=list)
     crossing_unit: str | None = None
     blocked_unit: str | None = None
     halt: bool = False
 
     def add(self, entry: ModelSum) -> None:
-        """Accumulate one modelled unit. The total is symbolic: the weights are
-        fixed, so the same loops always yield the same sum."""
-        self.total += entry.total
-        for level, count in entry.breakdown.items():
-            self.breakdown[level] = self.breakdown.get(level, 0) + count
+        """Accumulate one modelled unit. The total is symbolic: the mirrored
+        risks are fixed, so the same threats always yield the same sum. It is
+        rounded per step, so binary float drift never leaks into the record."""
+        self.total = round(self.total + entry.total, 2)
+        for band, count in entry.breakdown.items():
+            self.breakdown[band] = self.breakdown.get(band, 0) + count
         self.model_sums.append(entry)
 
     @property
     def crossed(self) -> bool:
-        """The INCLUSIVE halt comparison (S1 7.4 / S2 7.4): `>=`."""
+        """The INCLUSIVE halt comparison (S1 7.4 / S2 7.4): `>=` on the float
+        total."""
         return self.total >= self.threshold
 
     def record(self) -> dict[str, Any]:
-        """The accumulator's run-record keys (S2 9.2)."""
+        """The accumulator's run-record keys (S2 9.2, T7 #410): the float
+        threshold and total, and the band breakdown. The retired likelihood and
+        impact weight tables are not recorded - the risk is one number and its
+        band counts."""
         return {
             "risk_threshold": self.threshold,
             "threshold_basis": self.basis,
-            "risk_weights": dict(self.weights),
             "risk_total": self.total,
-            "risk_breakdown": dict(self.breakdown),
+            "risk_breakdown": {
+                str(band): count for band, count in self.breakdown.items()},
             "model_sums": [entry.record() for entry in self.model_sums],
             "crossing_unit": self.crossing_unit,
             "blocked_unit": self.blocked_unit,
@@ -212,7 +268,7 @@ class ThreatModelRun:
         order: Sequence[str],
         *,
         excluded: Sequence[IntakeExclusion] = (),
-        threshold: int = DEFAULT_RISK_THRESHOLD,
+        threshold: float = DEFAULT_RISK_THRESHOLD,
         basis: str = THRESHOLD_BASIS_DEFAULT,
     ) -> "ThreatModelRun":
         """A fresh run over the frozen intake order."""
@@ -328,23 +384,28 @@ def resume_run(
     *,
     models: Mapping[str, Mapping[str, Any] | None] | None = None,
 ) -> ThreatModelRun:
-    """A resumed run from its persisted record (S1 7.5).
+    """A resumed run from its persisted record (S1 7.5, T7 #410).
 
     - The intake order is READ, never re-frozen or re-sorted (ordering-halt ADR
       2): the recorded order is the run's order.
+    - The float `risk_threshold` is read back (an explicit `0` is a real
+      threshold, not a missing value); a malformed one falls back to the default.
     - `risk_total` is RECOMPUTED from `model_sums` and the completed models on
-      disk. The model document commits before the run-record update, so a crash
-      between the two leaves a complete model the record does not mention: the
-      resume ADOPTS every complete model at or after `intake_position`, which is
-      why a stale total can never survive a restart.
-    - A halted record resumes as halted: the run dispatches its produced loops
+      disk, never read from the record's own total. The model document commits
+      before the run-record update, so a crash between the two leaves a complete
+      model the record does not mention: the resume ADOPTS every complete model
+      at or after `intake_position`, which is why a stale total can never
+      survive a restart.
+    - A halted record resumes as halted: the run dispatches its produced threats
       and models nothing more.
     """
     order = tuple(str(unit) for unit in record.get("intake_order") or ())
+    recorded_threshold = _threshold_float(record.get("risk_threshold"))
+    if recorded_threshold is None:
+        recorded_threshold = DEFAULT_RISK_THRESHOLD
     accumulator = RiskAccumulator(
-        threshold=int(record.get("risk_threshold") or DEFAULT_RISK_THRESHOLD),
+        threshold=recorded_threshold,
         basis=str(record.get("threshold_basis") or THRESHOLD_BASIS_DEFAULT),
-        weights=dict(record.get("risk_weights") or risk_weights()),
     )
     run = ThreatModelRun(
         intake_order=order,
@@ -359,18 +420,21 @@ def resume_run(
         trajectory=[dict(entry) for entry in record.get("trajectory") or []],
     )
     # The recorded model sums, re-accumulated through the ONE accumulator entry
-    # point (the same weights the live run uses): the running total is the sum of
-    # the entries, never the recorded `risk_total`.
+    # point: the running total is the sum of the entries, never the recorded
+    # `risk_total`.
     recorded: dict[str, ModelSum] = {}
     for entry in record.get("model_sums") or []:
         unit_id = entry.get("unit_id")
         if not unit_id:
             continue
+        stored_breakdown = entry.get("breakdown") or {}
         recorded[str(unit_id)] = ModelSum(
             unit_id=str(unit_id),
-            total=int(entry.get("total") or 0),
-            breakdown={level: int((entry.get("breakdown") or {}).get(level, 0))
-                       for level in RISK_LEVELS},
+            total=_stored_total(entry.get("total")),
+            breakdown={
+                band: int(stored_breakdown.get(band.value, 0))
+                for band in SeverityBand
+            },
         )
     for entry in recorded.values():
         run.accumulator.add(entry)
@@ -424,17 +488,16 @@ def _dedupe_degraded(entries: Sequence[Mapping[str, Any]]) -> list[dict[str, str
 
 __all__ = [
     "ModelSum",
-    "RISK_LEVELS",
     "RISK_THRESHOLD_ENV",
     "RUN_RECORD_KEYS",
     "RiskAccumulator",
     "THRESHOLD_BASIS_DEFAULT",
+    "THRESHOLD_BASIS_DB",
     "THRESHOLD_BASIS_OVERRIDE",
     "ThreatModelRun",
     "is_complete_model",
     "model_sum",
     "resume_run",
-    "risk_weights",
     "threshold_config",
     "trajectory_entry",
 ]

@@ -2,7 +2,7 @@
 resume seam and the modeller-only pass (tracker #174; spec #169 "Singular
 component launches"; ADR #169 Q4/Q6).
 
-T4b (#387) retired the hunt-config enqueue with the config family: the loop
+T4b (#387) retired the hunt-config enqueue with the config family: the threat
 file is the dispatch record, so `enqueue_hunt_config` is GONE and the API path
 is a loud 410 tombstone (asserted in `tests/project_management/test_hunting_api.py`).
 The remaining seams are asserted directly through temp-root stores, no live run
@@ -27,7 +27,7 @@ RUN = "modeller-only-run"
 
 
 def test_the_hunt_config_enqueue_seam_is_retired():
-    """T4b (#387): the config enqueue retired with the config family - the loop
+    """T4b (#387): the config enqueue retired with the config family - the threat
     file is the dispatch record (S2 8.4), and the API path is a loud 410
     tombstone (never a silent accept into a family nothing reads)."""
     assert not hasattr(hunting_runtime, "enqueue_hunt_config")

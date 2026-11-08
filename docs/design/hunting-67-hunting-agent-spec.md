@@ -1,5 +1,43 @@
 # Hunting agent spec: hunting agent
 
+## Amendment 2026-10-25: impact-first elicitation
+
+The threat-model impact-elicitation workstream supersedes the likelihood-only risk score and the failure-mode artifact in this document.
+The decisions are in `docs/design/threat-model-impact-elicitation-adr.md`; the component map is `docs/design/threat-model-impact-elicitation-impact-map.md`.
+Where this document and the amendment disagree, the amendment wins.
+
+- A threat carries `VC`, `VI`, and `VA` plus a literal end impact. The store computes `impact = 1 - (1-VC)(1-VI)(1-VA)`, the ordinal weight, and `threat risk = likelihood_weight * impact_weight`.
+- The ranking and the dispatch buckets use the combined risk. The run record carries `impact_weights` and `impact_breakdown`.
+- The `failure_modes` artifact, `Threat.failure_mode_refs`, and the pod `failure-mode` variant basis are removed. The modeller no longer judges technical feasibility; the hunter and the pod own the effective attempt.
+- The trust procedure uses the four axes `identity`, `spatial`, `temporal`, and `controls_semantics`.
+- The well-formedness phase runs between `VULNERABILITIES_WRITTEN` and `PRIOR_ART`. Its entry is the `trust_assumption` note, its exit is the `wellformedness` note, and a lower-gate write re-enters the phase.
+- Every vulnerability binds a suite class parent or leaf. Technique families are not classes. `suite_gap` is removed. Class findings are non-blocking.
+
+## Amendment 2026-10-26: impact assessment system
+
+The impact-assessment system supersedes the 2026-10-25 impact-first amendment in this document.
+The authoritative spec is `docs/design/impact-assessment-system-spec.md`.
+The prototype is `docs/design/impact-assessment-system-prototype.md`.
+Where this document and the new spec disagree, the new spec wins.
+
+- The impact assessment is a first-class model section.
+  A row is a `threat` when it names a concrete victim and damaged property, otherwise a `placeholder`.
+- A `precursor` is an impact-assessment row with no concrete end damage that still yields its capability.
+  The threat references its precursors through `enabling_precursors`.
+- The `damage` field merges the victim and the damage into one semantic field.
+  The damage-family and victim-class enums are removed.
+- The CVSS 4.0 base score is derived at persistence, after the impact assessment.
+  The `end_impact` string is removed from the threat; the damage lives in the impact assessment.
+- The workflow has seven gates: `UNIT_TECHNICAL_SHARP`, `TRUST_MODELLED`, `TRUST_ASSUMPTIONS_WRITTEN`, `VULNERABILITIES_WRITTEN`, `PRIOR_ART`, `IMPACT_ASSESSED`, `COMPLETED`.
+- `hunts_store` gains `cmd=query`: a required `kind` plus a non-empty AND list of `{path, regex, flags}` filters over the threat-file and model fields. An empty filter, an invalid regex, or an unknown path is a coded rejection.
+- The project `threat_model_scope` string is applied at the assumptions layer and appended verbatim to the prompt.
+- The hunter payload carries the impact assessment and the precursors.
+  The spec contract and the pod contract are unchanged.
+  No damage symptom or damage verdict is added.
+- The class-based green gate is retired.
+  The impact metric is the CIA red/green share over all impact rows.
+
+
 Part of [#67](https://github.com/Diekgbbtt/polyphemus/issues/67) (per-agent specs), middle of the agent hierarchy.
 The parent, merged spec is `docs/design/hunting-67-per-agent-specs-spec.md`; it holds the inter-agent logic (walkthrough S0-S7, domain data contracts D1-D11, interface agreements IA-1..IA-8, failure-handling canon, agent-attribute compliance).
 This document disambiguates the hunting agent from the combined spec: everything below is the hunting agent's contract alone, written to the depth an implementation session can build from without re-reading the parent.
@@ -11,13 +49,13 @@ Decisions cited as D67-n live in `docs/design/hunting-67-per-agent-specs-decisio
 The superseded clauses are 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7-1.9, section 2, section 3, section 4, section 5, and the D4-dependent assertions in section 6.
 Those sections retain the older contract for history and are not current.
 The old text is retained for history.
-The redesigned hunter consumes a loop payload, not a `HuntConfig`.
+The redesigned hunter consumes a threat payload, not a `HuntConfig`.
 The production prompt is implemented in a dedicated work phase with refine-and-adversarial-review iterations.
 The harness FSM is S4; the pod contract is S5; the impact map is `docs/design/unit-threat-model-spec-impact-map.md`.
 
 ## 1. Identity
 
-The hunting agent is the test-DESIGN side of the Q8 design/execution partition: a typed agent with a parametrised prompt template over a declarative `HuntConfig`, authoring rich `TestImplementationSpec`s and driving the hypothesis evaluation loop through the pod.
+The hunting agent is the test-DESIGN side of the Q8 design/execution partition: a typed agent with a parametrised prompt template over a declarative `HuntConfig`, authoring rich `TestImplementationSpec`s and driving the hypothesis evaluation threat through the pod.
 
 ### 1.1 Role
 
@@ -36,7 +74,7 @@ Author, for its dispatched `HuntConfig`, a `TestImplementationSpec` that a test-
 2. Query the symptom-technique KB (the `fault KB` handle) for symptoms and probing-techniques on the join key `(fault-class, unit technological-axis)` (IA-8).
 3. Author the `TestImplementationSpec` (D4, merged spec section 7): the core NL over the fundamental typed base.
 4. Yield the spec plus feedback to the orchestrator (IA-5).
-5. Run the hypothesis-evaluation loop: dispatch the pod (IA-3) on the spec, consume `{verdict, evidence}` (IA-4), derive the four-valued hypothesis verdict by the harness's deterministic trail-driven function (D67-02, Q3-amended), and either confirm success, land unsuccessful, or pursue `insufficient-evidence` via a narrow tool exec or an inline back-edge need surfaced through feedback (D67-14, IA-5 -> IA-6).
+5. Run the hypothesis-evaluation cycle: dispatch the pod (IA-3) on the spec, consume `{verdict, evidence}` (IA-4), derive the four-valued hypothesis verdict by the harness's deterministic trail-driven function (D67-02, Q3-amended), and either confirm success, land unsuccessful, or pursue `insufficient-evidence` via a narrow tool exec or an inline back-edge need surfaced through feedback (D67-14, IA-5 -> IA-6).
 6. Worst case and failure state per D67-12 (section 4 below).
 
 ### 1.4 Tools
@@ -79,10 +117,10 @@ The shared recipe (merged spec section 8): one Langfuse trace per spec-authoring
 
 **SUPERSEDED by 8.4-8.6 (2026-10-18).**
 
-- The hypothesis-evaluation loop: this is the agent's second core activity after spec authoring.
+- The hypothesis-evaluation threat: this is the agent's second core activity after spec authoring.
   Per hypothesis: dispatch the pod (IA-3), consume `{verdict, evidence}` (IA-4), and derive the D7 hypothesis verdict (D67-02, Q3-amended): the verdict is a four-valued enum `{successful, unsuccessful, insufficient-evidence, underspecified-spec}`, derived by a PURE deterministic trail-driven harness function of the binary pod outcome plus the evidence trail - never LLM-judged.
   The ratified map: `{successful, symptom-confirmed}` -> `successful`; `{unsuccessful, space-exhausted}` with a clean trail -> `unsuccessful`; `{unsuccessful, technical-infeasibility}` -> `unsuccessful` (a structural blocker); `{unsuccessful, specific-defence-prevention}` -> `unsuccessful`; `{unsuccessful, no-symptom-evidence}` -> `insufficient-evidence` or `unsuccessful` (trail-driven); `{unsuccessful, budget-timeout}` -> `insufficient-evidence` or `unsuccessful` (trail-driven); a pod rejection at INIT carrying the validation evidence -> `underspecified-spec`.
-- The inline re-evaluation loop (D67-14): hypothesis-`insufficient-evidence` triggers a narrow tool exec or an inline back-edge need (surfaced via IA-5; the orchestrator executes IA-6 and routes the result back).
+- The inline re-evaluation threat (D67-14): hypothesis-`insufficient-evidence` triggers a narrow tool exec or an inline back-edge need (surfaced via IA-5; the orchestrator executes IA-6 and routes the result back).
   Re-evaluation is unbounded while each response yields meaningful insights; a no-meaningful-insight response ends the evaluation (the D67-12 failure state).
   The termination guard is the meaningfulness test on the returned evidence, not a depth count.
 - The worst case is NOT a failure mode (D67-12): a hostile `(fault-class, testable-unit)` pair - one hypothesis verified, yielding one test - results in something technically unfeasible or a state with a strong blocking assertion, even after many variants have been executed.
@@ -97,7 +135,7 @@ The shared recipe (merged spec section 8): one Langfuse trace per spec-authoring
 
 Builds:
 
-- The agent itself: the spec-authoring turn (one LLM call over the parametrised prompt template) and the hypothesis-evaluation loop.
+- The agent itself: the spec-authoring turn (one LLM call over the parametrised prompt template) and the hypothesis-evaluation threat.
 - The KB query interface against the symptom-technique KB (IA-8), with an in-memory fixture KB for tests.
 - The typed handoff of the `TestImplementationSpec` to the pod (IA-3) and the `{verdict, evidence}` consumption (IA-4).
 - The hypothesis verdict derivation and the feedback emission (D11).
@@ -134,10 +172,10 @@ O2 - KB unavailable (raises): the same degrade; nothing raises.
 O3 - Malformed `HuntConfig` (a part missing): the agent authors from the present parts and flags the gap in the feedback; nothing raises.
 O4 - Index-card projection unavailable: the agent authors without the surface context (degraded).
 O5 - Pod raises at IA-3: the agent treats the run as unsuccessful with the error in the evidence and continues the evaluation or enters the failure state; nothing raises.
-O6 - Pod rejects the spec at INIT: the agent re-authors exactly once (declining attributes per D67-03); a second rejection lands the verdict `underspecified-spec` with the validation evidence; the re-authoring is bounded by the evaluation loop's budget and there is no third attempt.
+O6 - Pod rejects the spec at INIT: the agent re-authors exactly once (declining attributes per D67-03); a second rejection lands the verdict `underspecified-spec` with the validation evidence; the re-authoring is bounded by the evaluation threat's budget and there is no third attempt.
 O7 - Duplicate hypothesis: an identical spec is not re-dispatched to the pod (idempotent; the experiment log records one execution).
 O8 - Inline back-edge returns `error`/`degraded` status: the result is folded into the evidence trail (IA-6 vocabulary) and the evaluation continues or ends.
-O9 - Inline back-edge keeps returning non-meaningful results: the meaningfulness guard ends the evaluation (D67-14); the hunt enters the failure state; no unbounded loop escapes the guard.
+O9 - Inline back-edge keeps returning non-meaningful results: the meaningfulness guard ends the evaluation (D67-14); the hunt enters the failure state; no unbounded threat escapes the guard.
 O10 - Spec-authoring turn LLM exhaustion: the hunt degrades to unsuccessful with the partial authoring evidence in the feedback; there is no fallback template (D67-12); the guarantee is a design property, not a fallback.
 
 ## 5. Delivery semantics and failure handling
@@ -151,7 +189,7 @@ Delivery canon (merged spec section 3): all delivery is synchronous and in-proce
 - IA-5 (agent -> orchestrator): synchronous best-effort feedback.
   A lost feedback does not block; the orchestrator continues from the store records.
 - IA-8 (agent -> KB): query on the join key; an unavailable KB degrades the grounding; the agent authors from the `HuntConfig` alone.
-- Inline back-edge (D67-14): the agent surfaces the need via IA-5; the orchestrator executes IA-6 and routes the result back on the `correlation_id`; the meaningfulness guard terminates the re-evaluation loop.
+- Inline back-edge (D67-14): the agent surfaces the need via IA-5; the orchestrator executes IA-6 and routes the result back on the `correlation_id`; the meaningfulness guard terminates the re-evaluation threat.
 
 ## 6. Assertion catalogue - work-item "hunting agent (per-agent spec from #67)"
 
@@ -180,7 +218,7 @@ C8 - Pod reject at IA-3 (Q3/Q5): given the pod rejecting the spec at INIT, exerc
 Yields: `...::test_pod_init_rejection_lands_underspecified_spec`.
 C9 - Duplicate hypothesis at IA-3: given an identical spec already dispatched, exercising duplicate-idempotent, no second dispatch occurs.
 Yields: `...::test_duplicate_hypothesis_not_redispatched`.
-C10 - Inline no-meaningful-insight at IA-5 (D67-14): given an inline back-edge result that yields no meaningful insight, exercising ordering, the evaluation ends and the hunt enters the D67-12 failure state (no unbounded loop).
+C10 - Inline no-meaningful-insight at IA-5 (D67-14): given an inline back-edge result that yields no meaningful insight, exercising ordering, the evaluation ends and the hunt enters the D67-12 failure state (no unbounded threat).
 Yields: `...::test_no_meaningful_insight_ends_evaluation`.
 C11 - Pod raise at IA-3: given the pod raising, exercising degradation, the agent treats the run as unsuccessful with the error in the evidence and continues or enters the failure state; nothing raises.
 Yields: `...::test_raising_pod_degrades`.
@@ -192,7 +230,7 @@ C14 - Trail-driven insufficiency at IA-4 (D67-02, Q3-amended): given `{unsuccess
 Yields: `...::test_no_symptom_evidence_blocked_maps_to_insufficient_evidence`.
 C15 - Trail-driven clean absence at IA-4 (D67-02, Q3-amended): given `{unsuccessful, no-symptom-evidence}` with a clean envelope (`clean` True: clean completed observations), exercising success, the hypothesis verdict is `unsuccessful`.
 Yields: `...::test_no_symptom_evidence_clean_maps_to_unsuccessful`.
-C16 - Budget-timeout partial trail at IA-4 (D67-02, Q3-amended): given `{unsuccessful, budget-timeout}` with a non-clean envelope (`clean` False: the loop cut mid-flight), exercising success, the hypothesis verdict is `insufficient-evidence`.
+C16 - Budget-timeout partial trail at IA-4 (D67-02, Q3-amended): given `{unsuccessful, budget-timeout}` with a non-clean envelope (`clean` False: the threat cut mid-flight), exercising success, the hypothesis verdict is `insufficient-evidence`.
 Yields: `...::test_budget_timeout_partial_maps_to_insufficient_evidence`.
 C17 - Budget-timeout clean trail at IA-4 (D67-02, Q3-amended): given `{unsuccessful, budget-timeout}` with a clean envelope (`clean` True), exercising success, the hypothesis verdict is `unsuccessful`.
 Yields: `...::test_budget_timeout_clean_maps_to_unsuccessful`.
@@ -243,7 +281,7 @@ Yields: `...::test_E10_reentry_after_reauth_uses_latest_spec`.
 The pod (its own spec doc), the orchestrator (its own spec doc), the symptom-technique KB content (operator-built external), the fault-targeting tool registry content (#71), and the closed-enum pattern engine (#81).
 The merged spec's inter-agent logic (sections 10-14) governs the seams this document references.
 
-## 8. Redesign 2026-10-18: the loop-driven hunter
+## 8. Redesign 2026-10-18: the threat-driven hunter
 
 ### 8.1 Problem statement
 
@@ -253,20 +291,20 @@ Its workflow is a fault-hypothesis tree: DECOMPOSE into specific faults, GENERAT
 The spec surface carries a testing pattern, a payload vector space, and interpretation guidance.
 The testing pattern duplicates the class skill's procedural knowledge.
 The payload vector space pre-narrows the attack before the hunter has grounded.
-The fault-hypothesis vocabulary no longer matches the modeller, which produces trust-model loops, not faults.
+The fault-hypothesis vocabulary no longer matches the modeller, which produces trust-model threats, not faults.
 
 The measured costs are:
 
 - The hunter spends turns re-deriving the unit's trust model.
-- The fault-hypothesis set is not the trust-model set; the hunter can miss the agreement the loop names.
+- The fault-hypothesis set is not the trust-model set; the hunter can miss the agreement the threat names.
 - The payload vector space constrains the procedure before the evidence is collected.
 - The old prompt's EVALUATE, CONCLUDE, and [G] nodes assume a pod map-back that does not exist.
 
 ### 8.2 Solution
 
-The hunter consumes one loop payload.
-It grounds on the technical failure modes of the trust agreement or the dynamic-state transition that yielded the loop.
-It slices the failure-modes space the loop opens.
+The hunter consumes one threat payload.
+It grounds on the technical failure modes of the trust agreement or the dynamic-state transition that yielded the threat.
+It slices the failure-modes space the threat opens.
 It collects discrimination-axis instances.
 It discriminates and generates a spec set combinatorially.
 It checks the set's well-formedness.
@@ -277,13 +315,13 @@ The original decision tree's navigation is kept.
 The new passes integrate into the tree; they do not replace it with a pipeline.
 The production prompt is implemented in a dedicated work phase.
 That phase runs multiple refine-and-adversarial-review iterations.
-The prompt's gate hints are the hunter loop drivers; they need strong trajectory-keeping guarantees and surgical quality.
+The prompt's gate hints are the hunter threat drivers; they need strong trajectory-keeping guarantees and surgical quality.
 
 ### 8.3 User stories
 
-1. As an operator, I want the hunter to receive one loop, so that one dispatch has one research direction.
+1. As an operator, I want the hunter to receive one threat, so that one dispatch has one research direction.
 2. As an operator, I want the hunter to ground on the trust agreement's technical failure modes, so that the test follows the unit's actual interface or state transition.
-3. As an operator, I want the hunter to load the class skill by the loop's suite class, so that the procedure is grounded in the class methodology.
+3. As an operator, I want the hunter to load the class skill by the threat's suite class, so that the procedure is grounded in the class methodology.
 4. As an operator, I want the hunter to collect discrimination-axis instances before it generates specs, so that the spec set covers the slice instead of a single guess.
 5. As an operator, I want the encoding scheme excluded from the discrimination axis, so that the hunter does not mistake encoding variants for distinct directions.
 6. As an operator, I want the spec set checked for overlap and exhaustive coverage, so that duplicate or missing regions are visible.
@@ -299,23 +337,23 @@ The prompt's gate hints are the hunter loop drivers; they need strong trajectory
 16. As an operator, I want `verification_symptoms` to mean the concrete observable failure modes of the trust agreement, so that the pod's manifestation check is unambiguous.
 17. As an operator, I want `assumptions` to mean the technical requirements the pod may falsify, so that the hunter and the pod share one semantics.
 18. As an operator, I want the rationale to stay vulnerability-level, so that the hunter keeps the room to engineer its own procedure.
-19. As an operator, I want the hunter's store key to be the loop dispatch id, so that one loop has one spec folder.
+19. As an operator, I want the hunter's store key to be the threat dispatch id, so that one threat has one spec folder.
 20. As an operator, I want the spec status vocabulary to be exactly `{hypothesised, ratified, dropped}`, so that no artifact uses `verified` or `specified`.
 21. As an operator, I want the phase-summary notes to carry the pass exits, so that the harness can track the pass sequence without a status write.
 22. As an operator, I want the grounding note rewritten on a grounding re-entry, so that the latest summary wins.
 23. As an operator, I want the hunter-side materialisation retired, so that no KB materialisation block reaches the prompt.
 24. As an operator, I want the dead verdict surfaces removed, so that no code path pretends to derive a hypothesis verdict.
 25. As an operator, I want the pod dispatch path kept, so that ratified specs still reach the test-executor pod.
-26. As the hunter, I want the loop ontology in one prompt paragraph, so that I can reason over the unit, the sharpening, the trust model, the abduction chain, the confidence degree, and the failure-modes slice.
+26. As the hunter, I want the threat ontology in one prompt paragraph, so that I can reason over the unit, the sharpening, the trust model, the abduction chain, the confidence degree, and the failure-modes slice.
 27. As the hunter, I want the grounding pass to start on the target surfaces, so that the frame comes from the live unit, not from a class checklist.
 28. As the hunter, I want the hacking KB used only for target technology configurations in grounding, so that instance mining happens in collection.
 29. As the hunter, I want the collection pass to mine advanced techniques, chaining prerequisites, technology-specific failure modes, and payload-vector classes, so that the discrimination has real instances.
-30. As the hunter, I want the well-formedness pass to loop in the reasoning while the harness state stays put, so that the trajectory shows one pass, not inner-loop transitions.
+30. As the hunter, I want the well-formedness pass to threat in the reasoning while the harness state stays put, so that the trajectory shows one pass, not inner-threat transitions.
 31. As the hunter, I want the verify-claims pass to probe only falsifiable technical requirements, so that a failed probe lowers confidence without erasing the direction.
-32. As a reviewer, I want the prompt work phase to have its own adversarial review, so that the loop drivers are surgically specified.
+32. As a reviewer, I want the prompt work phase to have its own adversarial review, so that the threat drivers are surgically specified.
 33. As a reviewer, I want the old fault-hypothesis assertions superseded, so that the test suite does not pin a retired workflow.
-34. As a runtime operator, I want the hunter's session id to name the unit and the loop, so that the dispatch is traceable.
-35. As a runtime operator, I want the pod session to name the loop dispatch and the spec, so that the execution lineage is traceable.
+34. As a runtime operator, I want the hunter's session id to name the unit and the threat, so that the dispatch is traceable.
+35. As a runtime operator, I want the pod session to name the threat dispatch and the spec, so that the execution lineage is traceable.
 
 ### 8.4 The pass sequence
 
@@ -323,22 +361,22 @@ The hunter's reasoning passes are:
 
 | Pass | Input | Work | Exit signal | Done when |
 |---|---|---|---|---|
-| `GROUNDING` | The loop payload, the unit projection, the live target, the class skill, the methodology KB, the HTTP history, the notes, the hunt store, the auth context | Establish the frame, the hard constraints, and the assumptions. Ground on the trust agreement's technical failure modes. Explore the sources; exploit means exit. | `notes` write: `kind=phase_summary`, `note_name=phase:grounding` | The frame is explicit, the technical failure modes are identified, and the load-bearing claims are verified, revised, or marked with visible uncertainty. |
-| `SLICE` | The grounding output | Define the region of the failure-modes space the loop opens. | `phase:slice` note | The slice definition is explicit, with the boundary and the variables that delimit it. |
+| `GROUNDING` | The threat payload, the unit projection, the live target, the class skill, the methodology KB, the HTTP history, the notes, the hunt store, the auth context | Establish the frame, the hard constraints, and the assumptions. Ground on the trust agreement's technical failure modes. Explore the sources; exploit means exit. | `notes` write: `kind=phase_summary`, `note_name=phase:grounding` | The frame is explicit, the technical failure modes are identified, and the load-bearing claims are verified, revised, or marked with visible uncertainty. |
+| `SLICE` | The grounding output | Define the region of the failure-modes space the threat opens. | `phase:slice` note | The slice definition is explicit, with the boundary and the variables that delimit it. |
 | `COLLECT` | The slice | Query the methodology KB, the previous hunt stores, and the notes for as many instances as possible of the discrimination axis. | `phase:collect` note | The instance set covers the axis broadly enough to discriminate. |
 | `DISCRIMINATE` | The slice and the instances | Split the slice over the axis instances. Choose the discriminating variables. Resolve the narrow/broad trade-off. | `phase:discriminate` note | The axis instances and the discrimination are explicit; each spec slot is distinguishable from its nearest alternative. |
-| `GENERATE` | The discrimination | Generate the spec set combinatorially over the axis instances. Write every spec with `status=hypothesised`. | `hunts_store` write: the spec set, all `hypothesised` | The spec set is written. |
+| `GENERATE` | The discrimination | Generate the spec set combinatorially over the axis instances. Write one spec per `hunts_store` call, each with `status=hypothesised`. | One `hunts_store` write per spec | The spec set is written. |
 | `WELL-FORMEDNESS` | The spec set | Check no overlap and exhaustive coverage over the slice. Merge or drop. A new iteration re-enters COLLECT or GENERATE in the reasoning. | `phase:well_formedness` note | The set is well formed, or the iteration has a recorded remaining gap. |
-| `VERIFY-CLAIMS` | The surviving specs | Probe the load-bearing technical requirements with falsification-only probes. Loop until the requirement is resolved or the meaningfulness guard ends it. | Terminal `hunts_store` write: promote survivors to `ratified`, declass unfeasible to `dropped` | The terminal write is persisted. |
+| `VERIFY-CLAIMS` | The surviving specs | Probe the load-bearing technical requirements with falsification-only probes. Threat until the requirement is resolved or the meaningfulness guard ends it. | One `hunts_store` write per survivor to `ratified`, then `finalize`; declass unfeasible specs to `dropped` | The terminal set is persisted. |
 | `COMPLETE` | The final spec set | No model work. The surfer dispatches the pod. | Terminal | The hunt ends. |
 
 The harness tracks the pass sequence passively.
 A pass exit advances the tracked state.
 An earlier pass's signal appends to the trail and never moves the state back.
 A later pass's signal advances as a reality-restoring forward jump and records the skipped states.
-Loops exist at GROUNDING, WELL-FORMEDNESS, and VERIFY-CLAIMS.
+Threats exist at GROUNDING, WELL-FORMEDNESS, and VERIFY-CLAIMS.
 The harness stays in the looping pass until that pass's exit signal fires.
-Inner-loop calls are trail material, not transitions.
+Inner-threat calls are trail material, not transitions.
 The full state and signal contract is S4 14.
 
 ### 8.5 The prompt and the tree
@@ -359,15 +397,15 @@ The agent is aware of its role in the hunting process only.
 The role is "engineering web vulnerability tests".
 The prompt mentions no wider codebase position and no hunter system versions.
 
-**Loop ontology.**
-One dedicated paragraph defines the loop's entities:
+**Threat ontology.**
+One dedicated paragraph defines the threat's entities:
 
 - The unit and its technical sharpening.
 - The trust model: the trust agreement or the dynamic-state transition.
 - The abduction chain: the programming fault and the vulnerability that characterises the application if the fault is implemented.
 - The confidence degree.
 - The failure-modes-space slice.
-- The reasoning from the loop to engineered attacks.
+- The reasoning from the threat to engineered attacks.
 
 **Decision tree.**
 The tree's nodes are:
@@ -392,10 +430,10 @@ Then consult the other sources: the methodology KB for target technology configu
 The class-exhaustiveness question over "specific faults of this class" is removed.
 The grounding target is the technical failure modes of the trust agreements in an interface or in a state transition.
 The grounding is an explore/exploit pass.
-The in-loop retrieval-gap check is a rider on a grounding KB query; it is not a transition.
+The in-threat retrieval-gap check is a rider on a grounding KB query; it is not a transition.
 
 **SLICE.**
-The pass yields the slice definition: the region of the failure-modes space the loop opens.
+The pass yields the slice definition: the region of the failure-modes space the threat opens.
 The slice is prose reasoning.
 It ends in no spec and no store write.
 
@@ -442,6 +480,13 @@ No pod map-back exists today.
 The second DISCRIMINATE phase is removed.
 The fault-hypothesis vocabulary is removed from the hunter prompt.
 
+**Phase hints.**
+The workflow injects a `<phase-transition-hint>` only when a pass exits.
+The ending tool response of the pass carries the hint.
+The hint names the next pass.
+The hint is guidance, never a gate.
+No call is refused for the pass the tracked state is in.
+
 **Examples.**
 The worked examples are rewritten for the new passes and the reduced spec surface.
 They imitate the reasoning shape, not the old domain.
@@ -461,7 +506,22 @@ The D4 surface is reduced:
   It carries no failure-mode detail and no narrowed vector.
 - `parent_spec_ref`: the variant lineage, when the spec is derived.
 - `provenance`: the dispatch context.
-  It carries `loop_id`, `unit_id`, `canonical_class`, `web_vulnerability_class`, `baseline_ref` (optional), and the bounded `skill_procedure` for the pod's triager.
+  It carries `run_id` (bound by the tool, never authored), `threat_id`, `unit_id`, `canonical_class`, `web_vulnerability_class`, `baseline_ref` (optional), `source_recon_refs`, `assumption_ref`, `playbook`, and the bounded `skill_procedure` for the pod's triager.
+- `skills`: the optional flat pod-runner skill list.
+  Each name is a skill the runner may carry.
+  It is never a path and never a meta-skill.
+
+The write surface adds three fields to the canonical `TestImplementationSpec`:
+
+- `status`: `hypothesised`, `ratified`, or `dropped`;
+- `fault_keyword` and `strategy_keyword`: the two words the store derives the identity from.
+
+`spec_id` is derived as `<fault_keyword>_<strategy_keyword>`.
+It is never authored.
+
+The prompt's `## The spec body` is a generated projection of `SpecWrite`, `SpecProvenance`, `TargetIdentity`, and `SkillProcedure`.
+It names every writable field, its type, and its requiredness.
+A hand-written partial field list is not allowed to drift from the models.
 
 The retired fields are `payload_vector_space`, `interpretation_guidance`, and `testing_pattern`.
 The pod's variant machinery is S5.
@@ -520,13 +580,16 @@ The prompt does not add a payload-completeness rule.
 
 The hunter's tool surface is:
 
-- `hunts_store`: read/write over the loop's spec folder.
-  - The hunt key is the loop dispatch id `<unit_name>__<loop_id>`.
+- `hunts_store`: read/write over the threat's spec folder.
+  - The hunt key is the threat dispatch id `<unit_name>__<threat_id>`.
   - The key is bound at tool construction; it is never a request field.
-  - The write takes a `specs` list; each entry carries `status` and the typed spec.
-  A single-spec write is a set of one.
-  The GENERATE write carries the whole set, all `hypothesised`.
-  The terminal write carries the whole set with the surviving specs `ratified` and the unfeasible specs `dropped`.
+  - The write carries exactly ONE `spec` object, never a list.
+  - The required fields are `status`, `fault_keyword`, `strategy_keyword`, and `target_identity.url`.
+  - A rejected write is a coded `hunts_store_write_rejected` naming the field.
+  - The GENERATE write persists one spec with `status=hypothesised`.
+  - The terminal write closes the set after the surviving specs are `ratified` and the unfeasible specs are `dropped`.
+  - A zero-spec hunt is a valid terminal set.
+  - A write after `finalize` is rejected.
   - The store derives the file name `<fault_keyword>_<strategy_keyword>.yaml` and the folder `test-specs/<hunt_key>/`.
   - The `hypothesised` write creates; a later status upserts in place.
   - A duplicate identity is a dedup signal; a re-author updates in place.
@@ -548,13 +611,40 @@ The hunter's tool surface is:
   HTTP-history pair. The binding derives the session key; the agent never
   passes one. End the browser when it is not needed anymore.
 - `skill_list` / `skill_load`: the web-vulnerability suite.
-  - The loop's suite class selects the class skill.
+  - `skill_list` requires a case-insensitive name regex.
+  - A parent match includes its class leaves; a leaf match includes its class parent.
+  - The threat's suite class selects the class skill.
+- `search_http_history` / `get_http_artifact`: the project's recorded HTTP traffic.
+  - Search returns sanitized candidate rows.
+  - Get inspects one artifact and its capture state.
+  - The record's artifact id becomes the spec's `provenance.baseline_ref`.
+  - Replay is the pod's act, never the hunter's.
+- `load_skill`: the project skill catalogue.
+- `record_skill_lesson`: the skill-usage lesson recorder.
+- `auth_store`: the project authentication context, in READ-ONLY mode.
+  - The hunter reads the view.
+  - The hunter never writes the store.
+
+The request tool definition is the full tool surface.
+The threat tool surface is removed.
+The prompt's `## The tools` is a complete human summary of the bound surface.
+It names every tool above and carries no second description body.
+The request schemas remain the machine contract.
+The top-level descriptions carry purpose, operation, constraints, the coded error envelope, and the critical usage clauses.
+
+The hunter's first human message is ONE instance-context message.
+It carries the application overview, the threat grounding, the current state, and the step protocol.
+It carries no threat tool surface.
+The compaction pin preserves this message for the whole hunt.
+
+The technical sharpening in the threat grounding is projected to `id`, `statement`, and `confidence`.
+The agreement evidence entries stay out of the projection; the threat evidence carries the references.
 
 The pod dispatch path stays:
 
 - The terminal write produces ratified specs.
 - The surfer moves a ratified spec to `consumed/` and dispatches one pod session.
-- The pod session id is `hunting:<run_id>:pod:<unit_name>__<loop_id>:<spec_id>`.
+- The pod session id is `hunting:<run_id>:pod:<unit_name>__<threat_id>:<spec_id>`.
 - The hunter derives no hypothesis verdict.
 - The pod exports its result; the verdict-consumption workflow remains out of scope.
 
@@ -581,21 +671,29 @@ The dead verdict and pod-result surfaces are removed:
 
 The pod dispatch path stays.
 The `hunts_store`, `notes`, `graph_view`, `kb_query`, and `exec` tool names stay.
-The `skill_list` and `skill_load` tools are added.
+The `skill_list`, `skill_load`, `search_http_history`, `get_http_artifact`, `load_skill`, `record_skill_lesson`, and `auth_store` tools are added.
+The threat tool surface is removed.
+The request tool definitions are the full surface.
 
 ### 8.9 Implementation decisions
 
-- The hunter is dispatched with a loop payload, not a `HuntConfig`.
-- The loop payload fields are S2 8.2.
-- The hunter's session id is `hunting:<run_id>:hunt:<unit_name>__<loop_id>`.
-- The hunter's store key is `<unit_name>__<loop_id>`.
+- The hunter is dispatched with a threat payload, not a `HuntConfig`.
+- The threat payload fields are S2 8.2.
+- The hunter's session id is `hunting:<run_id>:hunt:<unit_name>__<threat_id>`.
+- The hunter's store key is `<unit_name>__<threat_id>`.
 - The hunter's spec folder is `test-specs/<hunt_key>/`.
 - The spec body is the reduced D4 surface at every status.
 - The status values are `{hypothesised, ratified, dropped}`.
-- The GENERATE write carries the whole spec set in one call.
-- The terminal write carries the whole spec set and applies the promotes and declasses.
+- The GENERATE write persists one spec per call.
+- The terminal write closes the set and applies the promotes and declasses.
+- The `skills` field carries the flat pod-runner skill list.
+- The `run_id` is bound and never authored.
+- The `spec_id` is derived and never authored.
 - The `skill_procedure` is the typed seven-field excerpt above.
 - The `baseline_ref` rides the provenance when the hunter has a recorded baseline.
+- The prompt's spec body is generated from the typed models.
+- The first human context is pinned through compaction.
+- The auth store is bound read-only.
 - The `variants` concept stays pod-side; the spec set is not a variant set.
 - The prompt's discipline paragraph extends the existing wider discipline paragraph.
 - The phase-summary notes carry the pass exits.
@@ -616,7 +714,7 @@ Test external behaviour: the persisted specs, the store folder, the statuses, th
 
 Seams:
 
-- The pure pass tracker: signal detection, monotonic state, forward jump, trail-only backward signal, loop discipline.
+- The pure pass tracker: signal detection, monotonic state, forward jump, trail-only backward signal, threat discipline.
 - The graph: injected observations drive the state moves and the hint injection.
 - The store: bound key, derived file name, status lifecycle, move-aware write.
 - The notes: `phase_summary` kind, `phase:<phase>` names, update-on-re-iteration.
@@ -649,3 +747,26 @@ The workbench R8-2 and R8-3 carry the harness and pod decisions.
 The impact map carries the supersession ledger.
 The production prompt work phase is the only place the final prose is written.
 The prompt work phase must run through multiple refine-and-adversarial-review iterations.
+
+### 8.13 Context dedup amendment (2026-10-23)
+
+The shared decision record is `docs/design/hunting-context-dedup-2026-10-23-adr.md`.
+The impact map is `docs/design/hunting-context-dedup-impact-map.md`.
+
+The hunter changes are:
+
+- The threat tool surface is removed.
+  It duplicated the request descriptions inside the first human message.
+- The first human message is one instance-context message.
+  It carries the application overview and the threat grounding together.
+- The compaction pass pins that first human message.
+- The `## The spec body` is generated from `SpecWrite`, `SpecProvenance`, `TargetIdentity`, and `SkillProcedure`.
+- The `skills` field is documented as the flat pod-runner skill list.
+- The `run_id` is documented as bound and the `spec_id` as derived.
+- The technical sharpening is projected to `id`, `statement`, and `confidence`.
+- The phase hint is described as a transition signal.
+- The tool descriptions are dense usage projections under an 8,500-char ceiling.
+  The schemas remain the machine contract.
+- The auth store is bound read-only.
+
+The tool-list completion and the description budget are covered by `tests/attack/test_hunting_agent_prompt.py` and `tests/attack/test_tool_description_budget.py`.

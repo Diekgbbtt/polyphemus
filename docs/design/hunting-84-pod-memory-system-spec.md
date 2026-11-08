@@ -1,5 +1,19 @@
 # Hunting spec: test-executor pod memory system (per-project experiment logs + notes)
 
+## Amendment 2026-10-25: impact-first elicitation
+
+The threat-model impact-elicitation workstream supersedes the likelihood-only risk score and the failure-mode artifact in this document.
+The decisions are in `docs/design/threat-model-impact-elicitation-adr.md`; the component map is `docs/design/threat-model-impact-elicitation-impact-map.md`.
+Where this document and the amendment disagree, the amendment wins.
+
+- A threat carries `VC`, `VI`, and `VA` plus a literal end impact. The store computes `impact = 1 - (1-VC)(1-VI)(1-VA)`, the ordinal weight, and `threat risk = likelihood_weight * impact_weight`.
+- The ranking and the dispatch buckets use the combined risk. The run record carries `impact_weights` and `impact_breakdown`.
+- The `failure_modes` artifact, `Threat.failure_mode_refs`, and the pod `failure-mode` variant basis are removed. The modeller no longer judges technical feasibility; the hunter and the pod own the effective attempt.
+- The trust procedure uses the four axes `identity`, `spatial`, `temporal`, and `controls_semantics`.
+- The well-formedness phase runs between `VULNERABILITIES_WRITTEN` and `PRIOR_ART`. Its entry is the `trust_assumption` note, its exit is the `wellformedness` note, and a lower-gate write re-enters the phase.
+- Every vulnerability binds a suite class parent or leaf. Technique families are not classes. `suite_gap` is removed. Class findings are non-blocking.
+
+
 **AMENDED 2026-10-18 (T9, #382; carried by T10 #383).** The variant record keeps its four-field shape, and `declined_attribute` now carries the variant BASIS from the procedure diff (S5 8.6) instead of a declined spec attribute. The D4 references are the REDUCED D4 (S5 8.4): `testing_pattern`, `payload_vector_space`, and `interpretation_guidance` are retired. The rest of this spec stands.
 
 
@@ -225,6 +239,13 @@ data/<project_id>/test-executor-pod/
   - The harness middleware owns the cap / dedup / empty-command gates (G1 / O7 / G2).
 - The model's JUDGMENT enters only as CONTENT through these mechanical stages (the triager's classification/note,
   the runner's command), never as an LLM-initiated log write.
+
+**Staged triage reads (2026-10-23).**
+The triager is staged (`hunting-67-test-executor-pod-spec.md` section 8.11): Stage A reads the note + the spec symptoms + the observation, Stage B adds the typed procedure and the probe trail, Stage C reads the full log slice, and Stage D reads the trail + the variants + the KB flags.
+All four stages read the SAME per-spec store and the SAME variant's experiment-log file; none writes it.
+The graph's triager node still records ONE `Interpretation` per lap from the staged orchestrator's final decision, through the existing `record_interpretation` stage - the pure-log invariant is unchanged.
+The per-turn memory key-list is included only in the full Stage C delta; the compact stages do not pay it.
+The `experiment_summary` is still the terminal record of the variant's experiment-log file; Stage A and Stage B read it verbatim, Stage C reads it with the full slice, and Stage D reads it with the trail and the KB flags.
 
 ### 8. KB-retrieve response recording (implemented T3/#179)
 

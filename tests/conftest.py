@@ -229,6 +229,13 @@ def _no_live_gateway_in_unit_tier(request, monkeypatch):
     model_keys = {r.model_key for r in ROLES}
     model_keys.add("LLM_GATEWAY_URL")
     model_keys.add("LLM_CAPABILITY_OVERRIDES")
+    # The same ambient-`.env` leak reaches the Steel browser: a developer's
+    # `STEEL_BROWSER_API_URL` flips the unit-tier exec tests into the cloud
+    # branch and injects `--local`, so the assertion fails only when the shell
+    # that launched pytest had the `.env` loaded. The unit tier owns its Steel
+    # mode; the live tiers set their own.
+    model_keys.add("STEEL_BROWSER_API_URL")
+    model_keys.add("STEEL_API_KEY")
     _clear(model_keys)
     try:
         yield

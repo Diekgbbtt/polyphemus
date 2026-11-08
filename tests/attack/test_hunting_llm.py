@@ -179,3 +179,49 @@ def test_conciseness_directive_appears_verbatim_in_every_role_prompt():
     for name in ("hunting-agent.md", "pod-runner.md", "pod-triager.md"):
         text = (prompts_dir / name).read_text(encoding="utf-8")
         assert HL.HUNTING_CONCISENESS_DIRECTIVE in text, name
+
+
+def test_compose_modeller_prompt_renders_the_projection_tree():
+    from polymerhus.attack.hunting.llm import _compose_modeller_prompt
+    from polymerhus.attack.hunting.threat_model import ModelState
+    from polymerhus.attack.hunting.threat_modeller import ModellerTurnInput
+    from polymerhus.attack.hunting.unit_projection import (
+        AggregatedEndpoint,
+        SystemInfo,
+        UnitProjection,
+    )
+
+    turn = ModellerTurnInput(
+        unit_id="RESTApi:api",
+        state=ModelState.UNIT_TECHNICAL_SHARP,
+        sections=("technical_sharpening",),
+        instruction="model it",
+        projection=UnitProjection(
+            unit_id="RESTApi:api",
+            kind="RESTApi",
+            spine={},
+            edges={},
+            data_edges={},
+            data_rel_kinds=frozenset(),
+            cooperating_systems={
+                "EXPOSED_VIA": (
+                    SystemInfo(
+                        kind="Service",
+                        discriminator="library-catalog",
+                        props={"service_contract": "Owns the catalogue."},
+                    ),
+                ),
+            },
+            aggregated_endpoints=(
+                AggregatedEndpoint(method="GET", path="/api/library",
+                                   baseurl="http://t",
+                                   service_slug="library-catalog"),
+            ),
+        ),
+    )
+
+    prompt = _compose_modeller_prompt(turn)
+
+    assert "### Service: library-catalog" in prompt
+    assert "GET /api/library" in prompt
+    assert "Owns the catalogue." in prompt

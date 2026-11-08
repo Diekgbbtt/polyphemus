@@ -97,13 +97,45 @@ Report the full-core result.
 
 ### Threat model
 
-`loop_candidate` is the existence of a loop for the expected unit and a compatible fault/class.
+`threat_candidate` is the existence of a threat for the expected unit and a compatible fault/class.
 Score `sharpness` 0 to 3 from the plan.
-Read the loop and its parent model.
-Check the trust assumption, the failure-mode slice, the evidence, the confidence, the risk factors, and the uniqueness of the direction.
+Read the threat and its parent model.
+Check the trust assumption with its assumption confidences, the evidence, the risk, the band, the vector, the factors, and the uniqueness of the direction.
 A generic statement that could be written for any unit is at most 1.
 A direction that names the concrete interface, state transition, or data flow, and that a hunter can walk, is at least 2.
 A direction that also carries a falsification condition and a concrete probe shape is 3.
+
+**Breadth.**
+The narrowing risk starts at the threat: a threat that binds a leaf class is already a specific variant, so the downstream hunter has little room to discriminate.
+The deterministic `bound_class_is_parent` is the strongest signal: true means the bound `web_vulnerability_class` is a suite parent with at least one variant leaf; false means it is a leaf; null means the class is absent from the suite index.
+A parent class is broad only when the artifact actually keeps more than one variant reachable.
+Record `breadth` as `broad`, `narrow`, or `unknown`, and quote the bound class and the metric in `breadth_notes`.
+The semantic judgement may override the metric only with quoted evidence from the threat or the suite tree.
+
+### Impact assessment
+
+Use the deterministic `metrics.impact` block.
+It is the primary impact metric.
+
+- `impact_rows` is every impact-assessment row.
+- `threats` is the rows with `disposition=threat`. `precursor_rows` is the rows with `disposition=precursor`. `capability_rows` is the rows with a non-empty `capability`.
+- `green` is a row whose three impact values are not all `none`; `red` is a row the assessor labels `scope=out` or `mining=under_mined`.
+- `green_share` is `green / (green + red)` when an `impact_review.yaml` exists, else `green / impact_rows`. `threat_share` is `threats / impact_rows`. `precursor_share` is `precursor_rows / impact_rows`.
+- `cia` is the distribution of the three impact values over `none / low / medium / high`. A v5 row uses only `high`, `low`, and `none`; `medium` is legacy only.
+- `risk_total` is the sum of the dispatchable threat files' derived risk and `risk_breakdown` is their split over the `none / low / medium / high / critical` bands. Both are v5 only.
+- `rows` is the v5 scored claim of every assessment row: the impact description, the exploitability description, the eight factors, the derived risk, the risk vector, the band, and the review labels. It is `null` for a v4, v3, or v2 block.
+- `capability_rows` is the number of rows that carry a capability. `prior_art_reused` is the number of prior-art records the modeller reused.
+- `class_binding_rate` is a diagnostic, never a gate.
+
+A v5 `threat` row must name a concrete victim and damaged property in its `impact_description`.
+A `precursor` row states why no end damage follows and still names the capability gained.
+Read the impact description and the exploitability description, and judge whether the damage is concrete and the chain is the one that reaches it.
+A row whose impact description names only a capability or a route, while a concrete end damage was achievable, is a precursor row marked `under_mined` by the assessor.
+The severity band is derived from the risk on read; never treat a band as an authored value.
+The class-based green gate is retired.
+The old class figure may be quoted beside the impact figure, marked superseded.
+A v4 or v3 block reports the persisted CIA vector raw: it is never re-scored.
+A v2 block is a legacy recomputation: report it separately and never mix it with a v5 result.
 
 ### Hunter
 
@@ -111,6 +143,17 @@ Use `spec_candidate`, `required_present`, `procedure_fields`, `generic_symptoms`
 Score `sharpness` 0 to 3.
 Check the reduced D4, the skill procedure, the L1/L0/KB grounding, the negative control or differential, the collection span, and the verify-claims drop reasons.
 A retired field is a contract defect, not a style issue.
+
+**Discrimination.**
+The second narrowing signal is the spec set the threat actually produced.
+Read the threat's `downstream` object in `metrics.yaml`.
+`spec_count` is the number of specs linked to the threat by `provenance.threat_id`, with the dispatch-id fallback.
+`substantial` is true at three or more specs.
+`primary_axes` is the first discriminator axis of each spec; `axes_overlap` is true when two specs share a primary axis.
+`well_formed` is true only for a substantial set where every spec carries a discriminator and the primary axes do not overlap: two specs separated on the same primary axis are one dimension, not two.
+The metric is structural. Judge whether the values genuinely separate the specs, and override only with quoted evidence.
+Record `discrimination` as `substantial_and_well_formed`, `substantial_but_overlapping`, `insufficient`, or `unknown`.
+A narrow threat with fewer than three specs or overlapping axes is the bias signal this experiment measures; report it, never smooth it.
 
 ### Pod
 
@@ -124,14 +167,14 @@ Judge whether it is a real new finding, a duplicate, or a false positive.
 
 This is the qualitative axis the deterministic script cannot fully decide.
 Check:
-- the modeller gate order and the five states;
+- the modeller gate order and the seven states;
 - the hunter pass order and the eight states;
 - the pod runner/triager order;
 - degraded or interrupted turns;
 - prompt sections and old vocabulary;
 - bound tool surface versus the calls made;
 - structured-output failures;
-- loop-to-spec-to-pod identity and path coupling;
+- threat-to-spec-to-pod identity and path coupling;
 - artifact and notes schemas;
 - skill-usage lesson records and skill/auth-context loads;
 - episodic memory writes.
@@ -166,6 +209,41 @@ official:
   partial: int
   missed: int
   identification_rate: number
+impact:
+  schema: v5 | v4 | v3 | v2 | mixed
+  legacy_recomputation: bool
+  impact_rows: int
+  threats: int | null
+  precursor_rows: int | null
+  capability_rows: int
+  red: int
+  green: int
+  green_share: number | null
+  threat_share: number | null
+  precursor_share: number | null
+  cia:
+    confidentiality: {none: int, low: int, medium: int, high: int}
+    integrity: {none: int, low: int, medium: int, high: int}
+    availability: {none: int, low: int, medium: int, high: int}
+  risk_total: number | null
+  risk_breakdown: {none: int, low: int, medium: int, high: int, critical: int} | null
+  rows: [object] | null
+  precursors: int | null
+  prior_art_reused: int | null
+  class_binding_rate: number | null
+  legacy_v2: object | null
+  legacy_v4: object | null
+  notes: string
+narrowing:
+  threats_total: int
+  broad: int
+  narrow: int
+  breadth_unknown: int
+  substantial_specs: int
+  well_formed_specs: int
+  narrow_without_well_formed: int
+  broad_without_well_formed: int
+  notes: string
 per_vuln:
   - vuln_id: string
     type: string
@@ -180,15 +258,24 @@ per_vuln:
       notes: string
       evidence: [string]
     threat_model:
-      loop_candidate: bool
+      threat_candidate: bool
       sharpness: 0 | 1 | 2 | 3
+      bound_class: string
+      bound_class_is_parent: bool | null
+      breadth: broad | narrow | unknown
+      breadth_notes: string
       direction_diversity: string
-      failure_mode_coverage: string
       notes: string
       evidence: [string]
     hunter:
       spec_candidate: bool
       sharpness: 0 | 1 | 2 | 3
+      spec_count: int
+      substantial: bool | null
+      primary_axes: [string]
+      axes_overlap: bool | null
+      well_formed: bool | null
+      discrimination: substantial_and_well_formed | substantial_but_overlapping | insufficient | unknown
       completeness: string
       procedure_grounding: string
       symptom_discrimination: string
@@ -275,7 +362,9 @@ Use the experiment-results structure from the measure-experiment-results skill.
 Include:
 - the trial summary and identity;
 - the official discovery result;
+- the impact assessment: the red/green share, the threat and precursor split, the risk total and band split, the scored rows, the capability count, the CIA distribution, and the prior-art reuse;
 - the quality results by the six criteria;
+- the narrowing table: threat breadth, the spec count per threat, the primary axes, and whether the set is substantial and well-formed;
 - the token tax;
 - the workflow and contract findings;
 - the benchmark-scope-tightness rows;

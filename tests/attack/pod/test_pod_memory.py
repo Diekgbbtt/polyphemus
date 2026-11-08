@@ -26,9 +26,15 @@ from polymerhus.attack.hunting.pod.pod_memory import (
     spec_identifier,
 )
 
-# The #164 `<fault>_<strategy>` spec id (D84-34), used as the memory key.
-SPEC_ID = spec_identifier("sqli", "blind")
-OTHER_ID = spec_identifier("xss", "reflected")
+# The derived `<class>__<value>__<value>` spec id, used as the memory key.
+SPEC_ID = spec_identifier("sqli", [
+    {"axis": "technique", "value": "blind"},
+    {"axis": "payload-vector", "value": "boolean"},
+])
+OTHER_ID = spec_identifier("xss", [
+    {"axis": "technique", "value": "reflected"},
+    {"axis": "payload-vector", "value": "html"},
+])
 
 
 @pytest.fixture
@@ -36,20 +42,30 @@ def store(tmp_path):
     return PodMemoryStore(tmp_path)
 
 
-# --- the spec identifier: <fault>_<strategy> (D84-34) -------------------------
+# --- the spec identifier: <class>__<value>__<value> --------------------------
 
-def test_spec_identifier_joins_sanitised_fault_and_strategy():
-    assert spec_identifier("sqli", "blind") == "sqli_blind"
-    # `_` is the separator, so a keyword may not carry it; `:` is poisoned.
-    assert spec_identifier("sqli", "blind_boolean") == "sqli_blind-boolean"
-    assert spec_identifier("open:redirect", "sql") == "open-redirect_sql"
+def test_spec_identifier_joins_the_class_and_the_ordered_values():
+    assert SPEC_ID == "sqli__blind__boolean"
+    # `-` is safe inside a value; `__` is the one separator.
+    assert spec_identifier("sqli", [
+        {"axis": "technique", "value": "blind-boolean"},
+        {"axis": "payload-vector", "value": "json-body"},
+    ]) == "sqli__blind-boolean__json-body"
+    # `:` is sanitised out of the class.
+    assert spec_identifier("open:redirect", [
+        {"axis": "technique", "value": "sql"},
+        {"axis": "state", "value": "post-delete"},
+    ]) == "open-redirect__sql__post-delete"
 
 
-def test_spec_identifier_rejects_a_pathological_keyword():
+def test_spec_identifier_requires_two_values_and_sanitises_a_pathological_class():
     with pytest.raises(ValueError):
-        spec_identifier("", "x")
-    with pytest.raises(ValueError):
-        spec_identifier(".", "x")
+        spec_identifier("sqli", [{"axis": "technique", "value": "blind"}])
+    # `.` is not a traversal risk once the values follow; the class falls back.
+    assert spec_identifier(".", [
+        {"axis": "technique", "value": "x"},
+        {"axis": "state", "value": "y"},
+    ]) == "spec__x__y"
 
 
 def test_spec_id_is_the_semantic_key_never_a_content_hash():
@@ -60,7 +76,7 @@ def test_spec_id_is_the_semantic_key_never_a_content_hash():
     # sha256 spec digest was 64 hex chars), so SPEC_ID != hash holds without
     # a hash ever being computed (the function is gone from the identity
     # path).
-    assert SPEC_ID == "sqli_blind"
+    assert SPEC_ID == "sqli__blind__boolean"
     assert len(SPEC_ID) != 64                       # never the sha256 digest shape
     assert "_" in SPEC_ID                           # the semantic pair separator
 
@@ -486,3 +502,73 @@ def test_failed_variant_dump_leaves_prior_content_intact(store, monkeypatch):
     monkeypatch.undo()
 
     assert store.read_variant(SPEC_ID, "v0") == {"variant_ref": "v0", "payload": "a"}
+
+
+# --- the durable resume cursor (2026-10-26) ----------------------------------
+
+RESUME_CURSOR = {
+    "schema_version": 1,
+    "last_order": 1,
+    "current_variant_ref": "v1",
+    "iteration": 2,
+    "feedback": "try the alternate spelling",
+    "executed": ["sig-a", "sig-b"],
+}
+
+
+def test_resume_cursor_round_trips_and_clears(store):
+    store.write_resume(SPEC_ID, "run-42", RESUME_CURSOR)
+    assert store.read_resume(SPEC_ID, "run-42") == RESUME_CURSOR
+    store.clear_resume(SPEC_ID, "run-42")
+    assert store.read_resume(SPEC_ID, "run-42") == {}
+
+
+def test_resume_cursor_is_per_spec_and_run(store):
+    store.write_resume(SPEC_ID, "run-42", RESUME_CURSOR)
+    assert store.read_resume(OTHER_ID, "run-42") == {}
+    assert store.read_resume(SPEC_ID, "run-43") == {}
+
+
+def test_a_resume_cursor_is_not_a_pod_export(store):
+    store.write_resume(SPEC_ID, "run-42", RESUME_CURSOR)
+    assert store.list_pod_exports(SPEC_ID) == []
+    assert store.read_pod_export(SPEC_ID, "run-42") == {}
+
+
+def test_clear_resume_is_idempotent(store):
+    store.clear_resume(SPEC_ID, "missing")
+    assert store.read_resume(SPEC_ID, "missing") == {}
+
+
+def test_experiment_log_hydrates_variants_observations_and_executed(store):
+    from polymerhus.attack.hunting.pod.context import ExperimentLog
+    from polymerhus.attack.hunting.pod.types import (
+        Interpretation,
+        RawObservation,
+        VariantSpec,
+    )
+
+    log = ExperimentLog(store=store, spec_id=SPEC_ID)
+    log.start_run()
+    log.record_variant(VariantSpec(ref="v0", spec={"rationale": "first"}))
+    log.mark_executed("sig-a")
+    log.record_observation(RawObservation(
+        probe_ref="sig-a", variant_ref="v0", status=200, body="ok"))
+    log.record_interpretation(Interpretation(
+        variant="v0", classification="noise", note="keep going"))
+
+    hydrated = ExperimentLog(store=store, spec_id=SPEC_ID)
+
+    assert hydrated.hydrate() is True
+    assert [v.ref for v in hydrated.variant_specs] == ["v0"]
+    assert hydrated.variant_specs[0].spec == {"rationale": "first"}
+    assert [o.probe_ref for o in hydrated.raw_observations] == ["sig-a"]
+    assert [i.note for i in hydrated.interpretations] == ["keep going"]
+    assert hydrated.executed == ["sig-a"]
+
+
+def test_experiment_log_hydrate_is_empty_without_a_store_or_slices(store):
+    from polymerhus.attack.hunting.pod.context import ExperimentLog
+
+    assert ExperimentLog(store=None, spec_id=SPEC_ID).hydrate() is False
+    assert ExperimentLog(store=store, spec_id=SPEC_ID).hydrate() is False

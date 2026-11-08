@@ -1058,6 +1058,66 @@ def test_the_memory_read_seams_accept_a_typed_session_address():
     assert async_memory is not None and async_memory.content == "a1"
 
 
+def test_to_turn_coerces_a_dict_structured_response_to_the_schema():
+    """The session contract is the parsed schema object, never a raw dict.
+
+    The staged triage shares one thread across four schemas, so a previous
+    stage's dict can survive in the state. The turn boundary must validate a
+    dict into the CURRENT schema so a caller's `model_dump` always has a
+    model."""
+    from langchain.agents.structured_output import ToolStrategy
+    from pydantic import BaseModel
+    import polymerhus.app.llm.session as S
+
+    class _Schema(BaseModel):
+        x: int = 0
+
+    turn = S._to_turn(
+        {"messages": [], "structured_response": {"x": 7}},
+        ToolStrategy(_Schema), "t")
+
+    assert isinstance(turn.content, _Schema)
+    assert turn.content.x == 7
+
+
+def test_to_turn_rejects_a_foreign_structured_response():
+    """A stale stage's dict is not the current schema. A strict schema rejects
+    it, and the turn reports no structured result instead of handing the dict
+    to a caller that will call `model_dump` on it."""
+    from langchain.agents.structured_output import ToolStrategy
+    from pydantic import BaseModel, ConfigDict
+    import polymerhus.app.llm.session as S
+
+    class _StrictSchema(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        x: int = 0
+
+    turn = S._to_turn(
+        {"messages": [], "structured_response": {
+            "runner_failed": True, "note": "the previous stage"}},
+        ToolStrategy(_StrictSchema), "t")
+
+    assert turn.content is None
+
+
+def test_to_turn_ignores_a_structured_response_unchanged_from_the_prior_turn():
+    """A turn that produced no new structured output leaves the prior
+    checkpoint value in the state. The staged triage must not read the previous
+    stage's answer as its own."""
+    from langchain.agents.structured_output import ToolStrategy
+    from pydantic import BaseModel
+    import polymerhus.app.llm.session as S
+
+    class _Schema(BaseModel):
+        x: int = 0
+
+    turn = S._to_turn(
+        {"messages": [], "structured_response": {"x": 7}},
+        ToolStrategy(_Schema), "t", prior_structured={"x": 7})
+
+    assert turn.content is None
+
+
 def test_a6_structured_response_format_tools_bound_constrained_is_toolstrategy(monkeypatch):
     """A6: tools-bound + constrained profile -> ToolStrategy (the relaxed model
     makes it voluntary at bind time)."""

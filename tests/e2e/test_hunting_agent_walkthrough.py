@@ -13,8 +13,8 @@ reads the terminal quantities back off the spec set and the pod-export
 envelope (the durable `spec`/`evidence` store records are removed, #166 - the
 agent's durable trail is #164's own memory, G5).
 
-T10b (#397) translated the carried skeleton's vocabulary to the loop and
-spec-set contract: a produced loop file is the dispatch record, the hunter's
+T10b (#397) translated the carried skeleton's vocabulary to the threat and
+spec-set contract: a produced threat file is the dispatch record, the hunter's
 terminal spec status is `ratified`, and the retired hypothesis-verdict
 derivation is not a live contract.
 
@@ -80,10 +80,10 @@ def project(session):
 def test_confirmed_hypothesis(session, project, tmp_path):
     """E1 - Confirmed hypothesis (grounds H1 and D67-02, Q3-amended).
 
-    Entry seam: a produced threat-model loop file (S2 8.4) dispatched as the
-    hunter's loop payload.
-    Input: a fixture unit threat model whose loop carries the unit/fault locus,
-    the loop rationale, and the skill-procedure excerpt; the hunter authors the
+    Entry seam: a produced threat-model threat file (S2 8.4) dispatched as the
+    hunter's threat payload.
+    Input: a fixture unit threat model whose threat carries the unit/fault locus,
+    the threat rationale, and the skill-procedure excerpt; the hunter authors the
     spec set from it.
     Live edge: none (self-contained; the pod is the real one).
     Path: the hunter's pass sequence grounds the spec, writes the `hypothesised`
@@ -96,7 +96,7 @@ def test_confirmed_hypothesis(session, project, tmp_path):
     dispatch record.
 
     When unblocked: build the hunter with the real KB and the real pod over a
-    `HunterMemoryStore(tmp_path)`, dispatch the fixture loop, then assert the
+    `HunterMemoryStore(tmp_path)`, dispatch the fixture threat, then assert the
     pod envelope carries `verdict == "successful"` and
     `terminal_reason == "symptom-confirmed"`.
     """

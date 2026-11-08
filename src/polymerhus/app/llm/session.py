@@ -394,11 +394,59 @@ async def _aflush_turn_observations(config: dict) -> None:
         logger.debug("turn observation delivery failed", exc_info=True)
 
 
+def _structured_content(content, response_format):
+    """The turn's structured content, validated against the current schema.
+
+    The contract is the parsed schema object or None. A dict is validated
+    through the schema; a foreign object (a stale stage's model) is not the
+    current answer and is reported as no structured result."""
+    if content is None:
+        return None
+    schema = getattr(response_format, "schema", None)
+    if not isinstance(schema, type) or not hasattr(schema, "model_validate"):
+        return content
+    if isinstance(content, schema):
+        return content
+    if isinstance(content, dict):
+        try:
+            return schema.model_validate(content)
+        except Exception as exc:  # noqa: BLE001 - a stale shape is no result
+            logger.warning(
+                "structured response did not validate as %s (%s); treating the "
+                "turn as having no structured result",
+                getattr(schema, "__name__", schema), exc)
+            return None
+    logger.warning(
+        "structured response is %s, not %s; treating the turn as having no "
+        "structured result", type(content).__name__,
+        getattr(schema, "__name__", schema))
+    return None
+
+
+def _same_structured(a, b) -> bool:
+    """Whether two structured responses are the same persisted value.
+
+    A turn that produces no structured output leaves the prior checkpoint value
+    in the state. The turn boundary must not report that stale value as this
+    turn's answer (the staged triage runs four schemas on one thread)."""
+    if a is None or b is None:
+        return False
+    if a is b:
+        return True
+    try:
+        return bool(a == b)
+    except Exception:  # noqa: BLE001 - an uncomparable value is not the prior
+        return False
+
+
 def _to_turn(result: dict, response_format, thread_id: str,
-             reasoning: str = "") -> SessionTurn:
+             reasoning: str = "", prior_structured=None) -> SessionTurn:
     messages = result.get("messages", [])
     if response_format is not None:
         content = result.get("structured_response")
+        if _same_structured(content, prior_structured):
+            content = None
+        content = _structured_content(content, response_format)
     else:
         content = messages[-1].content if messages else None
     return SessionTurn(
@@ -500,6 +548,11 @@ def run_session_turn(
                               usage_scope=usage_scope)
         if checkpointer is not None:
             _read_pending_resumption(agent, config)
+        prior_structured = None
+        if response_format is not None and checkpointer is not None:
+            prior_state = _read_thread_state(checkpointer, thread_id)
+            if prior_state is not None:
+                prior_structured = prior_state.get("structured_response")
         if observe and checkpointer is not None:
             _attach_readability_metadata(
                 config, _read_thread_state(checkpointer, thread_id))
@@ -536,7 +589,9 @@ def run_session_turn(
             # `after_model` replay middleware re-attached it in the state the
             # checkpointer wrote, so the seam reads the result rather than
             # writing it again (converged-agent-turn ADR).
-            turn = _to_turn(result, response_format, thread_id, reasoning=capture.reasoning)
+            turn = _to_turn(result, response_format, thread_id,
+                            reasoning=capture.reasoning,
+                            prior_structured=prior_structured)
         else:
             turn = _blackloop_turn(thread_id, capture)
         if observe:
@@ -605,6 +660,11 @@ async def arun_session_turn(
                               usage_scope=usage_scope)
         if checkpointer is not None:
             await _aread_pending_resumption(agent, config)
+        prior_structured = None
+        if response_format is not None and checkpointer is not None:
+            prior_state = await _aread_thread_state(checkpointer, thread_id)
+            if prior_state is not None:
+                prior_structured = prior_state.get("structured_response")
         if observe and checkpointer is not None:
             _attach_readability_metadata(
                 config, await _aread_thread_state(checkpointer, thread_id))
@@ -641,7 +701,9 @@ async def arun_session_turn(
             # `after_model` replay middleware re-attached it in the state the
             # checkpointer wrote, so the seam reads the result rather than
             # writing it again (converged-agent-turn ADR).
-            turn = _to_turn(result, response_format, thread_id, reasoning=capture.reasoning)
+            turn = _to_turn(result, response_format, thread_id,
+                            reasoning=capture.reasoning,
+                            prior_structured=prior_structured)
         else:
             turn = _blackloop_turn(thread_id, capture)
         if observe:

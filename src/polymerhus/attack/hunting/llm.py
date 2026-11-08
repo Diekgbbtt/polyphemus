@@ -116,7 +116,8 @@ def _hunter_turn(text: str) -> dict | None:
         from polymerhus.app.llm.session import stateful_turn
         from polymerhus.app.auth.seams import auth_capable_binding  # noqa: PLC0415
 
-        binding = auth_capable_binding(HUNTER_ROLE)
+        binding = auth_capable_binding(
+            HUNTER_ROLE, project_id=getattr(ctx, "project_id", "") or None)
         return _parse_json_object(stateful_turn(
             HUNTER_ROLE, ctx.address, [HumanMessage(content=text)],
             checkpointer=ctx.checkpointer, tools=binding.tools,
@@ -202,20 +203,39 @@ def _compose_modeller_prompt(turn) -> str:
 
     Every slot degrades independently: a model that cannot be read renders as
     "(not written yet)", never as an empty claim."""
+    from .unit_projection import UnitProjection  # noqa: PLC0415
+    from .unit_projection_render import render_unit_projection  # noqa: PLC0415
+
     state = getattr(turn, "state", None)
-    state_value = getattr(state, "value", state) or "UNIT_TECHNICAL_SHARP"
+    # The well-formedness phase is a workflow phase in its own right: prefer
+    # the turn's phase label so the prompt never reports the stale
+    # vulnerabilities gate (approved 2026-11-05).
+    state_value = (
+        getattr(turn, "phase", None)
+        or getattr(state, "value", state)
+        or "UNIT_TECHNICAL_SHARP"
+    )
     sections = list(getattr(turn, "sections", ()) or ())
+    from .threat_modeller import WELLFORMEDNESS  # noqa: PLC0415 - phase label
+
+    sections_value = (
+        ", ".join(sections) if sections else "(none - workflow phase)")
     model = getattr(turn, "model", None)
+    projection = getattr(turn, "projection", None)
+    projection_text = (
+        render_unit_projection(projection)
+        if isinstance(projection, UnitProjection)
+        else _render_grounding(projection)
+    )
     lines = [
         f"Unit under analysis: {getattr(turn, 'unit_id', '(unbound)')}",
         f"Current workflow state: {state_value}",
-        f"Gate sections to write: {', '.join(sections)}",
+        f"Gate sections to write: {sections_value}",
         "",
         str(getattr(turn, "instruction", "") or ""),
         "",
         "Grounding inputs:",
-        "  Unit projection: " + (
-            _render_grounding(getattr(turn, "projection", None)) or "(unavailable)"),
+        "  Unit projection: " + (projection_text or "(unavailable)"),
         "  Application-surface overview: " + (
             _render_grounding(getattr(turn, "surface_overview", None))
             or "(unavailable)"),
@@ -231,21 +251,41 @@ def _compose_modeller_prompt(turn) -> str:
     else:
         from polymerhus.attack.hunting.threat_modeller_tools import (  # noqa: PLC0415
             MODEL_SECTIONS,
+            _section_holds,
         )
 
         lines.append(f"  state: {model.get('state')}")
-        written = [name for name in MODEL_SECTIONS if model.get(name)]
+        written = [
+            name for name in MODEL_SECTIONS if _section_holds(model.get(name))
+        ]
         lines.append(f"  sections written: {', '.join(written) or '(none)'}")
         if model.get("risk_profile"):
             lines.append(f"  risk profile: {model['risk_profile']}")
         if model.get("validation"):
             lines.append(f"  completion validation: {model['validation']}")
-    lines += [
-        "",
-        "Write the gate with ONE `hunts_store` write carrying this state and its "
-        "sections. Then end the reasoning phase with ONE episodic note through "
-        "`notes`: the decision nodes and the rationales of the branches you took.",
-    ]
+    if state_value == WELLFORMEDNESS:
+        lines += [
+            "",
+            "This is the well-formedness phase, not a gate: load the class "
+            "skills, patch the model, then close the phase with ONE "
+            "`wellformedness` note through `notes` and proceed to the PRIOR_ART "
+            "gate. A lower-gate write re-enters the phase.",
+        ]
+    else:
+        lines += [
+            "",
+            "Write the gate with ONE `hunts_store` write carrying this state "
+            "and its sections. Then end the reasoning phase with ONE episodic "
+            "note through `notes`: the decision nodes and the rationales of the "
+            "branches you took.",
+        ]
+    # #438: the project scope rides the turn verbatim, under its own heading.
+    # An empty scope appends nothing (an unset project makes no claim); the
+    # string is never paraphrased, trimmed, or reflowed - it is the operator's
+    # posture statement and the assumptions phase is bound by it.
+    scope = getattr(turn, "threat_model_scope", "") or ""
+    if scope:
+        lines += ["", "## Project scope (verbatim)", str(scope)]
     return "\n".join(lines)
 
 
@@ -364,6 +404,7 @@ def build_actor_hunting_agent(*, run_id, project_id="", memory_store=None,
                               observe: bool = True,
                               http_search_fn=None, http_get_fn=None,
                               suite_classes=None, suite_read_fn=None,
+                              suite_parents=None,
                               overview_fn=None):
     """Compose the production hunting-agent dispatch seam (as of #164 W5).
 
@@ -382,14 +423,18 @@ def build_actor_hunting_agent(*, run_id, project_id="", memory_store=None,
     from polymerhus.attack.hunting.actors import HuntingActorRegistry  # noqa: PLC0415
     from polymerhus.attack.hunting.hunting_agent import build_hunting_agent  # noqa: PLC0415
 
-    if suite_classes is None or suite_read_fn is None:
+    if suite_classes is None or suite_read_fn is None or suite_parents is None:
         from polymerhus.app.llm.skills import (  # noqa: PLC0415
             list_suite_leaves,
+            list_suite_parents,
             read_suite_raw,
         )
 
         suite_classes = list_suite_leaves() if suite_classes is None else suite_classes
         suite_read_fn = read_suite_raw if suite_read_fn is None else suite_read_fn
+        suite_parents = (
+            list_suite_parents() if suite_parents is None else suite_parents
+        )
     registry = HuntingActorRegistry(run_id, checkpointer=checkpointer,
                                     model_factory=model_factory, observe=observe,
                                     project_id=project_id)
@@ -399,6 +444,7 @@ def build_actor_hunting_agent(*, run_id, project_id="", memory_store=None,
         graph_view_fn=graph_view_fn, kb_fn=kb_fn, exec_fn=exec_fn,
         http_search_fn=http_search_fn, http_get_fn=http_get_fn,
         suite_classes=suite_classes, suite_read_fn=suite_read_fn,
+        suite_parents=suite_parents,
         overview_fn=overview_fn,
         checkpointer=checkpointer, model_factory=model_factory, observe=observe,
     )

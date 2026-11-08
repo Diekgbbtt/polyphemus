@@ -177,6 +177,7 @@ This is the "no asset-name assumption" rule: the agent enumerates `(Endpoint)-[:
 > Call `search_http_history` with a conjunctive filter over the request side for each aggregated endpoint (filter on `url` containing the endpoint path), then call `get_http_artifact` on the returned `artifact_id` to inspect one recorded transaction.
 > Read the `request` object: `{method, url, headers, cookies, query, form}`.
 > Body content is never visible and secret-bearing values are redacted; the KEYS are what matter.
+> The search row is the one exception: its `url` and its triage headers are verbatim. The redaction applies to `get_http_artifact`, which is the call that reads the full shape.
 > For each request-shape observation, emit one Claim: `subject` the endpoint, `assertion` the request keys actually sent and their transport (query, form, header, cookie), `evidence` the `artifact_id` and the exact key names, `verdict` which mapped surface site the shape corroborates.
 > A recorded request is a candidate, never a verification; it corroborates a sighting, it does not by itself ground a DataItem.
 > Emit `claims` only; do not emit deltas yet.
@@ -329,6 +330,7 @@ This section is the load-bearing decision of the v2 workflow.
 The HTTP history stores one immutable recorded transaction per artifact, addressed by `artifact_id` (prefix `http_`).
 The sanitized projection exposes `request {method, url, headers, cookies, query, form}`.
 Body content is never in the store; secret-bearing values are `[redacted]`; `source_ip` is excluded.
+The exception is the search row: its `url` and triage headers are verbatim, so a candidate row shows the string a predicate matched.
 The KEYS of `query`, `form`, `headers` and `cookies` are visible.
 A request shape for an endpoint is therefore the set of input names that endpoint actually received, with their transport.
 
@@ -626,7 +628,7 @@ search_http_history({
 })
 ```
 
-The response returns sanitized summary rows, each carrying an `artifact_id` and a `next_cursor`.
+The response returns sanitized summary rows, each carrying an `artifact_id`, `method`, `url`, `status`, the sizes, the triage `request_headers`/`response_headers`, and a `next_cursor`.
 Inspect one recorded transaction:
 
 ```json

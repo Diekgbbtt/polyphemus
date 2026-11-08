@@ -164,6 +164,11 @@ class TrialConfig:
     auth_surface: bool = False
     # The optional recon job subset; empty means the platform default phase plan.
     recon_jobs: tuple[str, ...] = ()
+    # The frozen hunting policy applied to the project at bootstrap, before recon
+    # launches: `pipeline_sync`, `pod_batch_size`, `promotion_risk_threshold`,
+    # `risk_threshold`. The two thresholds are CVSS 4.0 floats carried unchanged
+    # to the API. Empty means every project default stands.
+    hunting: Mapping[str, object] | None = None
     preloaded_hunting_artifacts: PreloadedArtifacts | None = None
     # The trial-wide token budget (capped tokens: new output + uncached input)
     # and its carried baseline: None budget means no usage call at all; None
@@ -172,6 +177,10 @@ class TrialConfig:
     token_budget: int | None = None
     spend_baseline: int | None = None
     data_root: Path = Path("data")
+    # The live skills root (the `skills/` volume). The project-specific
+    # `target-specific-procedure/<project_id>/` branch is the only project
+    # skill area; the data root is not a skill location.
+    skills_root: Path = Path("skills")
     runs_root: Path = Path("eval/runs")
     trial_id: str | None = None
     # The target-run this trial belongs to (the artifact-store middle level,
@@ -195,7 +204,11 @@ class TrialConfig:
     # the L1 scaffold, asserts the project and its L1, and enters at hunting.
     existing_project_id: str | None = None
     # D32: the version identity stamped into the trial record and the verdicts.
+    # `eval_sha` is the commit HEAD points to in the instance worktree (the code
+    # the stack binds); `worktree_dirty` says whether the loaded bytes are that
+    # commit (a tracked edit means they are not).
     eval_sha: str | None = None
+    worktree_dirty: bool | None = None
     stack_fingerprint: str | None = None
     # The trace id this trial ran under, when one was recorded; the
     # assessment/diagnoser dispatches substitute it into `{trace_id}`. No
@@ -204,6 +217,11 @@ class TrialConfig:
     # #275: a surfer intervention note stamped into the record when this trial
     # resumes a failed one at its recorded phase.
     intervention: str | None = None
+    # D32: identity notes the starter derived while resolving the record (for
+    # example a declared `--eval-sha` that disagrees with the loaded HEAD). They
+    # ride the record's own `notes`, so an identity disagreement is visible in
+    # `trial.yaml` instead of being swallowed.
+    identity_notes: tuple[str, ...] = ()
 
 
 @dataclass
@@ -353,7 +371,11 @@ class TrialRecord:
     # is `project_id` itself. Additive, defaults False, so older records load.
     seeded: bool = False
     # D32/D37: the version identity the trial ran on, and the assessment state.
+    # `worktree_dirty` is True when the instance worktree carried tracked edits
+    # at trial start: `eval_sha` then names the BASE commit, and the stack
+    # fingerprint is the content identity that covers the edit.
     eval_sha: str | None = None
+    worktree_dirty: bool | None = None
     stack_fingerprint: str | None = None
     # The trial's trace id, when one was recorded; the assessment and
     # diagnosis requests substitute it into `{trace_id}`.
@@ -451,6 +473,14 @@ class Trial:
             steps.append(
                 TrialPlanStep("settings", calls=(api.put_settings(project, settings),))
             )
+            if cfg.hunting:
+                steps.append(
+                    TrialPlanStep(
+                        "hunting config",
+                        calls=(api.put_hunting_config(project, cfg.hunting),),
+                        note="frozen before the hunting run opens",
+                    )
+                )
             if cfg.auth_surface and cfg.data_dir is not None:
                 steps.append(
                     TrialPlanStep(
@@ -677,6 +707,10 @@ class Trial:
                 # the batched/post-recon path is obsolete, so it is always on.
                 settings["streaming_analysis"] = cfg.streaming_analysis
                 self._call(api.put_settings(project_id, settings))
+                # The hunting policy is frozen at the hunting run's start, so it
+                # must land before recon launches; a partial body deep-merges.
+                if cfg.hunting:
+                    self._call(api.put_hunting_config(project_id, cfg.hunting))
 
             # The pre-built data dependencies land by direct file write through
             # the multipart endpoints (a MOUNT the agent finds at startup), then
@@ -695,6 +729,7 @@ class Trial:
             recon_run_id=cfg.recon_run_id,
             preloaded_configured=cfg.preloaded_hunting_artifacts is not None,
             data_root=cfg.data_root,
+            skills_root=cfg.skills_root,
             seeded=seeded,
         )
 
@@ -724,9 +759,9 @@ class Trial:
         if self._files.is_dir(skill_dir):
             archive = _pack_skill_archive(skill_dir, self._files)
             self._call(api.place_authn_skill(project_id, archive, "authn.tar.gz"))
-            # The recon gate reads the skill from the data root; verify it landed
-            # rather than relying on the placement call's success alone.
-            skill_path = authn_skill_path(cfg.data_root, project_id)
+            # The recon gate reads the skill from the live skills root; verify
+            # it landed rather than relying on the placement call's success.
+            skill_path = authn_skill_path(cfg.skills_root, project_id)
             if not self._files.exists(skill_path):
                 raise TrialError(
                     f"the authn skill did not land at {skill_path} after placement"
@@ -1037,9 +1072,12 @@ class Trial:
         trial_id = cfg.trial_id or _default_trial_id(cfg, self._now)
         trial_dir = Path(cfg.runs_root) / cfg.target_id / trial_id
         intervention = [cfg.intervention] if cfg.intervention else []
-        aggregated = intervention + list(notes) + [
-            note for phase in phases for note in phase.notes
-        ]
+        aggregated = (
+            list(cfg.identity_notes)
+            + intervention
+            + list(notes)
+            + [note for phase in phases for note in phase.notes]
+        )
         spent, overshoot, by_agent, usage = self._terminal_spend(project_id)
         # #349: the per-agent token spectrum is a flat projection of the SAME
         # `by_agent` read the spend used - a budget stop or the terminal usage
@@ -1070,6 +1108,7 @@ class Trial:
             target_run_id=cfg.target_run_id or cfg.instance_id,
             seeded=cfg.existing_project_id is not None,
             eval_sha=cfg.eval_sha,
+            worktree_dirty=cfg.worktree_dirty,
             stack_fingerprint=cfg.stack_fingerprint,
             trace_id=cfg.trace_id,
         )
@@ -1109,7 +1148,7 @@ def _place_model_tree(files: FileStore, source: Path, destination: Path) -> None
     """Copy a threat-model unit tree byte-for-byte into `destination`.
 
     The store layout is `<unit_name>/<unit_name>.yaml` plus
-    `<unit_name>/loop-<rank>.yaml`, so the copy preserves relative paths and
+    `<unit_name>/threat-<rank>.yaml`, so the copy preserves relative paths and
     lands exactly where the mover's produced read looks.
     """
     if files.is_file(source):
@@ -1123,7 +1162,7 @@ def _place_model_tree(files: FileStore, source: Path, destination: Path) -> None
 def _model_units(files: FileStore, source: str) -> list[tuple[Path, str]]:
     """The `(source path, unit name)` pairs a `models` source contributes.
 
-    A source is either one unit directory (its model document and loops sit
+    A source is either one unit directory (its model document and threats sit
     directly under it), a directory of unit directories (each child is a unit),
     or a single file (its parent directory names the unit).
     """
@@ -1151,12 +1190,12 @@ def retarget_premined(
 ) -> None:
     """Bind the placed pre-mined models to the run that will dispatch them.
 
-    The mover's produced read is run-scoped (S2 8.3): a model and its loop
-    files carry the run id they were authored for, and another run's loop file
+    The mover's produced read is run-scoped (S2 8.3): a model and its threat
+    files carry the run id they were authored for, and another run's threat file
     is never dispatched. A pre-mined tree therefore has to be rebound to the
     run id the launch actually minted, after the launch returns and before the
     run's first mover tick. Both the model document (the produced-read filter)
-    and every loop file (the dispatch validity predicate) carry `run_id`.
+    and every threat file (the dispatch validity predicate) carry `run_id`.
     """
     if preloaded.models is None or not run_id:
         return
@@ -1166,7 +1205,7 @@ def retarget_premined(
     for _source, unit_name in _model_units(files, preloaded.models):
         unit_dir = produced / unit_name
         paths = [unit_dir / f"{unit_name}.yaml"]
-        paths.extend(files.glob(unit_dir, "loop-*.yaml"))
+        paths.extend(files.glob(unit_dir, "threat-*.yaml"))
         for path in paths:
             if not files.is_file(path):
                 continue

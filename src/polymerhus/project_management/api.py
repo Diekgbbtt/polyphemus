@@ -16,11 +16,11 @@ import logging
 import math
 import uuid
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from polymerhus.analysis.scaffold import ScaffoldError
 from polymerhus.app.auth.store import (
@@ -80,6 +80,47 @@ class ProjectCreate(BaseModel):
 
 class SettingsUpdate(BaseModel):
     recon: dict = {}
+
+
+class HuntingConfigUpdate(BaseModel):
+    """The partial PUT body of the project's hunting config (ADR
+    `hunting-pipeline-sync-adr.md`, amended 2026-10-26 and 2026-10-31, and spec
+    12 of the CVSS 4.0 risk-scoring spec). Only the provided keys land
+    (deep-merged); the two thresholds are FLOATS on the CVSS 4.0 scale;
+    `risk_threshold: null` clears the DB override and falls back to the
+    env/default basis; `pod_batch_size: null` clears it to the default 1;
+    `promotion_risk_threshold: null` clears it to no filter;
+    `threat_model_scope` is the project's free-text posture statement (null
+    clears it)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    pipeline_sync: Literal["serial", "batched", "parallel"] | None = None
+    risk_threshold: float | None = Field(
+        default=None, ge=0,
+        description=(
+            "The threat-modeller risk budget as a float on the CVSS 4.0 scale "
+            "(0.0 .. 10.0 per threat; the default is 156.25)."
+        ),
+    )
+    pod_batch_size: int | None = Field(default=None, ge=1, strict=True)
+    promotion_risk_threshold: float | None = Field(
+        default=None, ge=0,
+        description=(
+            "The minimum per-threat CVSS 4.0 risk (0.0 .. 10.0) a hunter is "
+            "dispatched for; null or 0 means no filter."
+        ),
+    )
+    threat_model_scope: str | None = None
+
+    @field_validator("risk_threshold", "promotion_risk_threshold", mode="before")
+    @classmethod
+    def _reject_a_boolean_threshold(cls, value):
+        """A boolean is not a threshold: pydantic would read `True` as `1.0` and
+        silently configure a 1-point budget."""
+        if isinstance(value, bool):
+            raise ValueError("must be a number, not a boolean")
+        return value
 
 
 class ReconLaunch(BaseModel):
@@ -218,6 +259,36 @@ def update_settings(project_id: str, body: SettingsUpdate) -> dict:
     return {"ok": True}
 
 
+@router.get("/projects/{project_id}/hunting/config")
+def read_hunting_config(project_id: str) -> dict:
+    """The project's hunting config (ADR `hunting-pipeline-sync-adr.md`): the
+    frozen-at-run-start `pipeline_sync` mode, the threat-modeller risk
+    threshold, the pod batch size, the per-threat promotion threshold, and the
+    verbatim threat-model scope. Unknown project -> 404; a project that never
+    stored a blob reads back the defaults (mode `batched`, threshold None,
+    batch size 1, promotion None, scope empty)."""
+    try:
+        return repository.read_hunting_config(project_id)
+    except ProjectNotFound:
+        raise HTTPException(status_code=404, detail="unknown project")
+
+
+@router.put("/projects/{project_id}/hunting/config")
+def update_hunting_config(project_id: str, body: HuntingConfigUpdate) -> dict:
+    """Partial update: only the provided keys land (deep-merged into
+    `settings.hunting`). The mode is validated by the body enum; a bad
+    threshold, a non-string scope, or an unknown project is refused with
+    nothing landing."""
+    payload = body.model_dump(exclude_unset=True)
+    try:
+        repository.save_hunting_config(project_id, payload)
+    except ProjectNotFound:
+        raise HTTPException(status_code=404, detail="unknown project")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True}
+
+
 @router.put("/projects/{project_id}/auth")
 def seed_auth(project_id: str, body: AuthSeed) -> dict:
     """#220 T4: the operator seed-replace face. Thin adapter: the use-case
@@ -320,12 +391,12 @@ def place_authn_skill(
     """Place the pre-built project `authn` skill bundle by direct file write.
 
     `file` is a single `.tar.gz`/`.zip` archive of the bundle; it is unpacked
-    into the canonical `<data_root>/<project_id>/skills/authn/` (SKILL.md plus
-    its canonical references) - the exact path `SkillStore` resolves and the eval
-    trial reads (`eval/orchestrator/files.py:authn_skill_path`). Traversal,
-    absolute, and symlink members are refused. Non-idempotent: a re-post
-    overwrites. `fileName` is ignored for path building. Replaces the obsolete
-    inline-`TargetConfig.auth` delivery."""
+    into the canonical
+    `<skills_root>/target-specific-procedure/<project_id>/authn/` (SKILL.md
+    plus its canonical references) - the exact path `SkillStore` resolves and
+    the eval trial reads. Traversal, absolute, and symlink members are refused.
+    Non-idempotent: a re-post overwrites. `fileName` is ignored for path
+    building. Replaces the obsolete inline-`TargetConfig.auth` delivery."""
     return _data_dependency_result(
         repository.write_authn_skill, project_id, file.file.read()
     )
@@ -983,6 +1054,15 @@ async def launch_skill_evolution(
         raise HTTPException(
             status_code=503, detail=f"pass record unavailable: {exc}"
         ) from exc
+    except evolver.SkillEvolutionDisabled as exc:  # the experiment switch
+        if launched is not None:
+            await asyncio.to_thread(
+                records.discard,
+                project_id,
+                pass_id,
+                launched_at=launched.get("launched_at"),
+            )
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:  # the store's coded lesson/skill/target refusals
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001 - map admission refusal, re-raise the rest
@@ -1027,14 +1107,14 @@ async def get_skill_evolution_status(project_id: str, pass_id: str) -> dict:
 # so the run-scoped inbox surfer's mover dispatches it on the next tick - a
 # singular launch never BOOTS a component directly and never fabricates a
 # chained-dependency error. T4b (#387) retired the HUNT config enqueue with the
-# config family: the loop file is the dispatch record, so `/hunting/hunt` is a
+# config family: the threat file is the dispatch record, so `/hunting/hunt` is a
 # loud 410 tombstone. The pod resume keeps its fail-closed 404 (no fabricated
 # `ratified` spec), and the modeller pass schedules its own input.
 
 class HuntingModellerLaunch(BaseModel):
     """Modeller-only launch body. The pass reads the L1 inventory itself (T3
     #376 retired the caller-supplied candidate batch), freezes and orders it,
-    and writes its models and loop files into the project's threat model store -
+    and writes its models and threat files into the project's threat model store -
     this endpoint schedules the pass, it never fakes the pass's output.
     """
 
@@ -1056,7 +1136,7 @@ async def launch_modeller_only(project_id: str, body: HuntingModellerLaunch) -> 
     """The modeller-only launch: schedule ONE modelling pass through the
     launcher seam - no surfer, no dispatch, no run (T5). The pass models the
     selected units into the project's threat model store, where a later run's
-    surfer dispatches the produced loops. The outcome is asynchronous; the
+    surfer dispatches the produced threats. The outcome is asynchronous; the
     response carries the pass's run id for observability. 404 unknown project;
     503 fail-closed on the control plane (a real LLM pass must never ride the
     uvicorn request loop); admission refusal maps to 503.
@@ -1109,10 +1189,10 @@ async def launch_hunt_only(project_id: str) -> dict:
     raise HTTPException(
         status_code=410,
         detail=(
-            "the hunt-config enqueue is retired (T4b #387): the loop file is "
+            "the hunt-config enqueue is retired (T4b #387): the threat file is "
             "the dispatch record (S2 8.4) and a live run's surfer dispatches "
             "it; launch the whole run (POST /projects/{project_id}/hunting) "
-            "and the modeller produces the loop files. The eval translation "
+            "and the modeller produces the threat files. The eval translation "
             "is T10b (#397)"
         ),
     )

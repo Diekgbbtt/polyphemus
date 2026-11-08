@@ -73,6 +73,24 @@ def test_tool_request_marker_blocks_admission():
     assert any("stage4" in error for error in result.errors)
 
 
+def test_ordinary_methodology_prose_is_not_a_tool_request():
+    """The old marker rejected "use the function" as a tool request; 18 of the
+    19 white-jotter fallbacks were that false positive. A real protocol shape
+    still fails."""
+    payload = _valid_payload()
+    payload["ontology_explanations"][0]["explanation"] = (
+        "Use the function that compares the owner id, then run the command "
+        "against the adjacent object.")
+    registry = build_reference_registry(from_raw_response(RAW))
+    result = validate_bundle(payload, spec=_spec(), registry=registry)
+    assert result.is_valid is True
+
+    payload["notes"] = '{"tool_call": {"name": "exec", "args": {}}}'
+    result = validate_bundle(payload, spec=_spec(), registry=registry)
+    assert result.is_valid is False
+    assert any("stage4" in error for error in result.errors)
+
+
 def test_unknown_ontology_entity_type_is_rejected():
     payload = _valid_payload()
     payload["ontology_explanations"][0]["entity_type"] = "NotAnEntity"

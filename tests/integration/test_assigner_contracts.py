@@ -4,7 +4,7 @@ Mechanises C13-C26 of the catalogue attached to #34 (agent spec #8, slice #25).
 The validation gate, admit-all, multi-ownership, the structural
 narrowing, the prompt's volatility split and the supervisor receipt - over crafted
 proposals and an injected invoke_fn (no live LLM/graph). Expected values from the
-spec. Verifier-gated; not selected by the tdd unit loop.
+spec. Verifier-gated; not selected by the tdd unit threat.
 """
 import pytest
 

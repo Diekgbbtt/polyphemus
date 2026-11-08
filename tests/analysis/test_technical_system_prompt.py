@@ -81,6 +81,27 @@ def test_example_six_extends_the_description_with_the_authorization_primitives()
     assert "observed roles are `admin` and `user`" in prompt
 
 
+def test_prompt_reads_status_codes_canonically_before_withholding_a_link() -> None:
+    prompt = _load_skill()
+
+    assert "A `404` means the request shape is wrong" in prompt
+    assert "A `400` means the request shape is wrong at the parser" in prompt
+    assert "`401` or `403` means the route exists" in prompt
+    assert "`5xx` means the handler exists and failed" in prompt
+    assert "Query the HTTP history" in prompt
+    assert "replay that shape" in prompt
+    assert "Never collapse a `404`" in prompt
+
+
+def test_prompt_reconciles_every_api_backed_service_before_emitting() -> None:
+    prompt = _load_skill()
+
+    assert "reconcile the edge set against the existing Service list" in prompt
+    assert "A Service whose contract names an operation reachable through the API" in prompt
+    assert "must be linked to that API System" in prompt
+    assert "If you still withhold the link" in prompt
+
+
 def test_prefer_primary_orders_links_without_restricting_them() -> None:
     prompt = _load_skill()
 

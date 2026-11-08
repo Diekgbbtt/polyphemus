@@ -11,7 +11,9 @@ from __future__ import annotations
 import pytest
 import yaml
 
-from orchestrator import assessment, evidence, trial, verdicts
+from dataclasses import replace
+
+from orchestrator import assessment, evidence, impact_review, trial, verdicts
 from orchestrator.files import (
     FileStore,
     hunter_test_specs_dir,
@@ -29,7 +31,7 @@ FINGERPRINT = "fp-1"
 
 UNIT = "service:web:viewer"
 UNIT_NAME = "service-web-viewer"
-DISPATCH_ID = f"{UNIT_NAME}__loop-1"
+DISPATCH_ID = f"{UNIT_NAME}__threat-1"
 
 
 def seed_chain(tmp_path, *, project: str = "pid"):
@@ -37,7 +39,7 @@ def seed_chain(tmp_path, *, project: str = "pid"):
     root = tmp_path / "data"
     unit_dir = threat_model_dir(root, project, "produced") / UNIT_NAME
     files.write_text(unit_dir / f"{UNIT_NAME}.yaml", "state: COMPLETED\n")
-    files.write_text(unit_dir / "loop-1.yaml", "loop:\n  id: loop-1\n")
+    files.write_text(unit_dir / "threat-1.yaml", "threat:\n  id: threat-1\n")
     spec_dir = hunter_test_specs_dir(root, project) / DISPATCH_ID
     files.write_text(spec_dir / "produced" / "sqli_error.yaml", "id: sqli_error\n")
     files.write_text(pod_experiment_logs_dir(root, project, "sqli_error") / "0.yaml", "o: 0\n")
@@ -47,7 +49,7 @@ def seed_chain(tmp_path, *, project: str = "pid"):
         evidence.EvidenceTarget(
             project_id=project,
             unit=UNIT,
-            loop_id="loop-1",
+            threat_id="threat-1",
             dispatch_id=DISPATCH_ID,
             spec_id="sqli_error",
             pod_export="run1",
@@ -206,13 +208,207 @@ def test_assessment_prompt_is_a_file_and_state_the_write_only_contract() -> None
     assert assessment.ASSESSMENT_PROMPT.exists()
     text = assessment.ASSESSMENT_PROMPT.read_text(encoding="utf-8")
     assert "verdicts.yaml" in text
-    assert "only" in text.lower()
+    assert "impact_review.yaml" in text
+    assert "nothing else" in text.lower()
     assert "eval_sha" in text
     assert "stack_fingerprint" in text
     assert "ground truth" in text.lower()
 
 
 # --- close verification --------------------------------------------------------
+
+
+def _valid_review(unit: str = UNIT) -> dict:
+    return {
+        "units": [{
+            "unit": unit,
+            "scope": "in",
+            "scope_reason": "the unit is in the project scope",
+            "rows": [{
+                "id": "IA-1",
+                "mining": "sufficient",
+                "rationale": "the capability is the honest end of this exploitation",
+            }],
+        }],
+    }
+
+
+def test_a_valid_impact_review_is_accepted(tmp_path) -> None:
+    files, root, chain = seed_chain(tmp_path)
+    request = make_request(tmp_path, files, chain)
+    verdicts.write_verdicts(
+        request.destination,
+        valid_payload(chain),
+        files=files,
+        data_root=root,
+        eval_sha=SHA,
+        stack_fingerprint=FINGERPRINT,
+    )
+    files.write_text(
+        impact_review.review_path(request.destination),
+        yaml.safe_dump(_valid_review(), sort_keys=False),
+    )
+
+    assert assessment.check_verdicts(
+        request, files=files, eval_sha=SHA, stack_fingerprint=FINGERPRINT,
+    ) == "present"
+
+
+def test_an_invalid_impact_review_is_a_schema_failure(tmp_path) -> None:
+    files, root, chain = seed_chain(tmp_path)
+    request = make_request(tmp_path, files, chain)
+    verdicts.write_verdicts(
+        request.destination,
+        valid_payload(chain),
+        files=files,
+        data_root=root,
+        eval_sha=SHA,
+        stack_fingerprint=FINGERPRINT,
+    )
+    review = _valid_review()
+    review["units"][0]["rows"][0]["mining"] = "excellent"
+    files.write_text(
+        impact_review.review_path(request.destination),
+        yaml.safe_dump(review, sort_keys=False),
+    )
+
+    assert assessment.check_verdicts(
+        request, files=files, eval_sha=SHA, stack_fingerprint=FINGERPRINT,
+    ) == "invalid"
+
+
+# --- the impact review schema (schema-5 rows) ---------------------------------
+
+# The five fields a schema-5 assessment row carries: the review of a row is
+# judged from them, so a review row may record them as its audit snapshot.
+V5_REVIEWED_ROW = {
+    "impact_description": (
+        "An unauthenticated caller reads live session material from the process "
+        "dump."
+    ),
+    "exploitability_description": (
+        "A crafted remember-me cookie reaches the deserializer without a login."
+    ),
+    "factors": {
+        "attack_vector": "network",
+        "attack_complexity": "low",
+        "attack_requirements": "none",
+        "privileges_required": "none",
+        "user_interaction": "none",
+        "confidentiality": "high",
+        "integrity": "none",
+        "availability": "none",
+    },
+    "risk": 9.2,
+    "risk_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:H/SI:N/SA:N",
+}
+
+
+def _write_review(tmp_path, review: dict):
+    files = FileStore()
+    path = tmp_path / "impact_review.yaml"
+    files.write_text(path, yaml.safe_dump(review, sort_keys=False))
+    return files, path
+
+
+def test_the_review_accepts_the_v5_scored_row_fields(tmp_path) -> None:
+    review = _valid_review()
+    review["units"][0]["rows"][0].update(V5_REVIEWED_ROW)
+    files, path = _write_review(tmp_path, review)
+
+    (unit,) = impact_review.load_review(path, files=files)
+
+    row = unit.rows[0]
+    assert row.impact_description.startswith("An unauthenticated caller")
+    assert row.exploitability_description.startswith("A crafted remember-me")
+    assert row.factors == V5_REVIEWED_ROW["factors"]
+    assert row.risk == 9.2
+    assert row.risk_vector == V5_REVIEWED_ROW["risk_vector"]
+
+
+def test_the_review_refuses_the_retired_damage_field(tmp_path) -> None:
+    review = _valid_review()
+    review["units"][0]["rows"][0]["damage"] = "the retired field"
+    files, path = _write_review(tmp_path, review)
+
+    with pytest.raises(impact_review.ReviewError, match="damage"):
+        impact_review.load_review(path, files=files)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("impact_description", 3),
+        ("exploitability_description", ""),
+        ("risk", "high"),
+        ("risk", True),
+        ("risk_vector", ["CVSS:4.0"]),
+        ("factors", {"attack_vector": "network"}),
+    ],
+)
+def test_a_malformed_v5_row_field_is_named(tmp_path, field, value) -> None:
+    review = _valid_review()
+    review["units"][0]["rows"][0].update(V5_REVIEWED_ROW)
+    review["units"][0]["rows"][0][field] = value
+    files, path = _write_review(tmp_path, review)
+
+    with pytest.raises(impact_review.ReviewError, match=field):
+        impact_review.load_review(path, files=files)
+
+
+def test_the_review_refuses_an_unknown_row_field(tmp_path) -> None:
+    review = _valid_review()
+    review["units"][0]["rows"][0]["mining_quality"] = "sufficient"
+    files, path = _write_review(tmp_path, review)
+
+    with pytest.raises(impact_review.ReviewError, match="mining_quality"):
+        impact_review.load_review(path, files=files)
+
+
+def test_the_assessment_gate_accepts_a_v5_row_review(tmp_path) -> None:
+    """The close gate reads the review the assessor writes from the v5 rows:
+    a review that copies the scored identity is present, not invalid."""
+    files, root, chain = seed_chain(tmp_path)
+    request = make_request(tmp_path, files, chain)
+    verdicts.write_verdicts(
+        request.destination,
+        valid_payload(chain),
+        files=files,
+        data_root=root,
+        eval_sha=SHA,
+        stack_fingerprint=FINGERPRINT,
+    )
+    review = _valid_review()
+    review["units"][0]["rows"][0].update(V5_REVIEWED_ROW)
+    files.write_text(
+        impact_review.review_path(request.destination),
+        yaml.safe_dump(review, sort_keys=False),
+    )
+
+    assert assessment.check_verdicts(
+        request, files=files, eval_sha=SHA, stack_fingerprint=FINGERPRINT,
+    ) == "present"
+
+
+def test_the_review_is_required_only_when_configured(tmp_path) -> None:
+    files, root, chain = seed_chain(tmp_path)
+    request = make_request(tmp_path, files, chain)
+    verdicts.write_verdicts(
+        request.destination,
+        valid_payload(chain),
+        files=files,
+        data_root=root,
+        eval_sha=SHA,
+        stack_fingerprint=FINGERPRINT,
+    )
+
+    assert assessment.check_verdicts(
+        request, files=files, eval_sha=SHA, stack_fingerprint=FINGERPRINT,
+    ) == "present"
+    required = replace(request, require_impact_review=True)
+    assert assessment.check_verdicts(
+        required, files=files, eval_sha=SHA, stack_fingerprint=FINGERPRINT,
+    ) == "missing"
 
 
 def test_close_verify_accepts_a_present_valid_verdict_without_dispatch(tmp_path) -> None:

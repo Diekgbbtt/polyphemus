@@ -23,8 +23,19 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 import polymerhus.attack.hunting.pod.graph as graph_mod
 from polymerhus.attack.hunting.pod import arun_pod, build_pod_graph
 from polymerhus.attack.hunting.pod.agents import (
+    DivergenceDecision,
+    TerminalDecision,
+    TriageDecision,
+    default_divergence_fn,
     default_runner_step_fn,
+    default_terminal_fn,
+    default_triage_fn,
     default_triager_fn,
+)
+from polymerhus.attack.hunting.pod.prompts import (
+    load_pod_divergence_skill,
+    load_pod_terminal_skill,
+    load_pod_triage_skill,
 )
 from polymerhus.attack.hunting.pod.context import (
     ExperimentLog,
@@ -32,6 +43,7 @@ from polymerhus.attack.hunting.pod.context import (
 )
 from polymerhus.attack.hunting.pod.llm import (
     POD_RUNNER_ROLE,
+    POD_TRIAGER_ROLE,
     PodHarnessContext,
     bind_pod_session,
     pod_harness,
@@ -45,11 +57,11 @@ SPEC = {
     "verification_symptoms": ["HTTP 200 with a non-empty body on GET /"],
     "assumptions": ["network egress allowed"],
     "rationale": "reachability",
-    "provenance": {"loop_id": "loop-1", "unit_id": "service:web:soupmarket",
+    "provenance": {"threat_id": "threat-1", "unit_id": "service:web:soupmarket",
                    "canonical_class": "IDOR", "web_vulnerability_class": "idor"},
 }
 
-SPEC_ID = spec_identifier("sqli", "blind")
+SPEC_ID = spec_identifier("sqli", [{"axis": "technique", "value": "blind"}, {"axis": "payload-vector", "value": "boolean"}])
 
 _OK = "<html>market</html>\n__POD_HTTP_STATUS__:200\n__POD_HTTP_TIME__:0.05"
 _ABSENT = "not found\n__POD_HTTP_STATUS__:404\n__POD_HTTP_TIME__:0.02"
@@ -177,7 +189,7 @@ def test_runner_turn_flags_an_empty_stretch_as_exhausted(tmp_path):
 
 def test_runner_turn_binds_note_on_the_same_agent(tmp_path):
     """D84-16/27: the runner's ONE turn binds exec + note on the SAME
-    create_agent loop; the P3 note write is the runner's FINAL tool call
+    create_agent threat; the P3 note write is the runner's FINAL tool call
     (D84-17/19). The former `kb_retrieve` seam (surface B) is retired; the KB
     capability is the config-gated `query_lightrag` tool."""
     calls = []
@@ -186,7 +198,7 @@ def test_runner_turn_binds_note_on_the_same_agent(tmp_path):
     spec_id = SPEC_ID
     replies = [
         AIMessage(content="", tool_calls=[
-            {"name": "note", "args": {"operation": "write", "order": 0,
+            {"name": "notes", "args": {"command": "write", "order": 0,
                                       "note_name": "experiment",
                                       "kind": "experiment_summary",
                                       "body": "the consolidated summary"},
@@ -261,6 +273,139 @@ def test_triager_seam_reads_the_note_and_returns_a_decision(tmp_path, monkeypatc
     assert decision["terminal_reason"] == "space-exhausted"
     assert decision["clean"] is True
     assert "third-party miner verdict" in decision["note"]
+
+
+def test_triager_seam_normalises_a_dict_structured_response(tmp_path, monkeypatch):
+    """The staged triage shares one thread across four schemas, so a dict can
+    survive from a previous stage. The miner must validate it into
+    TriagerDecision, never call `model_dump` on the dict."""
+    log = ExperimentLog()
+    store = PodMemoryStore(tmp_path)
+    monkeypatch.setenv("LLM_POD_TRIAGER", "openrouter:some/model")
+    import polymerhus.app.llm.session as S
+
+    monkeypatch.setattr(
+        S, "stateful_turn",
+        lambda *a, **kw: {
+            "classification": "symptom-absent",
+            "action": "terminate",
+            "verdict": "unsuccessful",
+            "terminal_reason": "space-exhausted",
+            "clean": True,
+            "note": "dict response from the current turn",
+        })
+    hc = PodHarnessContext(exec_fn=_exec(_OK), memory_store=store,
+                           spec_id=SPEC_ID, log=log, variant_ref="v0",
+                           model_factory=_factory([]))
+
+    decision = _run(_drive_triager(SPEC, hc, log))
+
+    assert decision["terminal_reason"] == "space-exhausted"
+    assert decision["clean"] is True
+    assert "triager degraded" not in decision["note"]
+
+
+def _drive_stage(stage_fn, spec, hc, log, delta="stage delta"):
+    async def _drive():
+        with bind_pod_session("run-x", "", SPEC_ID, role_id=POD_TRIAGER_ROLE,
+                              harness=hc):
+            return await stage_fn(
+                spec, None, [{"role": "human", "content": delta}], log)
+    return _drive()
+
+
+def _stage_spy(seen):
+    def fake_stateful(role, thread, messages, *, checkpointer, schema=None, **kw):
+        seen.update(schema=schema, tools=tuple(kw.get("tools") or ()),
+                    system_prompt=kw.get("system_prompt"),
+                    messages=list(messages), context=kw.get("context"))
+        return schema() if schema is not None else None
+
+    return fake_stateful
+
+
+def test_triage_turn_binds_no_tools_and_the_compact_schema(tmp_path, monkeypatch):
+    """Stage A's fixed surface: the compact TriageDecision schema and NO tools -
+    the tool-description block and the skill index are not paid on the first
+    call."""
+    import polymerhus.app.llm.session as S
+
+    seen = {}
+    monkeypatch.setattr(S, "stateful_turn", _stage_spy(seen))
+    hc = PodHarnessContext(
+        exec_fn=_exec(_OK), memory_store=PodMemoryStore(tmp_path), spec_id=SPEC_ID,
+        log=ExperimentLog(), variant_ref="v0", model_factory=_factory([]))
+    result = _run(_drive_stage(default_triage_fn, SPEC, hc, hc.log))
+
+    assert seen["schema"] is TriageDecision
+    assert seen["tools"] == ()
+    assert seen["context"] is None
+    assert seen["system_prompt"] == load_pod_triage_skill()
+    assert result["symptom_confirmed"] is False
+
+
+def test_divergence_turn_binds_no_tools_and_the_compact_schema(tmp_path, monkeypatch):
+    import polymerhus.app.llm.session as S
+
+    seen = {}
+    monkeypatch.setattr(S, "stateful_turn", _stage_spy(seen))
+    hc = PodHarnessContext(
+        exec_fn=_exec(_OK), memory_store=PodMemoryStore(tmp_path), spec_id=SPEC_ID,
+        log=ExperimentLog(), variant_ref="v0", model_factory=_factory([]))
+    result = _run(_drive_stage(default_divergence_fn, SPEC, hc, hc.log))
+
+    assert seen["schema"] is DivergenceDecision
+    assert seen["tools"] == ()
+    assert seen["system_prompt"] == load_pod_divergence_skill()
+    assert result["runner_diverged"] is False
+
+
+def test_terminal_turn_binds_no_tools_and_the_compact_schema(tmp_path, monkeypatch):
+    import polymerhus.app.llm.session as S
+
+    seen = {}
+    monkeypatch.setattr(S, "stateful_turn", _stage_spy(seen))
+    hc = PodHarnessContext(
+        exec_fn=_exec(_OK), memory_store=PodMemoryStore(tmp_path), spec_id=SPEC_ID,
+        log=ExperimentLog(), variant_ref="v0", model_factory=_factory([]))
+    result = _run(_drive_stage(default_terminal_fn, SPEC, hc, hc.log))
+
+    assert seen["schema"] is TerminalDecision
+    assert seen["tools"] == ()
+    assert seen["system_prompt"] == load_pod_terminal_skill()
+    assert result["terminal_reason"] == "no-symptom-evidence"
+
+
+def test_stage_c_turn_keeps_the_full_tool_surface(tmp_path, monkeypatch):
+    """The bounded variant miner keeps the full skill + KB + note surface; only
+    the stages before it are tool-free."""
+    log = ExperimentLog()
+    store = PodMemoryStore(tmp_path)
+    store.write_experiment_log(SPEC_ID, 0, {"order": 0, "variant_ref": "v0",
+                                            "raw_observations": [], "interpretations": [],
+                                            "executed": []})
+    store.write_variant_summary(SPEC_ID, 0, "the verbatim consolidation")
+    seen: list = []
+    monkeypatch.setenv("LLM_POD_TRIAGER", "openrouter:some/model")
+    import polymerhus.app.llm.session as S
+
+    monkeypatch.setattr(
+        S, "resolve_capability",
+        lambda provider, model: type("_P", (), {
+            "supports_structured_output": False, "supports_tool_calling": True})())
+    replies = [AIMessage(content="", tool_calls=[
+        {"name": "TriagerDecision", "id": "c1", "args": {
+            "classification": "noise", "action": "terminate",
+            "verdict": "unsuccessful", "terminal_reason": "no-symptom-evidence",
+            "clean": False, "note": "n"}}])]
+    hc = PodHarnessContext(exec_fn=_exec(_OK), memory_store=store, spec_id=SPEC_ID,
+                           log=log, variant_ref="v0",
+                           model_factory=_tool_recording_factory(replies, seen))
+
+    _run(_drive_stage(default_triager_fn, SPEC, hc, log))
+
+    assert {"notes", "query_lightrag", "load_skill", "record_skill_lesson"} <= set(seen)
+    assert "exec" not in seen
 
 
 # --- the pod seams thread the project's usage scope (token attribution) --------
@@ -393,7 +538,7 @@ def test_triager_turn_binds_its_react_tools_and_never_exec(tmp_path, monkeypatch
 
     # #236: the full skill surface rides the critic's turn (load_skill plus the
     # lesson sub-phase's record_skill_lesson); exec stays off it.
-    assert {"note", "query_lightrag", "load_skill", "record_skill_lesson"} <= set(seen)
+    assert {"notes", "query_lightrag", "load_skill", "record_skill_lesson"} <= set(seen)
     assert "exec" not in seen  # the critic never touches the target
     assert "write_skill" not in seen
 
@@ -412,7 +557,7 @@ def test_runner_turn_binds_the_full_skill_surface(tmp_path):
 
     _run(_drive_runner(SPEC, hc))
 
-    assert {"exec", "note", "load_skill", "record_skill_lesson"} <= set(seen)
+    assert {"exec", "notes", "load_skill", "record_skill_lesson"} <= set(seen)
     assert "write_skill" not in seen
 
 
@@ -510,10 +655,10 @@ def test_production_runner_node_binds_the_harness_context(monkeypatch, tmp_path)
 
     monkeypatch.setattr(graph_mod, "default_runner_step_fn", spy)
     env = _run(arun_pod(root_spec, exec_fn=_exec(_ABSENT), trace_fn=_no_trace,
-                        memory_store=PodMemoryStore(tmp_path), spec_id="sqli_blind"))
+                        memory_store=PodMemoryStore(tmp_path), spec_id="sqli__blind__boolean"))
     assert env["verdict"] == "unsuccessful"
     assert seen and seen[0] is not None
-    assert seen[0].spec_id == "sqli_blind"             # the #164 handoff keys memory
+    assert seen[0].spec_id == "sqli__blind__boolean"             # the #164 handoff keys memory
     assert seen[0].variant_ref == "v0"
     assert seen[0].log is not None
 

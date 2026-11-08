@@ -38,78 +38,67 @@ from __future__ import annotations
 # its sanitized projections (`sanitize_summary` / `sanitize_artifact`), never a
 # second schema: the store stays the single source of truth for the shape.
 _ARTIFACT_MODEL: str = (
-    "Domain model (http-artifact/v1): one artifact is ONE immutable recorded "
-    "transaction of this project, addressed by `artifact_id` (prefix `http_`). "
-    "It carries `request` {method, url, headers, cookies, query, form}, "
-    "`response` {status, reason, headers, cookies} or null when the exchange "
-    "never completed, `connection` {tls, sni, alpn, protocol}, `timings`, and a "
-    "per-body `capture_state` in none|captured|empty|omitted|truncated - only "
-    "`captured` bytes are in the store and therefore replayable, and any other "
-    "state carries the original size plus a `capture_reason`. The replay lineage "
-    "is `derived_from` (the baseline's artifact_id) + `replay_kind` "
-    "(baseline|mutated): a replayed exchange is a NEW artifact pointing at its "
-    "baseline, never a mutation of it. Everything a model sees is a SANITIZED "
-    "projection of that record: no body content ever, cookies and "
-    "secret-bearing values are `[redacted]`, `source_ip` is excluded."
+    "Domain model (http-artifact/v1): one immutable recorded transaction, "
+    "addressed by `artifact_id` (prefix `http_`). It carries request, response, "
+    "connection, timings, and a per-body `capture_state` "
+    "(none|captured|empty|omitted|truncated); only `captured` is replayable. "
+    "Lineage is `derived_from` + `replay_kind` (baseline|mutated); a replay is "
+    "a NEW artifact, never a mutation. The model sees a sanitized projection: "
+    "no body content, secrets `[redacted]`, `source_ip` excluded."
+)
+
+# The triage header families the summary row renders, per side. They mirror
+# `kali/http_history/sanitize.py` (a separate deployment unit); the parity test
+# `tests/kali/test_http_history_summary_headers.py` pins the two sets together.
+SEARCH_REQUEST_HEADERS: tuple[str, ...] = (
+    "authorization", "content-type", "cookie", "origin", "referer",
+    "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto",
+    "x-forwarded-protocol", "x-real-ip",
+)
+SEARCH_RESPONSE_HEADERS: tuple[str, ...] = (
+    "access-control-allow-credentials", "access-control-allow-headers",
+    "access-control-allow-methods", "access-control-allow-origin",
+    "access-control-expose-headers", "access-control-max-age",
+    "content-security-policy", "content-security-policy-report-only",
+    "content-type", "location", "server", "set-cookie",
+    "www-authenticate", "x-cache", "x-cache-lookup", "x-frame-options",
+    "x-powered-by",
 )
 
 SEARCH_HTTP_HISTORY_DESCRIPTION: str = (
-    "Search this project's recorded HTTP history. Filters are conjunctive "
-    "{side, namespace, key, op, value}: side in request|response|connection|"
-    "context|timing, namespace in core|header|cookie|query|form|body|tls, op in "
-    "eq|contains|prefix|gte|lte|absent (`absent` = the transaction does NOT "
-    "carry that key - it is how you build the control group). `text` is a "
-    "free-text phrase match over the URL and textual body markers. Filter "
-    "vocabulary is exact: `side` and `namespace` are TWO DIFFERENT AXES of "
-    "one filter - `side` is one of request|response|connection|context|timing, "
-    "`namespace` is one of core|header|cookie|query|form|body|tls, so never put "
-    "a namespace value in `side`. Example: `{side:'request', "
-    "namespace:'query', key:'filename', op:'contains', value:'x'}`. `op` is "
-    "exactly one of eq|contains|prefix|gte|lte|absent; to require that a key "
-    "IS present, exclude its `absent` complement - there is no `present` op. "
-    "`value` is a string or a number; `eq` does not accept booleans. A "
-    "misspelled op, side or namespace is a filter error (`invalid_filter`), "
-    "not an empty result. `limit` is "
-    "1..200 and paging is deterministic on (created_at, artifact_id): pass the "
-    "returned `next_cursor` back to read the next page. Rows are sanitized "
-    "summaries - artifact_id, project_id, created_at, method, url, host, status, "
-    "status_class, http_version, request_size, response_size, timing_ms, tls, "
-    "error_type, derived_from, replay_kind - and they are candidates, never a "
-    "verification. Inspect one with `get_http_artifact`, then record its "
-    "artifact_id in the spec's `provenance.baseline_ref`: replay is the pod's "
-    "job, never this tool's. A missing seam, an unavailable store or a "
-    "rejected filter degrades to a denoted error object, never a raise. Every "
-    "failure carries a `category` that tells you what to do: `invalid_filter` "
-    "- your filter, `text`, `limit` or cursor is malformed; fix it and retry. "
-    "`not_found` - the artifact id is unknown or belongs to another project; "
-    "pick another id. `corrupt_artifact` - that stored record cannot be "
-    "parsed; skip it and continue, it is not evidence about the target. "
-    "`unavailable` - the history store could not be reached for this call; "
-    "this is NOT evidence that the surface is empty, so continue with other "
-    "evidence and retry later. A `http_history_failed` result means the "
-    "history store could not be reached for THIS call: the target may still "
-    "have history, so treat it as missing evidence, never as proof of an "
-    "empty surface, and continue with `graph_view` and the rest of your "
-    "evidence. " + _ARTIFACT_MODEL
+    "Search recorded HTTP via conjunctive {side, namespace, key, op, value} "
+    "filters. side: request|response|connection|context|timing; namespace: "
+    "core|header|cookie|query|form|body|tls. op: eq|contains|prefix|gte|lte|"
+    "absent (`absent` builds the control group). `text` matches URL/body "
+    "markers. `side` and `namespace` are TWO DIFFERENT AXES. There is no "
+    "`present` op; exclude `absent` instead. `value` is a string or number; "
+    "`eq` does not accept booleans. `limit` is 1..200; paging is deterministic; "
+    "pass `next_cursor` back. Header keys are side-bound: request has "
+    "authorization, cookie, referer, origin, x-forwarded-*, x-real-ip; response "
+    "has set-cookie, location, access-control-*, content-security-policy, "
+    "x-frame-options, www-authenticate, server, x-powered-by, "
+    "x-cache{,-lookup}; content-type is on both. A misspelled op/side/namespace "
+    "or a bad core key is `invalid_filter`, not an empty result. Inspect with "
+    "`get_http_artifact`; cite its id in `provenance.baseline_ref`.\n"
+    "Failures are in-band: `invalid_filter`, `not_found`, `corrupt_artifact`, "
+    "`unavailable` or `http_history_failed` (missing evidence, never proof of "
+    "an empty surface). Rows are candidate summaries: `artifact_id`, `method`, "
+    "`url` (raw), `status`, sizes, `request_headers`/`response_headers` "
+    "(verbatim), and non-null `derived_from`/`replay_kind`/`error`; "
+    "`capture_state` is on `get_http_artifact`."
 )
 
 GET_HTTP_ARTIFACT_DESCRIPTION: str = (
-    "Fetch ONE recorded transaction of this project by `artifact_id` - the "
-    "inspection step of the chain. Use it before naming a candidate as the "
-    "spec's `provenance.baseline_ref`, and read `request.body.capture_state` "
-    "to decide whether the pod can replay it: only `captured` is replayable, "
-    "while `omitted`/`truncated` means the bytes are not in the store (a "
-    "baseline replay would have to send a bodyless request and is refused - "
-    "declare an explicit `body` override to send a bodyless variant on purpose). "
-    "You also get the lineage: `derived_from`/`replay_kind` say whether this is "
-    "original target traffic or a replay. Header NAMES and non-sensitive header "
-    "values are visible (sensitive ones are `[redacted]`); body content never "
-    "is. The record carries `capture_context` {session_id, run_id, spec_id, "
-    "variant_ref, exec_id, derived_from, replay_kind} - the join back to the "
-    "run, spec and variant that captured it. A missing or cross-project id is "
-    "`not_found` (never leaked), an unreadable stored record is "
-    "`corrupt_artifact` (skip it - not evidence about the target), and a "
-    "failure degrades to a denoted error, never a raise. " + _ARTIFACT_MODEL
+    "Fetch ONE recorded transaction by `artifact_id`. Use it before naming a "
+    "candidate as `provenance.baseline_ref`. Read "
+    "`request.body.capture_state`: only `captured` is replayable; "
+    "`omitted`/`truncated` means the bytes are not stored, and a bodyless "
+    "replay is refused unless an explicit `body` override is declared. Lineage "
+    "is `derived_from`/`replay_kind`. Header names and non-sensitive values are "
+    "visible; secrets are `[redacted]` and body content is never shown. "
+    "`capture_context` joins the run, spec, and variant. Missing or "
+    "cross-project id -> `not_found`; unreadable record -> `corrupt_artifact`; "
+    "failures are in-band."
 )
 
 REPLAY_HTTP_REQUEST_DESCRIPTION: str = (
@@ -138,4 +127,6 @@ __all__ = [
     "GET_HTTP_ARTIFACT_DESCRIPTION",
     "REPLAY_HTTP_REQUEST_DESCRIPTION",
     "SEARCH_HTTP_HISTORY_DESCRIPTION",
+    "SEARCH_REQUEST_HEADERS",
+    "SEARCH_RESPONSE_HEADERS",
 ]

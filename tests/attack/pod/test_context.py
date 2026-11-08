@@ -8,10 +8,15 @@ from polymerhus.attack.hunting.pod.context import (
     ExperimentLog,
     _dicts_to_lc,
     _lc_to_dicts,
+    compose_divergence_delta,
+    compose_terminal_delta,
+    compose_triage_delta,
+    compose_triager_delta,
 )
 from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore, spec_identifier
 from polymerhus.attack.hunting.pod.types import (
     Interpretation,
+    KbObservation,
     RawObservation,
     VariantSpec,
 )
@@ -116,6 +121,133 @@ def test_runner_context_lists_executed_signatures():
     assert "Lap 2" in ctx
 
 
+def _spec_with_typed_procedure() -> dict:
+    return {
+        "target_identity": {"url": "http://svc/", "unit_id": "svc"},
+        "discriminators": [
+            {"axis": "actor", "value": "viewer"},
+            {"axis": "state", "value": "post-delete"},
+        ],
+        "skill_concretised_procedure": {
+            "recon_action": "the role check trusts the session",
+            "bypass_technique": "swap the role cookie",
+            "payload_vector": "the role cookie name, no encoding",
+            "technology_misconfiguration": "the gateway trusts the client role",
+            "pro_tips": "confirm the authenticated landing",
+        },
+        "provenance": {"threat_id": "threat-1"},
+    }
+
+
+def test_triager_context_renders_the_typed_procedure_once():
+    """CL-3 context-only dedup: the typed concretisation is the one rendering;
+    the full spec JSON no longer repeats `skill_concretised_procedure`."""
+    log = ExperimentLog()
+    ctx = log.triager_context(_spec_with_typed_procedure(), None)
+    assert ctx.count("## Skill procedure") == 1
+    assert "skill_concretised_procedure" not in ctx
+    assert "the role check trusts the session" in ctx
+
+
+def test_runner_context_projects_the_typed_procedure_out_of_the_spec_json():
+    log = ExperimentLog()
+    ctx = log.runner_context(_spec_with_typed_procedure(), feedback="", iteration=1,
+                             budget=3)
+    assert "skill_concretised_procedure" not in ctx
+    assert "the role check trusts the session" not in ctx
+
+
+# --- the staged triage deltas --------------------------------------------------
+
+def _staged_log_and_spec(tmp_path):
+    store = PodMemoryStore(tmp_path)
+    spec_id = spec_identifier("sqli", [{"axis": "technique", "value": "blind"}, {"axis": "payload-vector", "value": "boolean"}])
+    store.write_experiment_log(spec_id, 1, {"order": 1, "variant_ref": "v1",
+                                            "raw_observations": [],
+                                            "kb_observations": [],
+                                            "interpretations": [], "executed": []})
+    store.write_variant_summary(spec_id, 1, "the consolidated stretch note")
+    log = ExperimentLog(store=store, spec_id=spec_id)
+    log.record_variant(VariantSpec(ref="v0", spec={}))
+    log.record_variant(VariantSpec(
+        ref="v1", parent_ref="v0", declined_attribute="bypass-technique",
+        spec={"rationale": "swap the marker in the reflected field"}))
+    log.record_observation(RawObservation(
+        variant_ref="v1", request={"command": "curl -k https://svc/search?q=marker"},
+        status=404))
+    log.record_kb_observation(KbObservation(
+        variant_ref="v1", query="reflected markers", source=None, degraded=True))
+    log.record_interpretation(Interpretation(
+        variant="v0", classification="symptom-absent", note="not reflected"))
+    spec = _spec_with_typed_procedure()
+    spec["verification_symptoms"] = ["reflects the marker"]
+    spec["assumptions"] = ["the session cookie is the only auth factor"]
+    observation = RawObservation(variant_ref="v1", status=404, body="not found")
+    return store, spec_id, log, spec, observation
+
+
+def test_the_triage_delta_is_compact(tmp_path):
+    """Stage A reads the note, the symptoms, the identity, the assumptions, and
+    the observation - and nothing the first-pass check does not need: no typed
+    procedure, no variants, no probe trail, no interpretations, no memory
+    key-list."""
+    store, spec_id, log, spec, observation = _staged_log_and_spec(tmp_path)
+    delta = compose_triage_delta(log, spec, observation, store=store,
+                                 spec_id=spec_id, order=1)
+    assert "the consolidated stretch note" in delta
+    assert "## Verification symptoms" in delta
+    assert "reflects the marker" in delta
+    assert "## Target identity" in delta
+    assert "http://svc/" in delta
+    assert "## Assumptions" in delta
+    assert "the session cookie" in delta
+    assert "## Latest observation" in delta
+    assert "## Skill procedure" not in delta
+    assert "## Variants already tried" not in delta
+    assert "## Probes executed" not in delta
+    assert "## Recent interpretations" not in delta
+    assert "Pod experiment memory" not in delta
+
+
+def test_the_divergence_delta_adds_the_typed_procedure_and_the_probes(tmp_path):
+    store, spec_id, log, spec, observation = _staged_log_and_spec(tmp_path)
+    delta = compose_divergence_delta(log, spec, observation, store=store,
+                                     spec_id=spec_id, order=1)
+    assert "## Skill procedure" in delta
+    assert "the role check trusts the session" in delta
+    assert "## Probes executed" in delta
+    assert "curl -k https://svc/search?q=marker" in delta
+    # Divergence is a procedure comparison, not a duplicate check.
+    assert "## Variants already tried" not in delta
+    assert "## Recent interpretations" not in delta
+
+
+def test_the_terminal_delta_carries_the_trail_and_the_kb_flags(tmp_path):
+    store, spec_id, log, spec, observation = _staged_log_and_spec(tmp_path)
+    delta = compose_terminal_delta(log, spec, observation, store=store,
+                                   spec_id=spec_id, order=1)
+    assert "## Probes executed" in delta
+    assert "curl -k https://svc/search?q=marker" in delta
+    assert "## Variants already tried" in delta
+    assert "bypass-technique" in delta
+    assert "## KB observations" in delta
+    assert "degraded=True" in delta
+    assert "## Recent interpretations" in delta
+    # The terminal stage does not need the procedure diff material.
+    assert "## Skill procedure" not in delta
+
+
+def test_the_full_triager_delta_stays_full(tmp_path):
+    store, spec_id, log, spec, observation = _staged_log_and_spec(tmp_path)
+    delta = compose_triager_delta(log, spec, observation, store=store,
+                                  spec_id=spec_id, order=1)
+    assert "## Skill procedure" in delta
+    assert "## Variants already tried" in delta
+    assert "## Probes executed" in delta
+    assert "## Recent interpretations" in delta
+    assert "Pod experiment memory" in delta
+
+
 def test_start_run_clears_stale_summaries_across_all_on_file_orders(tmp_path):
     """D84-37 / the consolidated code-review finding: a re-run must NOT serve a
     prior run's `experiment_summary` for ANY order the new run does not reach
@@ -124,7 +256,7 @@ def test_start_run_clears_stale_summaries_across_all_on_file_orders(tmp_path):
     (a budget/triager terminate mid-stretch at a higher order cannot leak the
     old order's summary to the Triager)."""
     store = PodMemoryStore(tmp_path)
-    spec_id = spec_identifier("sqli", "blind")
+    spec_id = spec_identifier("sqli", [{"axis": "technique", "value": "blind"}, {"axis": "payload-vector", "value": "boolean"}])
     store.write_experiment_log(spec_id, 0, {"order": 0, "variant_ref": "v0",
                                             "raw_observations": [], "kb_observations": [],
                                             "interpretations": [], "executed": []})
@@ -150,7 +282,7 @@ def test_pod_session_address_derives_a_per_spec_hunt_session():
     the address."""
     from polymerhus.attack.hunting.pod.pod import _pod_session_address
 
-    spec_id = spec_identifier("sqli", "blind")
+    spec_id = spec_identifier("sqli", [{"axis": "technique", "value": "blind"}, {"axis": "payload-vector", "value": "boolean"}])
     addr = _pod_session_address("run-1", "hunt-A", spec_id, "pod_runner")
 
     assert addr.role_id == "pod_runner"
@@ -161,7 +293,7 @@ def test_pod_session_address_derives_a_per_spec_hunt_session():
     # The semantic spec id discriminates the thread: two specs on one hunt
     # diverge (per concurrent pod instance - Q13).
     other = _pod_session_address("run-1", "hunt-A",
-                                 spec_identifier("xss", "reflected"),
+                                 spec_identifier("xss", [{"axis": "technique", "value": "reflected"}, {"axis": "payload-vector", "value": "html"}]),
                                  "pod_runner")
     assert addr.thread_id != other.thread_id
     # A missing hunt_id never shifts the address (empty discriminators are dropped).

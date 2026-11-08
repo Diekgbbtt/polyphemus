@@ -238,3 +238,32 @@ The named lower-level seam would be the D7 exempt replay tail: the tail is byte-
 - Raw JSON for this record was written under `/tmp/measure-*.json` during the run and is not committed.
 
 *Measured on 2026-10-09 from `measure/session-cache` at `dev` @ `6b0c9b5`.*
+
+## Amendment 2026-10-23 - cached-text removal is not a miss-ratio win
+
+The white-jotter context dedup cut fixed tool descriptions and prompt text.
+The first call is warm on the static prefix for the modeller.
+The pod first calls are cold.
+
+The arithmetic is:
+
+- Removing cached text lowers total input and cache read.
+- The uncached runtime input is unchanged.
+- The miss share `uncached / total` therefore rises.
+- Removing uncached text lowers both the numerator and the total.
+
+The measured decomposition is:
+
+| Role | Fixed cut | First-call effect | Warm-session effect |
+|---|---:|---|---|
+| Hunter | 3,408 cached tokens plus 5,361 uncached loop tokens | miss share 35.1% to about 20.9% | cached occupancy falls |
+| Modeller | about 3,158 cached tokens | warm miss share 16.0% to 19.7% | about 514,754 fewer input tokens; uncached unchanged |
+| Runner | about 2,189 cold uncached tokens | cold miss 8,810 to 6,621 (-24.8%) | warm miss share rises slightly |
+| Triager | about 2,230 cold uncached tokens | cold miss 11,712 to 9,482 (-19.0%) | warm miss share rises from 33.7% to about 36.6% |
+
+The hunter is the exception because the 22,470-char loop tool surface was uncached on the first call.
+The other fixed cuts are occupancy wins.
+The progressive miss ratio is driven by runtime payloads: HTTP history, auth store, KB answers, replay results, and skill bodies.
+
+The evidence is in `docs/experiments/hunt-enhancement/THREAT-MODELLER-CONTEXT-ANALYSIS.md`, `docs/experiments/hunt-enhancement/POD-CONTEXT-ANALYSIS.md`, and `docs/experiments/hunt-enhancement/CHANGES.md`.
+The decision record is `docs/design/hunting-context-dedup-2026-10-23-adr.md` D8.

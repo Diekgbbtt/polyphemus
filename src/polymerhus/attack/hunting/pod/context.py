@@ -16,6 +16,7 @@ This module is pure and DB/LLM-free (unit-tier safe).
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 
@@ -24,7 +25,7 @@ from polymerhus.attack.hunting.pod.types import (
     KbObservation,
     RawObservation,
     VariantSpec,
-    skill_procedure_from_spec,
+    skill_concretised_procedure_from_spec,
 )
 from polymerhus.attack.hunting.pod.variant_basis import PROCEDURE_GAP_FIELD
 
@@ -36,19 +37,34 @@ _PROBE_LINES = 12
 _PROBE_SLICE = 200
 
 
-def _skill_procedure_context(spec: dict) -> str:
-    """The bounded typed `SkillProcedure` excerpt the triager diffs (S5 8.6).
+def _pod_spec_view(spec: dict) -> dict:
+    """The context-only projection of one pod spec (CL-3).
 
-    Read from the spec provenance through the ONE typed read, never the store
-    envelope. An absent excerpt is a RECORDED GAP: the diff has no material and
-    the failure-mode fallback applies. An empty section is a SKIPPED class, not
-    a coverage gap (T10 H1): there is no authored procedure to execute or cover,
-    so the diff passes over it and never loops on it."""
-    procedure = skill_procedure_from_spec(spec)
-    header = "## Skill procedure (typed excerpt from the spec provenance)"
+    The typed `SkillConcretisedProcedure` is rendered ONCE by
+    `_skill_concretised_procedure_context`; the full spec JSON must not repeat
+    the same procedure through `skill_concretised_procedure`. The spec schema
+    and the store are unchanged: this is a view over a deep copy, used only by
+    the two context renderers."""
+    if not isinstance(spec, dict):
+        return spec
+    view = copy.deepcopy(spec)
+    view.pop("skill_concretised_procedure", None)
+    return view
+
+
+def _skill_concretised_procedure_context(spec: dict) -> str:
+    """The bounded typed `SkillConcretisedProcedure` the triager diffs (S5 8.6).
+
+    Read from the spec through the ONE typed read, never the store envelope. An
+    absent object is a RECORDED GAP: the diff has no material and no
+    variant basis is derivable. An empty section is a SKIPPED class, not a
+    coverage gap (T10 H1): there is no authored procedure to execute or cover,
+    so the diff passes over it and never threats on it."""
+    procedure = skill_concretised_procedure_from_spec(spec)
+    header = "## Skill procedure (target-specific concretisation)"
     if procedure is None:
-        return (f"{header}\n(no skill procedure excerpt recorded - a recorded gap; "
-                "the procedure diff has no material, so the failure-mode fallback applies)")
+        return (f"{header}\n(no skill concretisation recorded - a recorded gap; "
+                "the procedure diff has no material, so no variant basis is derivable)")
     lines = []
     for basis, field in PROCEDURE_GAP_FIELD.items():
         text = str(getattr(procedure, field) or "").strip()
@@ -183,6 +199,55 @@ class ExperimentLog:
         except Exception:  # noqa: BLE001 - fail-open (O3)
             pass
 
+    def hydrate(self) -> bool:
+        """Rehydrate the log from the store's persisted variant slices.
+
+        The resume unit is the variant boundary. Variants, raw observations,
+        KB observations, interpretations, and the full executed ledger come back
+        from the per-order slices; the caller starts at the cursor's current
+        variant and the tools skip every already-executed probe.
+
+        Returns True when at least one persisted record was loaded. An absent
+        store or an empty spec returns False, leaving the log fresh.
+        """
+        if self.store is None or not self.spec_id:
+            return False
+        orders = self.store.list_variant_orders(self.spec_id)
+        if not orders:
+            return False
+        self.variant_specs = []
+        self.raw_observations = []
+        self.kb_observations = []
+        self.interpretations = []
+        self.executed = []
+        loaded = False
+        for order in orders:
+            ref = f"v{int(order)}"
+            variant = self.store.read_variant(self.spec_id, ref)
+            if isinstance(variant, dict) and variant:
+                self.variant_specs.append(VariantSpec(**variant))
+                loaded = True
+            slice = self.store.read_experiment_log(self.spec_id, order)
+            if not isinstance(slice, dict):
+                continue
+            for raw in slice.get("raw_observations") or []:
+                if isinstance(raw, dict):
+                    self.raw_observations.append(RawObservation(**raw))
+                    loaded = True
+            for kb in slice.get("kb_observations") or []:
+                if isinstance(kb, dict):
+                    self.kb_observations.append(KbObservation(**kb))
+                    loaded = True
+            for interp in slice.get("interpretations") or []:
+                if isinstance(interp, dict):
+                    self.interpretations.append(Interpretation(**interp))
+                    loaded = True
+            for signature in slice.get("executed") or []:
+                if isinstance(signature, str) and signature not in self.executed:
+                    self.executed.append(signature)
+                    loaded = True
+        return loaded
+
     def _persist(self, order: int) -> None:
         """The capture seam: re-write the variant's experiment-log slice
         idempotently. No-op when no store/spec_id is bound (fail-open - the
@@ -267,7 +332,7 @@ class ExperimentLog:
         the Triager's feedback, and the budget state."""
         parts = [
             f"# Lap {iteration} of at most {budget}",
-            f"## Current spec variant\n{json.dumps(spec, indent=2)}",
+            f"## Current spec variant\n{json.dumps(_pod_spec_view(spec), indent=2)}",
         ]
         if self.executed:
             parts.append("## Probe signatures already executed (do not repeat)\n"
@@ -283,8 +348,8 @@ class ExperimentLog:
         procedure (prior variant bases + probe commands), the latest raw
         observation (body-capped), and every prior variant (so it does not
         re-mine one)."""
-        parts = [f"## Current spec variant\n{json.dumps(spec, indent=2)}",
-                 _skill_procedure_context(spec)]
+        parts = [f"## Current spec variant\n{json.dumps(_pod_spec_view(spec), indent=2)}",
+                 _skill_concretised_procedure_context(spec)]
         if observation is not None:
             obs = observation.model_dump()
             obs["body"] = (obs.get("body") or "")[:_BODY_SLICE]
@@ -338,3 +403,111 @@ def compose_triager_delta(log: ExperimentLog, spec: dict,
                        "(no consolidation note for this stretch yet)")
     return (f"{note_part}\n\n{log.triager_context(spec, observation)}\n\n"
             f"{compose_memory_guidance(store, spec_id)}")
+
+
+def _note_block(store, spec_id: str, order: int) -> str:
+    from polymerhus.attack.hunting.pod.pod_memory import read_variant_summary
+
+    note_body = read_variant_summary(store, spec_id, order)
+    return (f"## Runner's consolidation note (verbatim)\n{note_body}" if note_body
+            else "## Runner's consolidation note (verbatim)\n"
+                 "(no consolidation note for this stretch yet)")
+
+
+def _symptom_block(spec: dict) -> str:
+    symptoms = spec.get("verification_symptoms") or []
+    if not isinstance(symptoms, (list, tuple)) or not symptoms:
+        return ""
+    return "## Verification symptoms\n" + "\n".join(f"- {s}" for s in symptoms)
+
+
+def _identity_block(spec: dict) -> str:
+    identity = spec.get("target_identity")
+    if not isinstance(identity, dict) or not identity:
+        return ""
+    rows = [f"- {key}: {value}" for key, value in identity.items() if value]
+    return "## Target identity\n" + "\n".join(rows) if rows else ""
+
+
+def _assumption_block(spec: dict) -> str:
+    assumptions = spec.get("assumptions") or []
+    if not isinstance(assumptions, (list, tuple)) or not assumptions:
+        return ""
+    return "## Assumptions\n" + "\n".join(f"- {a}" for a in assumptions)
+
+
+def _observation_block(observation: RawObservation | None) -> str:
+    if observation is None:
+        return ""
+    obs = observation.model_dump()
+    obs["body"] = (obs.get("body") or "")[:_BODY_SLICE]
+    return f"## Latest observation\n{json.dumps(obs, indent=2)}"
+
+
+def compose_triage_delta(log: ExperimentLog, spec: dict,
+                         observation: RawObservation | None, *, store,
+                         spec_id: str, order: int) -> str:
+    """Stage A's COMPACT delta: the note, the verification symptoms, the target
+    identity, the assumptions, and the latest observation.
+
+    It deliberately excludes the typed procedure excerpt, the variants already
+    tried, the executed probe trail, the interpretations, and the memory
+    guidance - the material the first-pass failure/confirmation check does not
+    need and the full miner loads only when it is reached."""
+    parts = [_note_block(store, spec_id, order), _symptom_block(spec),
+             _identity_block(spec), _assumption_block(spec),
+             _observation_block(observation)]
+    return "\n\n".join(part for part in parts if part)
+
+
+def compose_divergence_delta(log: ExperimentLog, spec: dict,
+                             observation: RawObservation | None, *, store,
+                             spec_id: str, order: int) -> str:
+    """Stage B's delta: the compact triage delta plus the typed `SkillConcretisedProcedure`
+    excerpt and the executed probe trail.
+
+    The typed excerpt is the procedure-diff material the spec renders; the
+    probes are what actually ran. The variants and the interpretations stay out:
+    divergence is a procedure comparison, not a duplicate check."""
+    parts = [compose_triage_delta(log, spec, observation, store=store,
+                                  spec_id=spec_id, order=order),
+             _skill_concretised_procedure_context(spec)]
+    probes = _executed_probe_lines(log.raw_observations)
+    if probes:
+        parts.append("## Probes executed (the D6 trail)\n" + "\n".join(probes))
+    return "\n\n".join(part for part in parts if part)
+
+
+def compose_terminal_delta(log: ExperimentLog, spec: dict,
+                           observation: RawObservation | None, *, store,
+                           spec_id: str, order: int) -> str:
+    """Stage D's delta: the compact triage delta plus the executed probe trail,
+    the variant bases already tried, the recent interpretations, and the KB
+    degraded flags.
+
+    The terminal reason needs the coverage and the KB impairment, not the typed
+    procedure or the skill surface. A degraded KB observation is printed as
+    such so the compact turn can refuse a clean absence."""
+    parts = [compose_triage_delta(log, spec, observation, store=store,
+                                  spec_id=spec_id, order=order)]
+    probes = _executed_probe_lines(log.raw_observations)
+    if probes:
+        parts.append("## Probes executed (the D6 trail)\n" + "\n".join(probes))
+    if log.variant_specs:
+        lines = []
+        for v in log.variant_specs:
+            label = v.ref if not v.declined_attribute else \
+                f"{v.ref} (basis: {v.declined_attribute}, parent {v.parent_ref})"
+            lines.append(f"- {label}")
+        parts.append("## Variants already tried\n" + "\n".join(lines))
+    if log.kb_observations:
+        lines = [
+            f"- {k.variant_ref or 'v?'} query={k.query[:120]!r} "
+            f"source={k.source} degraded={k.degraded}"
+            for k in log.kb_observations[-_PROBE_LINES:]]
+        parts.append("## KB observations\n" + "\n".join(lines))
+    if log.interpretations:
+        recent = log.interpretations[-5:]
+        parts.append("## Recent interpretations\n"
+                     + "\n".join(f"- [{i.classification}] {i.note}" for i in recent))
+    return "\n\n".join(part for part in parts if part)

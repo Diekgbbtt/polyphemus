@@ -2,8 +2,7 @@
 
 Drives `arun_pod` with a scripted triager decision and a scripted experiment
 log. The graph resolves the variant basis against the typed `SkillProcedure` in
-the spec provenance: the first uncovered gap class wins, the failure-mode
-fallback covers a fully covered procedure, the execution triggers mint the
+the spec provenance: the first uncovered gap class wins, the execution triggers mint the
 recovery bases, and a duplicate basis plus detail is not re-minted. The
 `VariantSpec` record keeps its four-field shape; `declined_attribute` carries the
 basis.
@@ -12,7 +11,11 @@ import asyncio
 
 from polymerhus.attack.hunting.pod import arun_pod
 from polymerhus.attack.hunting.pod.agents import TriagerDecision, symbolic_runner_step_fn
-from polymerhus.attack.hunting.pod.types import TERMINAL_REASONS
+from polymerhus.attack.hunting.pod.types import (
+    DOMAIN_TERMINAL_REASONS,
+    HARNESS_TERMINAL_REASONS,
+    TERMINAL_REASONS,
+)
 from polymerhus.attack.hunting.pod.variant_basis import (
     PROCEDURE_GAP_BASES,
     VARIANT_BASES,
@@ -26,6 +29,8 @@ PROCEDURE = {
     "pro_tips": "compare the owner id in the response body",
     "advanced_technique": "chain the export endpoint",
     "preliminary_chaining": "mint a low-privilege session first",
+    "payload_vector": "the order id in the path segment, no encoding",
+    "technology_misconfiguration": "the object store trusts the URL scope",
     "interpretation_pitfalls": "a 403 is not proof the object is absent",
 }
 ALL_GAPS = set(PROCEDURE_GAP_BASES)
@@ -33,12 +38,16 @@ ALL_GAPS = set(PROCEDURE_GAP_BASES)
 SPEC = {
     "target_identity": {"url": "http://soupmarket.shop/",
                         "unit_id": "service:web:soupmarket"},
+    "discriminators": [
+        {"axis": "object", "value": "order-id"},
+        {"axis": "delivery-route", "value": "signed-url"},
+    ],
     "verification_symptoms": ["the response leaks another user's order id"],
     "assumptions": ["the session cookie is the only auth factor"],
     "rationale": "IDOR over the order endpoint",
-    "provenance": {"loop_id": "loop-1", "unit_id": "service:web:soupmarket",
-                   "canonical_class": "IDOR", "web_vulnerability_class": "idor",
-                   "skill_procedure": PROCEDURE},
+    "skill_concretised_procedure": PROCEDURE,
+    "provenance": {"threat_id": "threat-1", "unit_id": "service:web:soupmarket",
+                   "canonical_class": "IDOR", "web_vulnerability_class": "idor"},
 }
 
 _ABSENT = "not found\n__POD_HTTP_STATUS__:404\n__POD_HTTP_TIME__:0.02"
@@ -96,19 +105,19 @@ def test_the_graph_mints_the_first_uncovered_gap_as_the_basis():
 
 def test_an_empty_procedure_section_is_skipped_not_minted():
     # T10 H1: an empty section is a skipped class. Even when the triager claims
-    # full coverage, the diff never loops on the empty pro-tips section; the
-    # plausible failure mode is the only derivable variant.
-    spec = {**SPEC, "provenance": {
-        **SPEC["provenance"],
-        "skill_procedure": {**PROCEDURE, "pro_tips": ""}}}
+    # full coverage, the diff never threats on the empty pro-tips section, and no
+    # variant basis is derivable.
+    spec = {**SPEC, "skill_concretised_procedure": {
+        **PROCEDURE, "pro_tips": ""}}
     derived = {**spec, "rationale": "test one more observable failure mode"}
     env = _drive([
         _variant(declined_attribute="pro-tips",
                  covered_gap_classes=sorted(ALL_GAPS),
-                 failure_mode_plausible=True, variant_spec=derived),
+                 variant_spec=derived),
         TERMINATE,
     ], spec=spec)
-    assert env["evidence"]["variant_specs"][1]["declined_attribute"] == "failure-mode"
+    assert [v["ref"] for v in env["evidence"]["variant_specs"]] == ["v0"]
+    assert env["evidence"]["terminal_reason"] == "no-symptom-evidence"
 
 
 def test_an_unknown_coverage_token_invalidates_the_assessment():
@@ -130,8 +139,8 @@ def test_a_derived_spec_keeps_the_base_provenance():
     # material.
     omitting = {"rationale": "test one more observable failure mode"}
     env = _drive([
-        _variant(covered_gap_classes=sorted(ALL_GAPS),
-                 failure_mode_plausible=True, variant_spec=omitting),
+        _variant(covered_gap_classes=["recon-action"],
+                 variant_spec=omitting),
         TERMINATE,
     ])
     record = env["evidence"]["variant_specs"][1]
@@ -139,14 +148,14 @@ def test_a_derived_spec_keeps_the_base_provenance():
     assert record["spec"]["rationale"] == omitting["rationale"]
 
 
-def test_a_fully_covered_procedure_mints_a_failure_mode_variant():
+def test_a_fully_covered_procedure_mints_no_variant():
     derived = {**SPEC, "rationale": "test one more observable failure mode"}
     env = _drive([
-        _variant(covered_gap_classes=sorted(ALL_GAPS),
-                 failure_mode_plausible=True, variant_spec=derived),
+        _variant(covered_gap_classes=sorted(ALL_GAPS), variant_spec=derived),
         TERMINATE,
     ])
-    assert env["evidence"]["variant_specs"][1]["declined_attribute"] == "failure-mode"
+    assert [v["ref"] for v in env["evidence"]["variant_specs"]] == ["v0"]
+    assert env["evidence"]["terminal_reason"] == "no-symptom-evidence"
 
 
 def test_a_runner_failure_mints_the_recovery_basis():
@@ -196,15 +205,15 @@ def test_the_variant_record_keeps_its_shape_and_carries_the_basis():
     assert record["spec"] == {**derived, "skills": []}
 
 
-def test_an_absent_excerpt_is_recorded_and_uses_the_failure_mode_fallback():
-    spec = {**SPEC, "provenance": {"loop_id": "loop-1"}}
+def test_an_absent_excerpt_is_recorded_and_mints_no_variant():
+    spec = {**SPEC, "skill_concretised_procedure": None,
+            "provenance": {"threat_id": "threat-1"}}
     derived = {**spec, "rationale": "test an additional observable failure mode"}
     env = _drive([
-        _variant(covered_gap_classes=[], failure_mode_plausible=True,
-                 variant_spec=derived),
+        _variant(covered_gap_classes=[], variant_spec=derived),
         TERMINATE,
     ], spec=spec)
-    assert env["evidence"]["variant_specs"][1]["declined_attribute"] == "failure-mode"
+    assert [v["ref"] for v in env["evidence"]["variant_specs"]] == ["v0"]
     notes = " ".join(i["note"] for i in env["evidence"]["interpretations"])
     assert "recorded gap" in notes.lower()
 
@@ -217,8 +226,7 @@ def test_a_variant_without_a_derivable_basis_degrades_to_a_terminal():
 
 
 def test_a_fully_covered_procedure_cannot_mint_a_claimed_gap_basis():
-    """When the triager states full coverage and no failure mode is plausible,
-    no variant exists: its claimed gap basis must not override the diff."""
+    """When the triager states full coverage, no variant exists: its claimed gap basis must not override the diff."""
     env = _drive([
         _variant(declined_attribute="bypass-technique",
                  covered_gap_classes=sorted(ALL_GAPS),
@@ -229,13 +237,19 @@ def test_a_fully_covered_procedure_cannot_mint_a_claimed_gap_basis():
     assert env["evidence"]["terminal_reason"] == "no-symptom-evidence"
 
 
-def test_the_terminal_vocabulary_is_unchanged():
-    # The ten bases are a DECISION vocabulary; the terminal_reason vocabulary
-    # stays the six Q3-amended literals and never absorbs a basis.
+def test_the_terminal_vocabulary_separates_domain_and_harness_reasons():
+    # The eleven bases are a DECISION vocabulary; the terminal_reason vocabulary
+    # never absorbs a basis. The domain reasons are the triager's choices; the
+    # harness reasons are pod-graph and surfer terminals.
     assert set(VARIANT_BASES) & set(TERMINAL_REASONS) == set()
-    assert TERMINAL_REASONS == {
+    assert DOMAIN_TERMINAL_REASONS == {
         "symptom-confirmed", "space-exhausted", "technical-infeasibility",
-        "specific-defence-prevention", "no-symptom-evidence", "budget-timeout"}
+        "specific-defence-prevention", "no-symptom-evidence"}
+    assert HARNESS_TERMINAL_REASONS == {
+        "budget-timeout", "node-timeout", "context-window-exceeded",
+        "graph-limit", "tool-timeout", "pod-watchdog-timeout",
+        "surfer-dispatch-degraded"}
+    assert TERMINAL_REASONS == DOMAIN_TERMINAL_REASONS | HARNESS_TERMINAL_REASONS
 
 
 def test_the_triager_decision_carries_the_coverage_assessment():
@@ -243,9 +257,43 @@ def test_the_triager_decision_carries_the_coverage_assessment():
     # deterministic diff needs; an omitted coverage assessment stays None.
     decision = TriagerDecision()
     assert decision.covered_gap_classes is None
-    assert decision.failure_mode_plausible is False
     assert decision.runner_failed is False
     assert decision.runner_diverged is False
-    filled = TriagerDecision(covered_gap_classes=["recon-action"],
-                             failure_mode_plausible=True)
+    filled = TriagerDecision(covered_gap_classes=["recon-action"])
     assert filled.model_dump()["covered_gap_classes"] == ["recon-action"]
+
+
+# --- the off-spec guard -------------------------------------------------------
+
+def test_an_off_spec_variant_is_recorded_as_a_derived_spec():
+    """A variant that changes the verification symptoms is a DERIVED spec, not a
+    confirmation of the base spec. The record keeps the changed symptoms and the
+    interpretation note carries the off-spec marker, so a later audit can see
+    that the base symptom was never confirmed."""
+    off_spec = {**SPEC,
+                "verification_symptoms": ["the response leaks another user's email"],
+                "rationale": "confirm the authority field selects the upstream account"}
+    env = _drive([
+        _variant(covered_gap_classes=sorted(ALL_GAPS - {"bypass-technique"}),
+                 variant_spec=off_spec),
+        TERMINATE,
+    ])
+    variants = env["evidence"]["variant_specs"]
+    assert [v["ref"] for v in variants] == ["v0", "v1"]
+    assert variants[1]["spec"]["verification_symptoms"] == [
+        "the response leaks another user's email"]
+    assert variants[0]["spec"]["verification_symptoms"] == [
+        "the response leaks another user's order id"]
+    assert any("off-spec" in i["note"].lower()
+               for i in env["evidence"]["interpretations"])
+
+
+def test_a_same_symptom_variant_has_no_off_spec_note():
+    derived = {**SPEC, "rationale": "cover the unexecuted bypass technique"}
+    env = _drive([
+        _variant(covered_gap_classes=sorted(ALL_GAPS - {"bypass-technique"}),
+                 variant_spec=derived),
+        TERMINATE,
+    ])
+    assert not any("off-spec" in i["note"].lower()
+                   for i in env["evidence"]["interpretations"])

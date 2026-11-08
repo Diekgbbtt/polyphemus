@@ -123,9 +123,9 @@ def _require_runtime():
 
 def hunting_control_plane_available() -> bool:
     """True once the control plane's `polymerhus.app.runtime` has landed (the
-    hunting LOOP exists to schedule real runs). The API's fail-closed gate: a
+    hunting THREAT exists to schedule real runs). The API's fail-closed gate: a
     real orchestration pass (LLM turns) must never be smuggled onto the uvicorn
-    request loop by an in-process fallback, so the launch surface 503s until
+    request threat by an in-process fallback, so the launch surface 503s until
     the control plane is present."""
     return _app_runtime() is not None
 
@@ -549,8 +549,8 @@ async def _run_intake(
     async def _write_record_if_changed() -> None:
         """Persist the record only when a fixed key moved (S2 9.2).
 
-        The unit loop writes the record after every unit, but a RESUME can
-        advance the state without a single loop iteration: its adoption may
+        The unit threat writes the record after every unit, but a RESUME can
+        advance the state without a single threat iteration: its adoption may
         recompute the total, adopt a model sum, cross the halt, or find the
         intake already exhausted. Without this write the row would keep the
         pre-crash record for a run that has moved on."""
@@ -559,13 +559,34 @@ async def _run_intake(
                for key in lifecycle.RUN_RECORD_KEYS):
             await _write_record()
 
-    threshold, basis = lifecycle.threshold_config()
+    # The threshold (S2 7.4 + ADR `hunting-pipeline-sync-adr.md`): the project's
+    # stored `settings.hunting.risk_threshold` wins over the env. Blocking pg
+    # read, offloaded; fail-open to the env/default basis.
+    try:
+        from polymerhus.app.clients import pg as _pg  # noqa: PLC0415
+
+        hunting_settings = await asyncio.to_thread(
+            _pg.get_hunting_settings, project_id)
+    except Exception as exc:  # noqa: BLE001 - fail-open: the env basis holds
+        logger.warning(
+            "hunting run %s: the hunting settings read degraded (%s); the "
+            "threshold falls back to the env/default basis (fail-open)",
+            run_id, exc,
+        )
+        hunting_settings = {}
+    # The project scope (#438, spec 6): read ONCE here, from the SAME blob as
+    # the threshold, and carried on the per-run tool seams. It is deliberately
+    # NOT written into the run record - the prompt append is its only copy.
+    scope = (hunting_settings or {}).get("threat_model_scope")
+    tools.threat_model_scope = scope if isinstance(scope, str) else ""
+    threshold, basis = lifecycle.threshold_config(
+        db_value=(hunting_settings or {}).get("risk_threshold"))
     if record:
         run = await asyncio.to_thread(
             _resume_intake, store, project_id, record)
         logger.info(
             "hunting run %s: resumed the intake at position %d of %d "
-            "(halt=%s, risk_total=%d)",
+            "(halt=%s, risk_total=%.2f)",
             run_id, run.intake_position, len(run.intake_order), run.halt,
             run.accumulator.total,
         )
@@ -609,7 +630,7 @@ async def _run_intake(
         )
         await _write_record()
         logger.info(
-            "hunting run %s: modelled unit %s (%s); risk_total %d/%d%s",
+            "hunting run %s: modelled unit %s (%s); risk_total %.2f/%.2f%s",
             run_id, unit_id, status, run.accumulator.total,
             run.accumulator.threshold,
             " HALTED" if run.halt else "",
@@ -621,7 +642,7 @@ async def _run_intake(
                 run_id, run.crossing_unit, run.blocked_unit,
             )
             break
-    # The loop's last iteration already wrote the record; this covers the run
+    # The threat's last iteration already wrote the record; this covers the run
     # that never entered it (an intake already exhausted, or a resume that
     # halted on adoption) and any post-loop state change.
     await _write_record_if_changed()
@@ -674,11 +695,13 @@ def _default_modeller_tools(
     try:
         from polymerhus.app.llm.skills import (  # noqa: PLC0415
             list_suite_leaves,
+            list_suite_parents,
             read_suite_raw,
         )
 
         tools.suite_classes = tuple(list_suite_leaves())
         tools.suite_read_fn = read_suite_raw
+        tools.suite_parents = list_suite_parents()
     except Exception as exc:  # noqa: BLE001 - the suite seam degrades fail-open
         logger.warning(
             "start_hunting: web-vulnerability suite seam unavailable (%s); "
@@ -721,7 +744,7 @@ def report_dispatch_gap(
     """Log and return the one-line reason a run that PRODUCED models dispatched
     nothing, or None when there is no gap.
 
-    A produced loop file dispatches to the per-loop hunter session (S2 8.4); a
+    A produced threat file dispatches to the per-threat hunter session (S2 8.4); a
     run that produced models but dispatched nothing names the reason so an
     operator never reads the run's `complete` as "the modeller found nothing to
     hunt".
@@ -736,6 +759,7 @@ def report_dispatch_gap(
     (the caller awaits this inside the quiesce hand-off), so a failed read is
     treated as "no pending work" and the gap line is logged - never silently."""
     from polymerhus.attack.hunting.surfer import (  # noqa: PLC0415
+        demoted_hunts_for,
         run_work_remaining,
     )
 
@@ -744,9 +768,13 @@ def report_dispatch_gap(
     if not completed or state.hunter_inboxes:
         return None
     try:
+        demoted = demoted_hunts_for(state)
         pending = run_work_remaining(
             project_id, run_id, threat_store=threat_store,
-            hunter_store=hunter_store)
+            hunter_store=hunter_store,
+            promotion_risk_threshold=state.promotion_risk_threshold,
+            demoted_hunts=demoted,
+        )
     except Exception as exc:  # noqa: BLE001 - a read failure is not a run failure
         logger.warning(
             "hunting run %s: the pending-work read degraded (%s); reporting the "
@@ -755,38 +783,56 @@ def report_dispatch_gap(
         pending = False
     if pending:
         return None
-    loops = _produced_loop_count(threat_store, project_id, run_id)
-    if loops:
+    threats = _produced_threat_count(
+        threat_store, project_id, run_id,
+        promotion_risk_threshold=state.promotion_risk_threshold)
+    if threats:
         reason = (
             f"{len(completed)} unit model(s) produced and NOTHING is "
-            f"dispatchable: {loops} produced loop file(s) stayed undispatched "
+            f"dispatchable: {threats} produced threat file(s) stayed undispatched "
             "(a stopped role or a refused admission left them produced); this "
             "run dispatches zero hunts"
         )
     else:
         reason = (
             f"{len(completed)} unit model(s) produced and NOTHING is "
-            "dispatchable: no dispatchable loop file was produced, and every "
+            "dispatchable: no dispatchable threat file was produced, and every "
             "model is decided; this run dispatches zero hunts"
         )
     logger.warning("hunting run %s: %s", run_id, reason)
     return reason
 
 
-def _produced_loop_count(threat_store: Any, project_id: str, run_id: str) -> int:
-    """The run's produced loop files, for the dispatch-gap line. Best-effort (a
-    read failure counts zero): the terminal path must never raise."""
+def _produced_threat_count(
+    threat_store: Any,
+    project_id: str,
+    run_id: str,
+    *,
+    promotion_risk_threshold: float | None = None,
+) -> int:
+    """The run's PROMOTED produced threat files, for the dispatch-gap line.
+    Best-effort (a read failure counts zero): the terminal path must never
+    raise. A threat below the frozen promotion floor is evidence, not a gap."""
     if threat_store is None:
         return 0
+    # The hunting modules are imported lazily here, like the run-lifecycle and
+    # intake imports above, so the runtime module stays import-light at boot.
+    from polymerhus.attack.hunting.pipeline_sync import (  # noqa: PLC0415
+        threat_is_promoted,
+    )
+
     try:
         return sum(
-            len(entry.get("loops") or ())
-            for entry in threat_store.read_produced_loops(project_id)
+            1
+            for entry in threat_store.read_produced_threats(project_id)
             if entry.get("run_id") == run_id
+            for threat in (entry.get("threats") or ())
+            if threat_is_promoted(
+                (threat or {}).get("record") or {}, promotion_risk_threshold)
         )
     except Exception as exc:  # noqa: BLE001 - a read failure is not a run failure
         logger.warning(
-            "hunting run %s: the produced-loop count degraded (%s); reporting "
+            "hunting run %s: the produced-threat count degraded (%s); reporting "
             "zero (fail-open)", run_id, exc,
         )
         return 0
@@ -808,9 +854,9 @@ async def launch_modeller(
     launches"): ONE modelling pass over the run's INTAKE and NOTHING else - no
     run-scoped surfer, no dispatch, no `hunting_runs` row. It is the same pass
     body the whole-pipeline bootstrap schedules: the frozen intake's units are
-    modelled in order to COMPLETED and their produced loop files land in the
+    modelled in order to COMPLETED and their produced threat files land in the
     per-project threat model store. The launch deliberately runs no surfer, so
-    it dispatches nothing; the per-loop dispatch itself is live (T6 #379) and
+    it dispatches nothing; the per-threat dispatch itself is live (T6 #379) and
     belongs to the run-scoped surfer. The control plane schedules THIS coroutine
     under the ADR Q13 modeller session id (`hunting:<run_id>:threat-modeller`),
     so the per-session verbs (hold/resume/cancel, ADR Q13/Q17) address it like
@@ -949,7 +995,7 @@ def _cancel_run_sessions(run_id: str) -> None:
 async def _await_session_outcome(outcome) -> None:
     """Await one session's outcome regardless of its kind: an asyncio task or
     future is awaited directly; a `concurrent.futures.Future` (the real
-    `RuntimeManager.schedule` return) is wrapped onto the loop. `None` (the
+    `RuntimeManager.schedule` return) is wrapped onto the threat. `None` (the
     session was not admitted) awaits to nothing."""
     if outcome is None:
         return
@@ -1015,7 +1061,7 @@ def _default_hunter_builder(*, run_id, project_id, hunter_store, **kw):
     project's live read-only graph view, the real Kali-container exec seam
     (the pod's `default_exec_fn`, reused verbatim), and the always-bound
     `query_lightrag` KB tool (binds inside; as of #197 the
-    `HUNTING_LIGHTRAG_TOOL` gate is REMOVED). The harness consumes the loop
+    `HUNTING_LIGHTRAG_TOOL` gate is REMOVED). The harness consumes the threat
     payload end to end (T6 #379). Returns `(dispatch_fn, registry)`; the caller
     reaps the registry at the session's end."""
     from polymerhus.attack.hunting.read_only_graph import ReadOnlyGraphView
@@ -1035,18 +1081,34 @@ def _default_hunter_builder(*, run_id, project_id, hunter_store, **kw):
     )
 
 
-async def _default_pod_builder(spec, *, run_id, project_id, memory_store, spec_id):
+async def _default_pod_builder(
+    spec,
+    *,
+    run_id,
+    project_id,
+    memory_store,
+    spec_id,
+    runner_middleware=(),
+    triager_middleware=(),
+):
     """The production pod-session builder seam (T4): `arun_pod` with the
     run's pod memory store and the semantic `<fault>_<strategy>` spec id (ADR
     Q13). The pod never raises a DOMAIN failure into the run (IA-4); a provider
     failure propagates as the typed `ProviderUnavailableError` (#329). The
-    surfer's wrapper adds the export-delivery ring on top."""
+    surfer's wrapper adds the export-delivery ring on top.
+
+    The two middleware sequences are the per-role compaction bindings the
+    surfer injects at dispatch (`run_pod_session`). They must reach `arun_pod`
+    verbatim: dropping them silently disables the pod compaction contract and
+    used to fail the dispatch with an unexpected-keyword error."""
     from polymerhus.attack.hunting.pod.pod import arun_pod  # noqa: PLC0415
     from polymerhus.app.clients.kali_http_history import default_replay_fn  # noqa: PLC0415
 
     return await arun_pod(
         spec, run_id=run_id, memory_store=memory_store,
         project_id=project_id, spec_id=spec_id,
+        runner_middleware=runner_middleware,
+        triager_middleware=triager_middleware,
         replay_fn=default_replay_fn,
     )
 
@@ -1063,6 +1125,7 @@ async def start_hunting(
     tick_interval: float | None = None,
     hunter_store: Any = None,
     pod_store: Any = None,
+    pod_export_store: Any = None,
     hunter_builder: Callable[..., Any] | None = None,
     pod_builder: Callable[..., Awaitable[Any]] | None = None,
     modeller_pass_fn: Callable[..., Awaitable[Any]] | None = None,
@@ -1075,7 +1138,7 @@ async def start_hunting(
     the run's OWN intake.
 
     Schedules nothing itself - the control plane (or the marshalling harness)
-    drives it onto the hunting loop. Sets the hunting module context for its
+    drives it onto the hunting threat. Sets the hunting module context for its
     full duration, enforces ONE live hunting run per project (refused with a
     `None` return on a second concurrent run), opens the `hunting_runs` row
     (`running`), schedules TWO sessions on the shared control plane - the
@@ -1089,16 +1152,21 @@ async def start_hunting(
     progressive halt), writing each unit's threat model through the store and
     the run record onto the run row. `failed` persists when a session was not
     admitted or a collaborator degrades. The run-scoped surfer dispatches one
-    hunter per produced loop file (the loop payload materialised at dispatch
+    hunter per produced threat file (the threat payload materialised at dispatch
     time, S2 8.2) and one pod per `ratified` spec through the mover, and the hunt
     sessions idle-loop over their inboxes (verdict handling stubbed, ADR Q16) -
     the whole pipeline is observable through this coroutine. T4b (#387) retired
     the config family: there is no config input and no hunt-store threading.
 
-    The INTERLEAVE (S1 7.3): the pass and the surfer are independent sessions,
-    so the surfer moves and dispatches produced loop files while the pass models
-    the next unit. The pass never waits for dispatch: `_run_intake` awaits only
-    the pass body, the model read and the run-record write.
+    The INTERLEAVE (S1 7.3) in the `parallel` sync mode: the pass and the
+    surfer are independent sessions, so the surfer moves and dispatches produced
+    threat files while the pass models the next unit.
+    The default `batched` mode and `serial` deliberately close that interleave:
+    the whole risk budget is modelled first, then the run's queue is worked one
+    phase at a time (ADR `hunting-pipeline-sync-adr.md`, the mode is frozen on
+    the run record's `pipeline_sync`). The pass never waits for dispatch in any
+    mode: `_run_intake` awaits only the pass body, the model read and the
+    run-record write.
 
     RESUME (S1 7.5): when the run row already carries a run record with an
     `intake_order`, the run RESUMES it - it re-enters at the recorded
@@ -1106,11 +1174,11 @@ async def start_hunting(
     `risk_total`, and never re-sorts or re-freezes the intake. A halted record
     resumes as halted, so a resumed halted run dispatches and models nothing.
 
-    T6 (#379): the per-loop dispatch (a produced loop file -> a hunter session)
-    is live end to end - the production hunter harness consumes the loop payload
-    (S2 8.2), writes its spec set under the loop dispatch id and the surfer
+    T6 (#379): the per-threat dispatch (a produced threat file -> a hunter session)
+    is live end to end - the production hunter harness consumes the threat payload
+    (S2 8.2), writes its spec set under the threat dispatch id and the surfer
     dispatches one pod per `ratified` spec. `report_dispatch_gap` still logs the
-    one-line reason when a completed model produced loops but nothing dispatched.
+    one-line reason when a completed model produced threats but nothing dispatched.
 
     Fail-open: a collaborator failure (PG row, default tools, a session's
     admission, the run itself) degrades to a terminal status - this coroutine
@@ -1119,7 +1187,8 @@ async def start_hunting(
 
     Injectable seams (CODING_STANDARD s6): `control` is the session-capable
     control plane (`RuntimeControlPlane` default), `gate` the hunting dispatch
-    gate (Q15), `hunter_store` / `pod_store` the memory stores,
+    gate (Q15), `hunter_store` / `pod_store` / `pod_export_store` the memory
+    stores,
     `threat_store` / `graph_read_fn` the modeller's store and its grounding read
     seam, `tools` the whole modeller tool seam, `modeller_pass_fn` /
     `modeller_kwargs` the pass body and its turn seam, `hunter_builder` /
@@ -1147,10 +1216,19 @@ async def start_hunting(
             arun_modeller_pass,
         )
         from polymerhus.attack.hunting import surfer as surfer_mod  # noqa: PLC0415
+        from polymerhus.attack.hunting.pipeline_sync import (  # noqa: PLC0415
+            RunSyncGate,
+            SyncMode,
+            make_sync_gate,
+            resolve_mode,
+            resolve_pod_batch_size,
+            resolve_promotion_risk_threshold,
+        )
         from polymerhus.attack.hunting.surfer import (  # noqa: PLC0415
             RunDispatchState,
             build_run_dispatch,
             post_settle,
+            resolve_pod_session_timeout_s,
             run_surfer_loop,
             surfer_session_id,
         )
@@ -1209,6 +1287,12 @@ async def start_hunting(
         # the run has no config input family left to read.
         if hunter_store is None:
             hunter_store = HunterMemoryStore()
+        if pod_export_store is None:
+            from polymerhus.attack.hunting.pod_export_memory import (  # noqa: PLC0415
+                PodExportStore,
+            )
+            pod_export_store = PodExportStore(
+                root_dir=getattr(hunter_store, "root", None))
         if pod_store is None:
             try:
                 from polymerhus.attack.hunting.pod.pod_memory import (  # noqa: PLC0415
@@ -1270,13 +1354,16 @@ async def start_hunting(
 
         run_threat_store = getattr(tools, "threat_store", None) or threat_store
         resolved_hunter_builder = hunter_builder or _default_hunter_builder
-        state = RunDispatchState()
+        state = RunDispatchState(
+            pod_session_timeout_s=resolve_pod_session_timeout_s(),
+        )
         coro_for = build_run_dispatch(
             project_id=project_id,
             run_id=hunting_run_id,
             threat_store=run_threat_store,
             hunter_store=hunter_store,
             pod_store=pod_store,
+            pod_export_store=pod_export_store,
             state=state,
             gate=gate,
             hunter_builder=resolved_hunter_builder,
@@ -1303,20 +1390,94 @@ async def start_hunting(
         if not resume_record.get("intake_order"):
             resume_record = None
 
+        # The pipeline sync mode (ADR `hunting-pipeline-sync-adr.md`): the run
+        # record's frozen value wins on a resume, else the project setting, else
+        # `batched`. The read is blocking, offloaded, and fail-open to the
+        # documented default.
+        try:
+            hunting_settings = await asyncio.to_thread(
+                pg.get_hunting_settings, project_id)
+        except Exception as exc:  # noqa: BLE001 - fail-open: the default mode
+            logger.warning(
+                "start_hunting: hunting config read for project %s failed (%s); "
+                "the default sync mode applies (fail-open)", project_id, exc,
+            )
+            hunting_settings = {}
+        sync_mode = resolve_mode(
+            (resume_record or {}).get("pipeline_sync"), hunting_settings)
+        pod_batch_size = resolve_pod_batch_size(
+            (resume_record or {}).get("pod_batch_size"), hunting_settings)
+        promotion_risk_threshold = resolve_promotion_risk_threshold(
+            (resume_record or {}).get("promotion_risk_threshold"),
+            hunting_settings,
+            recorded_present=bool(resume_record)
+            and "promotion_risk_threshold" in (resume_record or {}),
+        )
+        # The frozen promotion floor rides the run state so the surfer's work
+        # read, the mover tick, and the completion audit all see one value.
+        state.promotion_risk_threshold = promotion_risk_threshold
+
+        # The latest run record the sync gate reads its queue tie-break from
+        # (the intake order): updated by every `_write_run_record` (same worker
+        # threat, no lock).
+        run_record_cell: dict = dict(resume_record or {})
+
         async def _write_run_record(record: dict) -> None:
             """Persist the run record onto the run row (S1 9.4, S2 9.2).
 
-            Blocking pg write, offloaded like every other pg call here. Fail-open:
-            a failed record write warns and the run continues - the total stays
-            re-derivable from the models on disk, and the resume recomputes it."""
+            The frozen sync mode rides every write (`pipeline_sync`), so the run
+            row says how the run was synchronised. Blocking pg write, offloaded
+            like every other pg call here. Fail-open: a failed record write warns
+            and the run continues - the total stays re-derivable from the models
+            on disk, and the resume recomputes it."""
+            run_record_cell.clear()
+            run_record_cell.update(record)
+            payload = {
+                **record,
+                "pipeline_sync": sync_mode.value,
+                "pod_batch_size": pod_batch_size,
+                "promotion_risk_threshold": promotion_risk_threshold,
+            }
             try:
                 await asyncio.to_thread(
-                    pg.set_hunting_run_stats, hunting_run_id, record)
+                    pg.set_hunting_run_stats, hunting_run_id, payload)
             except Exception as exc:  # noqa: BLE001 - fail-open
                 logger.warning(
                     "start_hunting: run record write for %s failed (%s); "
                     "continuing (fail-open)", hunting_run_id, exc,
                 )
+
+        # The sync gate (ADR `hunting-pipeline-sync-adr.md`): None in
+        # `parallel`, the ledger-backed gate in `batched`/`serial`. It is run
+        # state, never a session; the surfer consults it once per tick.
+        state.sync_gate = make_sync_gate(
+            sync_mode,
+            project_id=project_id,
+            run_id=hunting_run_id,
+            threat_store=run_threat_store,
+            hunter_store=hunter_store,
+            pod_store=pod_store,
+            pod_batch_size=pod_batch_size,
+            promotion_risk_threshold=promotion_risk_threshold,
+            intake_order=lambda: tuple(
+                run_record_cell.get("intake_order") or ()),
+        )
+        # `parallel` has no phase gate, but the promotion floor still makes a
+        # demoted hunt's leftover spec evidence. The light gate supplies only
+        # that read; it never filters a parallel item.
+        state.promotion_gate = (
+            RunSyncGate(
+                mode=SyncMode.PARALLEL,
+                project_id=project_id,
+                run_id=hunting_run_id,
+                threat_store=run_threat_store,
+                hunter_store=hunter_store,
+                pod_store=pod_store,
+                promotion_risk_threshold=promotion_risk_threshold,
+            )
+            if state.sync_gate is None and promotion_risk_threshold is not None
+            else None
+        )
 
         async def _modeller_units_pass():
             """The run's ONE pass session: freeze the intake (or resume the run
@@ -1369,7 +1530,7 @@ async def start_hunting(
             surfer_id = surfer_session_id(hunting_run_id)
             # #317: the modeller pass is gated on the modeller role state. A
             # stopped role does not launch the pass (the run still runs its
-            # surfer, so already-produced loop files can dispatch).
+            # surfer, so already-produced threat files can dispatch).
             # A pass session REFUSED by admission is different: the pre-change
             # rule holds - the run fails and the surfer is NOT started (a
             # surfer with no pass is never spun up).

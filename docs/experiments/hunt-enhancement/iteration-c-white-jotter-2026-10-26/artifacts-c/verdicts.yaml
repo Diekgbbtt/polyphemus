@@ -1,0 +1,127 @@
+- vuln_id: white-jotter-001
+  identified: partial
+  confidence: 0.45
+  matched:
+    unit: ReverseProxy
+    web_vulnerability_class: session-management
+    fault: "F-5: plaintext-only listener with no response security-header policy and no transport signal to the application"
+    symptom: >-
+      Within the session-management login-body pod (ReverseProxy__threat-6), POST
+      /api/login with the shipped default pair admin/123 returned HTTP 200
+      {"code":200,"message":"成功","result":"admin"} and a JSESSIONID, while the
+      wrong-password control returned code 400. The default-credential symptom is
+      therefore confirmed at the exact /api/login locus, but the pod's confirmed
+      web vulnerability class and fault are cleartext credential carriage
+      (session-management / F-5), not weak-or-default credentials, and no threat or
+      test spec was scoped to that class, so the GT vulnerability is not identified.
+  evidence_chain:
+    threat: 8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/threat_modeller/consumed/ReverseProxy/threat-6.yaml
+    spec_dir: 8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/hunter/test-specs/ReverseProxy__threat-6
+    experiment_logs:
+      - 8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/test-executor-pod/session-management__login-body__at-auth/experiment-log/0.yaml
+      - 8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/test-executor-pod/session-management__login-body__at-auth/experiment-log/1.yaml
+    pod_export: 8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/test-executor-pod/session-management__login-body__at-auth/65ec294b-e5cf-49c6-9f7c-4664a73aa557.yaml
+  eval_sha: 13ce0edb1a44a1ce99f60841812cdb56a824262d
+  stack_fingerprint: 112e9c3b05bc155d8a087d4131764d6ffc532af8c8a47bc645ddb053babd2407
+- vuln_id: white-jotter-002
+  identified: identified
+  confidence: 0.95
+  matched:
+    unit: ReverseProxy
+    web_vulnerability_class: bfla-alternate-path
+    fault: "F-1: path classification performed on the literal URI without the canonicalization the downstream dispatcher applies"
+    symptom: >-
+      Anonymous GET /api/;/admin/user returned HTTP 200 application/json;charset=UTF-8
+      with a roster of 11 to 15 objects carrying id, username, name, phone, email,
+      enabled and roles (including sysAdmin, admin and editor), while the paired
+      control GET /api/admin/user returned HTTP 200 Content-Length: 0 with no
+      Content-Type. The semicolon matrix segment reproduces the GT access-control
+      bypass at the /api/ locus on the unauthorized-read half; companion pods under
+      the same path-confusion threat also carried the alternate spelling into the
+      administrative write mapping.
+  evidence_chain:
+    threat: 8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/threat_modeller/consumed/ReverseProxy/threat-1.yaml
+    spec_dir: 8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/hunter/test-specs/ReverseProxy__threat-1
+    experiment_logs:
+      - 8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/test-executor-pod/bfla-alternate-path__account-roster__empty-segment-inside-namespace__get-read/experiment-log/0.yaml
+      - 8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/test-executor-pod/bfla-alternate-path__account-roster__empty-segment-inside-namespace__get-read/experiment-log/1.yaml
+    pod_export: 8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/test-executor-pod/bfla-alternate-path__account-roster__empty-segment-inside-namespace__get-read/65ec294b-e5cf-49c6-9f7c-4664a73aa557.yaml
+  eval_sha: 13ce0edb1a44a1ce99f60841812cdb56a824262d
+  stack_fingerprint: 112e9c3b05bc155d8a087d4131764d6ffc532af8c8a47bc645ddb053babd2407
+- vuln_id: white-jotter-003
+  identified: missed
+  confidence: 0.95
+  matched:
+    unit: null
+    web_vulnerability_class: null
+    fault: null
+    symptom: null
+  eval_sha: 13ce0edb1a44a1ce99f60841812cdb56a824262d
+  stack_fingerprint: 112e9c3b05bc155d8a087d4131764d6ffc532af8c8a47bc645ddb053babd2407
+- vuln_id: white-jotter-004
+  identified: missed
+  confidence: 0.95
+  matched:
+    unit: null
+    web_vulnerability_class: null
+    fault: null
+    symptom: null
+  eval_sha: 13ce0edb1a44a1ce99f60841812cdb56a824262d
+  stack_fingerprint: 112e9c3b05bc155d8a087d4131764d6ffc532af8c8a47bc645ddb053babd2407
+- vuln_id: white-jotter-005
+  identified: identified
+  confidence: 0.97
+  matched:
+    unit: RESTApi:api
+    web_vulnerability_class: sql-injection
+    fault: "F-2: caller-controlled keyword concatenated into the SQL statement text inside a LIKE pattern"
+    symptom: >-
+      GET /api/search?keywords=zzz' AND '1'='1 returned code 200 with 0 rows while
+      keywords=zzz' OR 1=1 -- returned code 200 with the saturated 22-row book set
+      whose ids equalled the /api/books set, and a marker-prefixed OR 1=1 returned
+      the identical saturated set with no returned title containing the marker. Both
+      pairs repeated identically, confirming caller-controlled statement text in the
+      /api/search LIKE filter.
+  evidence_chain:
+    threat: 8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/threat_modeller/consumed/RESTApi-api/threat-2.yaml
+    spec_dir: 8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/hunter/test-specs/RESTApi-api__threat-2
+    experiment_logs:
+      - 8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/test-executor-pod/sql-injection__boolean-differential__book-rowset/experiment-log/0.yaml
+      - 8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/test-executor-pod/sql-injection__boolean-differential__book-rowset/experiment-log/1.yaml
+    pod_export: 8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/test-executor-pod/sql-injection__boolean-differential__book-rowset/65ec294b-e5cf-49c6-9f7c-4664a73aa557.yaml
+  eval_sha: 13ce0edb1a44a1ce99f60841812cdb56a824262d
+  stack_fingerprint: 112e9c3b05bc155d8a087d4131764d6ffc532af8c8a47bc645ddb053babd2407
+- vuln_id: white-jotter-006
+  identified: missed
+  confidence: 0.95
+  matched:
+    unit: null
+    web_vulnerability_class: null
+    fault: null
+    symptom: null
+  eval_sha: 13ce0edb1a44a1ce99f60841812cdb56a824262d
+  stack_fingerprint: 112e9c3b05bc155d8a087d4131764d6ffc532af8c8a47bc645ddb053babd2407
+- vuln_id: white-jotter-007
+  identified: identified
+  confidence: 0.9
+  matched:
+    unit: Service:register
+    web_vulnerability_class: mass-assignment-nested-relation-write
+    fault: "F-2: request body bound onto the persistence object without a member allowlist, admitting the authority-bearing role set"
+    symptom: >-
+      POST /api/register with the five contract fields plus roles:[{"id":1}]
+      returned HTTP 200 with "注册成功" and created l1tst_7f; that account then
+      authenticated at POST /api/login and its /api/menu returned the administrative
+      tree (User, Content and System nodes), while the control registration omitting
+      roles yielded an empty menu. The anonymous roster listed l1tst_7f (id 140) with
+      role sysAdmin (id 1) and the control l1ctl_7f (id 131) with roles=[], confirming
+      the GT registration mass-assignment privilege escalation at /api/register.
+  evidence_chain:
+    threat: 8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/threat_modeller/consumed/Service-register/threat-2.yaml
+    spec_dir: 8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/hunter/test-specs/Service-register__threat-2
+    experiment_logs:
+      - 8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/test-executor-pod/mass-assignment-nested-relation-write__single-hop-role-select__sysadmin/experiment-log/0.yaml
+      - 8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/test-executor-pod/mass-assignment-nested-relation-write__single-hop-role-select__sysadmin/experiment-log/1.yaml
+    pod_export: 8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/test-executor-pod/mass-assignment-nested-relation-write__single-hop-role-select__sysadmin/65ec294b-e5cf-49c6-9f7c-4664a73aa557.yaml
+  eval_sha: 13ce0edb1a44a1ce99f60841812cdb56a824262d
+  stack_fingerprint: 112e9c3b05bc155d8a087d4131764d6ffc532af8c8a47bc645ddb053babd2407

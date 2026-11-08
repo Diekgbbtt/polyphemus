@@ -2,7 +2,7 @@
 
 The hunter's durable memory, replicating the hunt-config memory store patterns
 (`docs/design/hunting-memory-system-spec.md`, the pattern document) and adapted
-to the loop-driven hunter by the ratified redesign (S3 8.6-8.8). The store is
+to the threat-driven hunter by the ratified redesign (S3 8.6-8.8). The store is
 per-project (a folder keyed by `project_id`, created lazily at the first
 write), one YAML file per spec, produced/consumed directories, and a
 per-project notes file.
@@ -18,15 +18,15 @@ memory (`<project_id>/hunting/test-executor-pod/`): the hunter memory is the
     <project_id>/hunting/hunter/test-specs/<hunt_key>/consumed/<spec_id>.yaml
     <project_id>/hunting/hunter/notes.yaml
 
-- `<hunt_key>` is the loop dispatch id `<unit_name>__<loop_id>` (S3 8.9): the
-  loop file IS the dispatch grain, so the spec folder is the loop's own
+- `<hunt_key>` is the threat dispatch id `<unit_name>__<threat_id>` (S3 8.9): the
+  threat file IS the dispatch grain, so the spec folder is the threat's own
   identity - never a config key or a `fault_key`. The key is bound at tool
   construction and is never a request field.
-- `<spec_id>` is the DERIVED file-name stem `<fault_keyword>_<strategy_keyword>`
-  (S3 8.6): the payload carries no `spec_id`, and the store derives it from the
-  sanitised keywords. `_` is the one safe separator, so `_`, `:`, path
-  separators and control chars are replaced with `-` in a keyword (a keyword
-  that sanitises to an unsafe/empty component is rejected, never mangled).
+- `<spec_id>` is the DERIVED file-name stem `<class>__<value>__<value>`
+  (S3 8.6): the payload carries no `spec_id`, and the store derives it from
+  `provenance.web_vulnerability_class` and the ordered `discriminators`. `__` is
+  the dimension separator and is absent from the value alphabet, so the join is
+  unambiguous; the class is sanitised and an unsafe value is rejected.
 - The spec body is the reduced D4 at EVERY status (S3 8.6/8.9); there is no
   `FaultItem` draft body and no `specified` body distinction. The file carries
   the spec's `status` verbatim: `hypothesised` is the GENERATE draft set,
@@ -53,7 +53,7 @@ memory (`<project_id>/hunting/test-executor-pod/`): the hunter memory is the
 - The notes file follows the SAME data contract as the spec body (G6):
   read/write, write options append/update/delete, grep-match read,
   read-latest. The hunter-only `phase_summary` kind is the interposed pass
-  exit (S4 14.8): the note name is `phase:<state>` and a loop re-iteration
+  exit (S4 14.8): the note name is `phase:<state>` and a threat re-iteration
   updates the same note. Notes keep their natural append order - no
   `_seq`/`_ref` bookkeeping.
 
@@ -75,6 +75,7 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Sequence
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
@@ -87,8 +88,9 @@ from polymerhus.app.memory.store import BoundedRecordStore
 from .hunt_store import ProjectMemoryStore
 from .hunter_state import PHASE_SUMMARY_KIND, SPEC_STATUSES
 from .spec_contract import (
-    SKILL_PROCEDURE_MAX_CHARS,
-    SkillProcedure,
+    SKILL_CONCRETISED_PROCEDURE_MAX_CHARS,
+    SkillConcretisedProcedure,
+    spec_identifier,
 )
 
 logger = logging.getLogger(__name__)
@@ -111,56 +113,19 @@ NOTE_KINDS = tuple(ProjectMemoryStore.NOTE_KINDS) + (PHASE_SUMMARY_KIND,)
 HUNTER_NOTES_MAX_RECORDS = 1000
 HUNTER_NOTES_MAX_BYTES = 4 * 1024 * 1024
 
-# The filename-keyword sanitisation banned set (G3): `_` is the separator, so
-# a keyword may not contain it; `:` is poisoned (it appears inside unit ids);
-# `/`/`\` are path separators. Each banned char (plus control/NUL chars) is
-# replaced with `-`, a safe, non-separator keyword char the pattern's own
-# names use freely (`-` itself is never banned - it is the replacement char).
-_UNSAFE_KEYWORD_CHARS = frozenset("_:/\\")
+
 
 
 def _is_durable_prior_insight(record: dict) -> bool:
-    """The durable prior-insight marker (G3/#202): a Q16 pod-export stub
-    (`provenance.verdict_stub`) is the durable pod-completion record the surfer
-    writes for a parent hunt key, so it is protected from the ordinary-notes
-    eviction of the `notes.yaml` bound (#341). The old
-    `HuntStore` consumer retired with the config family; the
-    record stays the durable trail a later verdict/insight reader can use."""
+    """The LEGACY durable prior-insight marker (G3/#202).
+
+    New pod-export records live in `PodExportStore`
+    (`hunting/pod-export/notes.yaml`). This predicate keeps a
+    `provenance.verdict_stub` record that is already present in an OLD
+    `hunting/hunter/notes.yaml` from the ordinary-notes eviction of the #341
+    bound, so a legacy stub is never lost on the next write."""
     provenance = record.get("provenance")
     return bool(isinstance(provenance, dict) and provenance.get("verdict_stub"))
-
-
-def spec_identifier(fault_keyword: str, strategy_keyword: str) -> str:
-    """The DERIVED spec identity (S3 8.6): `<fault_keyword>_<strategy_keyword>`.
-
-    The file-name stem IS the identity; the payload carries no `spec_id`. The
-    keywords are sanitised (G3) so the stem is one safe filename component."""
-    return (
-        f"{_sanitise_keyword(fault_keyword)}"
-        f"_{_sanitise_keyword(strategy_keyword)}"
-    )
-
-
-def _sanitise_keyword(keyword: str) -> str:
-    """Sanitise a `<fault>`/`<strategy>` filename keyword (G3).
-
-    Each char in the banned set (`_` the separator, `:` poisoned, path
-    separators) and every control char is replaced with `-` (a safe,
-    non-separator keyword char; `-` itself is never banned). A keyword that
-    sanitises to an empty/dot component is a pathological authoring input and
-    is rejected, never silently mangled."""
-    if not isinstance(keyword, str):
-        raise ValueError(f"hunter store: keyword {keyword!r} is not a string")
-    out = "".join(
-        "-" if ch in _UNSAFE_KEYWORD_CHARS or ord(ch) < 32 else ch
-        for ch in keyword
-    )
-    if not out or out in (".", ".."):
-        raise ValueError(
-            f"hunter store: keyword {keyword!r} sanitises to the unsafe "
-            f"file component {out!r}"
-        )
-    return out
 
 
 def _validate_spec_file(spec_file: str) -> None:
@@ -180,64 +145,52 @@ def _validate_spec_file(spec_file: str) -> None:
         )
 
 
-def _require_spec_identity(spec: Any) -> tuple[str, str]:
-    """The `(fault_keyword, strategy_keyword)` the spec identity is DERIVED
-    from, validated as non-empty strings. A missing or empty input is a
+def _require_discriminators(spec: dict) -> list[Any]:
+    """The spec's ordered discriminators, validated as a 2..4 item list.
+
+    A missing, too-short, too-long, duplicate-axis, or unsafe tuple is a
     `ValueError` the tool turns into a coded teaching rejection naming the
     field; the store never composes a degenerate file name."""
     if not isinstance(spec, dict):
         raise ValueError("hunter store: each spec must be a mapping")
-    keywords = []
-    missing = []
-    for field in ("fault_keyword", "strategy_keyword"):
-        value = spec.get(field)
-        if not isinstance(value, str) or not value:
-            missing.append(field)
-        else:
-            keywords.append(value)
-    if missing:
+    raw = spec.get("discriminators")
+    if not isinstance(raw, list):
         raise ValueError(
-            "hunter store: the spec payload must carry the file-name identity "
-            f"attribute(s) {', '.join(missing)}; the spec identity "
-            "<fault_keyword>_<strategy_keyword> is DERIVED from them"
-        )
-    return keywords[0], keywords[1]
+            "hunter store: the spec payload must carry `discriminators` as a "
+            "list of {axis, value} entries (two to four), in DISCRIMINATE order")
+    # `spec_identifier` owns the count, axis, and value checks so the tool and
+    # the store cannot disagree about a legal identity.
+    return raw
 
 
-def _validate_skill_procedure(provenance: Any) -> None:
-    """Validate the spec's typed `provenance.skill_procedure` (S3 8.6).
+def validate_skill_concretised_procedure(raw: Any) -> None:
+    """Validate a spec's typed `skill_concretised_procedure`.
 
-    The excerpt is the seven-field `SkillProcedure`; when present it must parse
-    and its total length must stay under `SKILL_PROCEDURE_MAX_CHARS`. A
-    malformed or over-long excerpt is a coded teaching rejection (never a
-    silent truncation of authored content). An absent provenance/excerpt is
+    When present it must parse and its total length must stay under
+    `SKILL_CONCRETISED_PROCEDURE_MAX_CHARS`. A malformed or over-long object is
+    a coded teaching rejection (never a silent truncation). An absent object is
     legal: the model may author a spec before a class skill is loaded, and the
     triager then records the gap and uses its fallback."""
-    if provenance is None:
-        return
-    if not isinstance(provenance, dict):
-        raise ValueError("hunter store: spec provenance must be a mapping")
-    raw = provenance.get("skill_procedure")
     if raw is None:
         return
     try:
         procedure = (
-            raw if isinstance(raw, SkillProcedure)
-            else SkillProcedure.model_validate(raw)
+            raw if isinstance(raw, SkillConcretisedProcedure)
+            else SkillConcretisedProcedure.model_validate(raw)
         )
     except Exception as exc:  # noqa: BLE001 - a coded rejection, not a crash
         raise ValueError(
-            "hunter store: provenance.skill_procedure must be the typed "
-            "seven-field SkillProcedure "
-            "(recon_action, bypass_technique, technology_grounding, pro_tips, "
-            f"advanced_technique, preliminary_chaining, interpretation_pitfalls): {exc}"
+            "hunter store: skill_concretised_procedure must be the typed "
+            "nine-field SkillConcretisedProcedure "
+            "(recon_action, bypass_technique, advanced_technique, "
+            "preliminary_chaining, payload_vector, technology_misconfiguration, "
+            f"technology_grounding, pro_tips, interpretation_pitfalls): {exc}"
         ) from exc
-    if procedure.excerpt_length() > SKILL_PROCEDURE_MAX_CHARS:
+    if procedure.excerpt_length() > SKILL_CONCRETISED_PROCEDURE_MAX_CHARS:
         raise ValueError(
-            "hunter store: provenance.skill_procedure exceeds the "
-            f"{SKILL_PROCEDURE_MAX_CHARS}-character excerpt bound; shorten the "
-            "excerpt to the skill text the pod needs"
-        )
+            "hunter store: skill_concretised_procedure exceeds the "
+            f"{SKILL_CONCRETISED_PROCEDURE_MAX_CHARS}-character bound; shorten "
+            "the target-specific concretisation")
 
 
 class DuplicateSpecError(Exception):
@@ -277,8 +230,8 @@ class IncompleteSpecSetError(ValueError):
 class HunterMemoryStore(BoundedRecordStore):
     """The hunter-owned per-project spec-set store (S3 8.8/T6).
 
-    Per-project, per-`hunt_key` durable memory of the loop-driven hunter: the
-    `hunt_key` is the loop dispatch id `<unit_name>__<loop_id>` (S3 8.9). One
+    Per-project, per-`hunt_key` durable memory of the threat-driven hunter: the
+    `hunt_key` is the threat dispatch id `<unit_name>__<threat_id>` (S3 8.9). One
     YAML file per authored spec (the produced/ file carries the status
     lifecycle), produced/consumed directories, and a per-project notes file on
     the same data contract. A project folder is created lazily at the first
@@ -296,6 +249,11 @@ class HunterMemoryStore(BoundedRecordStore):
         app-owned `DATA_ROOT`), with the per-project `hunting/hunter/` bucket
         resolved through the ONE `data_root.project_dir` layout owner."""
         self._root = Path(root_dir) if root_dir is not None else DATA_ROOT
+
+    @property
+    def root(self) -> Path:
+        """The data root every project bucket resolves under."""
+        return self._root
 
     # -- paths -------------------------------------------------------------
 
@@ -317,6 +275,9 @@ class HunterMemoryStore(BoundedRecordStore):
         _validate_spec_file(spec_id)
         return self._spec_dir(project_id, hunt_key) / side / f"{spec_id}.yaml"
 
+    def _terminal_file(self, project_id: str, hunt_key: str) -> Path:
+        return self._spec_dir(project_id, hunt_key) / "terminal.yaml"
+
     def _notes_file(self, project_id: str) -> Path:
         return self._project_dir(project_id) / "notes.yaml"
 
@@ -326,8 +287,8 @@ class HunterMemoryStore(BoundedRecordStore):
     def _validate_component(value: str, what: str) -> None:
         """Reject a `project_id`/`hunt_key` that is not one safe path component.
 
-        The loop dispatch id is used verbatim as the folder name, so `:` and
-        `-` are legal (they are identity chars of the unit name and loop id);
+        The threat dispatch id is used verbatim as the folder name, so `:` and
+        `-` are legal (they are identity chars of the unit name and threat id);
         only path separators, control chars, and dot-traversal forms are
         rejected."""
         if not isinstance(value, str) or not value:
@@ -345,10 +306,10 @@ class HunterMemoryStore(BoundedRecordStore):
     def _validate_hunt_key(hunt_key: str) -> None:
         """Reject a `hunt_key` that is not one safe folder component (S3 8.9).
 
-        The key is the loop dispatch id `<unit_name>__<loop_id>`; `__` is the
+        The key is the threat dispatch id `<unit_name>__<threat_id>`; `__` is the
         separator between its two store-owned parts. The store validates the
         PATH component only: the key is bound at tool construction from the
-        dispatched loop, never authored as a request field."""
+        dispatched threat, never authored as a request field."""
         HunterMemoryStore._validate_component(hunt_key, "hunt_key")
 
     @staticmethod
@@ -426,18 +387,23 @@ class HunterMemoryStore(BoundedRecordStore):
         specs: Sequence[dict],
         *,
         side: Literal["produced", "consumed"] = "produced",
+        enforce_complete: bool = True,
     ) -> list[tuple[str, Path]]:
-        """Write the WHOLE spec set under `test-specs/<hunt_key>/<side>/`.
+        """Write the spec set under `test-specs/<hunt_key>/<side>/`.
 
-        `specs` is the batched set the tool received: every entry carries a
-        `status` in `hunter_state.SPEC_STATUSES` and the two file-name identity
-        attributes `fault_keyword` / `strategy_keyword`. The store DERIVES each
-        `spec_id` (and therefore the file name) from the keywords and persists
-        the body verbatim - the reduced D4 at every status (S3 8.6).
+        `specs` is the batch the caller holds: every entry carries a `status`
+        in `hunter_state.SPEC_STATUSES` and the ordered `discriminators`.
+        The store DERIVES each `spec_id` (and therefore the file name) from the
+        class and the values and persists the body verbatim - the reduced D4 at
+        every status (S3 8.6).
 
         The GENERATE write is all-`hypothesised` and creates the set; the
         terminal write carries the whole set with the survivors `ratified` and
         the unfeasible `dropped`, UPSERTING each identity in place (S3 8.7).
+        F-025: the hunter tool writes ONE spec per call, so its store calls
+        pass `enforce_complete=False`; the whole-set omission check moves to
+        `finalize_specs`, the one durable terminal gate. Internal whole-set
+        writers keep the default and the original F-017 guarantee.
         A duplicate derived identity INSIDE the batch raises
         `DuplicateSpecError` (the dedup signal); the whole batch is validated
         before any file is written, so a rejected write never leaves a partial
@@ -487,8 +453,8 @@ class HunterMemoryStore(BoundedRecordStore):
             if spec.get("spec_id"):
                 raise ValueError(
                     "hunter store: `spec_id` is a DERIVED symbol (the "
-                    "<fault_keyword>_<strategy_keyword> stem); the payload must "
-                    "not author it"
+                    "<class>__<value>__<value> stem); the payload must not "
+                    "author it"
                 )
             status = spec.get("status")
             if status not in SPEC_STATUSES:
@@ -496,9 +462,19 @@ class HunterMemoryStore(BoundedRecordStore):
                     f"hunter store: each spec must carry a status in "
                     f"{SPEC_STATUSES}; got {status!r}"
                 )
-            fault_keyword, strategy_keyword = _require_spec_identity(spec)
-            _validate_skill_procedure(spec.get("provenance"))
-            spec_id = spec_identifier(fault_keyword, strategy_keyword)
+            discriminators = _require_discriminators(spec)
+            validate_skill_concretised_procedure(
+                spec.get("skill_concretised_procedure"))
+            provenance = spec.get("provenance")
+            provenance = provenance if isinstance(provenance, dict) else {}
+            class_name = str(
+                provenance.get("web_vulnerability_class")
+                or provenance.get("canonical_class")
+                or "")
+            try:
+                spec_id = spec_identifier(class_name, discriminators)
+            except ValueError as exc:
+                raise ValueError(f"hunter store: {exc}") from exc
             if spec_id in seen:
                 raise DuplicateSpecError(
                     f"hunter store: the identity {spec_id!r} appears twice in "
@@ -517,7 +493,7 @@ class HunterMemoryStore(BoundedRecordStore):
             # race it.
             terminal = bool(statuses) and all(
                 status in ("ratified", "dropped") for status in statuses)
-            if side == "produced" and terminal:
+            if side == "produced" and terminal and enforce_complete:
                 batch_runs = {
                     str((spec.get("provenance") or {}).get("run_id") or "")
                     for spec in specs
@@ -554,6 +530,23 @@ class HunterMemoryStore(BoundedRecordStore):
                 path = self._spec_file(project_id, hunt_key, spec_id, side)
                 consumed_path = self._spec_file(
                     project_id, hunt_key, spec_id, "consumed")
+                existing_path = self._spec_file(
+                    project_id, hunt_key, spec_id, "produced")
+                if (side == "produced"
+                        and spec.get("status") == "ratified"
+                        and not existing_path.exists()
+                        and not consumed_path.exists()):
+                    # Identity stability: a `ratified` write may only address a
+                    # slot the hunter already declared. A changed discriminator
+                    # value is a new sub-slice, which must be written as
+                    # `hypothesised` first - never a silent rename into a
+                    # dispatchable spec. A new `dropped` identity is legal: it
+                    # records a slot the hunter decided not to test.
+                    raise ValueError(
+                        "hunter store: the terminal status write for "
+                        f"{spec_id!r} addresses no hypothesised spec; write the "
+                        "new sub-slice as `hypothesised` first, or keep the "
+                        "discriminator values stable")
                 if side == "produced" and consumed_path.exists():
                     logger.warning(
                         "hunter store: produced write for %s skipped - the "
@@ -566,6 +559,121 @@ class HunterMemoryStore(BoundedRecordStore):
                 written.append((spec_id, path))
         return written
 
+    def finalize_specs(
+        self,
+        project_id: str,
+        hunt_key: str,
+        *,
+        run_id: str = "",
+    ) -> dict:
+        """Close the hunt's spec set with a durable terminal record.
+
+        F-025/F-022: the hunter writes one spec per call, so the whole-set
+        omission check cannot live on a terminal batch write. This is the one
+        gate: every produced spec must already be `ratified` or `dropped`
+        (consumed specs are terminal by dispatch), then the store writes
+        `test-specs/<hunt_key>/terminal.yaml` carrying the run id, the sorted
+        terminal identities, and their statuses. A zero-spec hunt is a valid
+        terminal set: it still needs the record, or its consumed threat would be
+        recovered forever.
+
+        Idempotent for the same run. A different run may finalize the same
+        hunt key (the threat dispatch id is not globally unique across runs);
+        its record replaces the stale one, and recovery compares the run id.
+        """
+        self._validate_hunt_key(hunt_key)
+        missing: list[str] = []
+        statuses: dict[str, str] = {}
+        with self._lock_for(project_id):
+            existing = self.read_terminal_set(project_id, hunt_key)
+            if existing is not None and str(existing.get("run_id") or "") == str(
+                    run_id or ""):
+                return existing
+            for side in _SPEC_SIDES:
+                side_dir = self._spec_dir(project_id, hunt_key) / side
+                if not side_dir.exists():
+                    continue
+                for path in sorted(side_dir.glob("*.yaml")):
+                    body = self._read_spec_file(path)
+                    status = str(body.get("status") or "")
+                    statuses[path.stem] = status
+                    if side == "produced" and status == "hypothesised":
+                        missing.append(path.stem)
+            if missing:
+                raise IncompleteSpecSetError(missing, hunt_key)
+            marker = {
+                "schema_version": 1,
+                "hunt_key": hunt_key,
+                "run_id": str(run_id or ""),
+                "status": "terminal",
+                "spec_ids": sorted(statuses),
+                "spec_statuses": dict(sorted(statuses.items())),
+                "finalized_at": datetime.now(timezone.utc).isoformat(),
+            }
+            write_text_atomic(
+                self._terminal_file(project_id, hunt_key),
+                yaml.safe_dump(marker, sort_keys=False),
+            )
+            return marker
+
+    def settle_hypothesised(
+        self,
+        project_id: str,
+        hunt_key: str,
+        *,
+        run_id: str = "",
+    ) -> dict:
+        """Close a COMPLETE hunt: declass leftover drafts and finalize.
+
+        The hunter's symbolic graph reaching COMPLETE is the authoritative
+        end-of-work signal. Any spec still `hypothesised` at that point was
+        never promoted or explicitly dropped; leaving it in produced would
+        make the serial gate fail closed on a hunt the tracker has already
+        completed. Declass each such spec to `dropped` with a durable reason,
+        then write the terminal marker. A spec that is already `ratified` or
+        `dropped` is untouched. A malformed spec raises (the gate blocks and
+        the upstream write-gate ticket owns repair); no partial terminal is
+        written.
+        """
+        self._validate_hunt_key(hunt_key)
+        with self._lock_for(project_id):
+            existing = self.read_terminal_set(project_id, hunt_key)
+            if existing is not None and str(
+                    existing.get("run_id") or "") == str(run_id or ""):
+                return existing
+            produced = self._spec_dir(project_id, hunt_key) / "produced"
+            if produced.exists():
+                for path in sorted(produced.glob("*.yaml")):
+                    body = self._read_spec_file(path)
+                    if str(body.get("status") or "") != "hypothesised":
+                        continue
+                    body["status"] = "dropped"
+                    body["declassified"] = "hunter-complete"
+                    write_text_atomic(path, yaml.safe_dump(body, sort_keys=False))
+        return self.finalize_specs(project_id, hunt_key, run_id=run_id)
+
+    def read_terminal_set(self, project_id: str, hunt_key: str) -> dict | None:
+        """The durable terminal-set record for the hunt key, or None.
+
+        A corrupt record raises (O4) rather than reading as absent: a false
+        absence would recover a completed threat."""
+        path = self._terminal_file(project_id, hunt_key)
+        if not path.exists():
+            return None
+        try:
+            loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except yaml.YAMLError as exc:
+            raise OSError(
+                f"hunter store: unreadable terminal-set file {path}: {exc}"
+            ) from exc
+        if not isinstance(loaded, dict):
+            raise OSError(
+                f"hunter store: terminal-set file {path} is not a YAML mapping")
+        return loaded
+
+    def has_terminal_set(self, project_id: str, hunt_key: str) -> bool:
+        return self.read_terminal_set(project_id, hunt_key) is not None
+
     def read_spec(
         self,
         project_id: str,
@@ -577,7 +685,7 @@ class HunterMemoryStore(BoundedRecordStore):
     ) -> dict | None:
         """The one spec file for `(hunt_key, spec_id)`.
 
-        `hunt_key` is the loop dispatch id (S3 8.9). `None` for a missing file
+        `hunt_key` is the threat dispatch id (S3 8.9). `None` for a missing file
         (a valid empty result, never a failure); a corrupt file raises (O4,
         the caller degrades to an empty set). With `attributes` given, the
         returned dict is projected onto them."""
@@ -585,6 +693,32 @@ class HunterMemoryStore(BoundedRecordStore):
         if not path.exists():
             return None
         return self._project(self._read_spec_file(path), attributes)
+
+    def read_spec_lenient(
+        self,
+        project_id: str,
+        hunt_key: str,
+        spec_id: str,
+        *,
+        side: Literal["produced", "consumed"] = "produced",
+    ) -> tuple[dict | None, str]:
+        """The one spec file, with a parse error instead of a raise.
+
+        The malformed fail-safe needs the mover to ADDRESS a spec whose body it
+        cannot parse, so the pod can render what is parsable and still write a
+        PodExport. A missing file is `(None, "no spec file")`; a corrupt file
+        is `(None, <error>)`. The caller records the anomaly and dispatches a
+        degraded pod instead of halting the queue."""
+        try:
+            body = self.read_spec(
+                project_id, hunt_key, spec_id, side=side)
+        except Exception as exc:  # noqa: BLE001 - the anomaly is the result
+            return None, str(exc)
+        if body is None:
+            return None, "no spec file"
+        if not isinstance(body, dict):
+            return None, f"the spec body is {type(body).__name__}, not a mapping"
+        return body, ""
 
     def read_specs(
         self,
@@ -597,7 +731,7 @@ class HunterMemoryStore(BoundedRecordStore):
     ) -> list[dict]:
         """All spec files under `test-specs/<hunt_key>/`, in file-name order.
 
-        `hunt_key` is the loop dispatch id (S3 8.9); the whole surface context
+        `hunt_key` is the threat dispatch id (S3 8.9); the whole surface context
         is never returned through this store. `sides` selects produced/consumed
         (default both); `statuses` filters on the persisted `status`;
         `attributes` projects each spec onto the given fields. A missing
@@ -618,7 +752,7 @@ class HunterMemoryStore(BoundedRecordStore):
 
     def list_hunt_keys(self, project_id: str) -> list[str]:
         """The `test-specs/` hunt-key folders in deterministic (sorted) order -
-        the loop dispatch ids the inbox surfer enumerates to read the produced
+        the threat dispatch ids the inbox surfer enumerates to read the produced
         spec surface (ADR #169 Q3/#172). A missing project contributes nothing
         (a valid empty result)."""
         tests_dir = self._project_dir(project_id) / "test-specs"
@@ -629,7 +763,7 @@ class HunterMemoryStore(BoundedRecordStore):
     def produced_spec_files(self, project_id: str, hunt_key: str) -> list[str]:
         """The PRODUCED-side spec file stems under one hunt key - the
         `<fault>_<strategy>` file names the inbox surfer operates on (ADR
-        #169 Q3/#172), in file-name order. `hunt_key` is the loop dispatch id
+        #169 Q3/#172), in file-name order. `hunt_key` is the threat dispatch id
         (S3 8.9). `consumed/` contributes nothing. A missing side contributes
         nothing (a valid empty result)."""
         side_dir = self._spec_dir(project_id, hunt_key) / "produced"
@@ -654,7 +788,7 @@ class HunterMemoryStore(BoundedRecordStore):
         (ADR #169 Q3/164 spec 6, tracker #172): ONLY the mover calls this
         (the single-owner rename, #172 AC). `spec_file` is the produced spec's
         file-name identity (the `<fault>_<strategy>` stem, G3) under
-        `test-specs/<hunt_key>/`; `hunt_key` is the loop dispatch id (S3 8.9).
+        `test-specs/<hunt_key>/`; `hunt_key` is the threat dispatch id (S3 8.9).
 
         True when the spec now lives in consumed/ - renamed NOW, or already
         moved by an earlier tick (at-least-once: the repeated invocation of a
@@ -699,7 +833,7 @@ class HunterMemoryStore(BoundedRecordStore):
     @staticmethod
     def note_key(hunt_key: str, note_name: str) -> str:
         """The hierarchy key of a note: `hunt_key:<note_name>` (G6), where
-        `hunt_key` is the loop dispatch id (S3 8.9)."""
+        `hunt_key` is the threat dispatch id (S3 8.9)."""
         return f"{hunt_key}:{note_name}"
 
     def write_note(
@@ -717,7 +851,7 @@ class HunterMemoryStore(BoundedRecordStore):
         """The `notes` body write over the per-project `notes.yaml` (G6).
 
         `append` adds a new note for the `(hunt_key, note_name)` key, where
-        `hunt_key` is the loop dispatch id (S3 8.9); `update` amends an
+        `hunt_key` is the threat dispatch id (S3 8.9); `update` amends an
         existing note (replacing its kind/body/evidence/provenance); `delete`
         removes it. Returns the note `key` (`hunt_key:<note_name>`); an
         update/delete on a missing key returns `None` (a denoted miss, never a
@@ -731,40 +865,46 @@ class HunterMemoryStore(BoundedRecordStore):
                 f"hunter store: unknown note kind {kind!r}; known: {NOTE_KINDS}"
             )
         self._validate_hunt_key(hunt_key)
-        path = self._notes_file(project_id)
-        records = self._read_records(path)
-        key = self.note_key(hunt_key, note_name)
-        if action == "append":
-            records.append(
-                {
-                    "key": key,
-                    "hunt_key": hunt_key,
-                    "note_name": note_name,
-                    "kind": kind,
-                    "body": body,
-                    "evidence": evidence,
-                    "provenance": provenance or {},
-                }
-            )
-            self._write_records(path, records)
-            return key
-        for rec in records:
-            if rec.get("key") != key:
-                continue
-            if action == "update":
-                rec.update(
+        # The whole read-modify-write is ONE critical section: the hunter's
+        # `notes` tool runs in a worker thread (`asyncio.to_thread`) while the
+        # surfer's durable pod-export write runs on the event loop. Without the
+        # lock the stale writer replaces the file with its pre-note list and
+        # the note is lost without an error (the C.a failure).
+        with self._lock_for(project_id):
+            path = self._notes_file(project_id)
+            records = self._read_records(path)
+            key = self.note_key(hunt_key, note_name)
+            if action == "append":
+                records.append(
                     {
+                        "key": key,
+                        "hunt_key": hunt_key,
+                        "note_name": note_name,
                         "kind": kind,
                         "body": body,
                         "evidence": evidence,
                         "provenance": provenance or {},
                     }
                 )
-            else:  # delete
-                records.remove(rec)
-            self._write_records(path, records)
-            return key
-        return None
+                self._write_records(path, records)
+                return key
+            for rec in records:
+                if rec.get("key") != key:
+                    continue
+                if action == "update":
+                    rec.update(
+                        {
+                            "kind": kind,
+                            "body": body,
+                            "evidence": evidence,
+                            "provenance": provenance or {},
+                        }
+                    )
+                else:  # delete
+                    records.remove(rec)
+                self._write_records(path, records)
+                return key
+            return None
 
     def read_notes(
         self,

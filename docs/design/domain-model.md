@@ -442,12 +442,17 @@ Its primitives are:
 - the **trust agreements** and their **dynamic-state trust**: who trusts whom, under which mode, and which state transition persists that trust;
 - an **assumption**: a claim that must hold for the unit's safety, each named by an induced programming fault;
 - a **web-vulnerability class**: the freely named taxonomy class plus its skills-suite mapping (a `suite_gap` when the suite does not cover it);
-- a **failure mode** mapped back from the cited classes, with the evidence that would falsify it;
-- a **loop**: a flat, likelihood-ranked testable prediction (`loop-<rank>`) carrying observable symptoms, its dispatchable payload, and the loop's provenance and typed skill procedure.
+- a **precursor**: a capability entity with an id, the capability gained, the abstract procedure that gains it, and the evidence;
+- an **impact assessment**: one row per damage claim with a `disposition` (`threat` or `precursor`), the `impact_description` that names the victim and the damaged property, the `exploitability_description` that names the chain and its human participation, the capability and its key, the capability path, the eight CVSS 4.0 base factors, and the derived `risk` and `risk_vector`;
+- a **prior art** section: the `hunts_store` queries run before the trust model and the records reused from other units;
+- a **threat**: a damage-bearing row (`threat-<rank>`) with a concrete victim and damaged property, an impact reference, its enabling precursors, the derived CVSS 4.0 risk, and a dispatchable payload.
 
-The model's state is structural, not a separate status row: the five gates (`UNIT_TECHNICAL_SHARP`, `TRUST_MODELLED`, `TRUST_ASSUMPTIONS_WRITTEN`, `VULNERABILITIES_WRITTEN`, `COMPLETED`) are the written sections, and a model is consumable once it reaches `COMPLETED` with its loops.
+The technical and trust-model claims carry a confidence degree.
+The threat and the vulnerability do not: the assessment is the scored claim and the confidence is a verification-planning attribute.
+
+The model's state is structural, not a separate status row: the seven gates (`UNIT_TECHNICAL_SHARP`, `TRUST_MODELLED`, `TRUST_ASSUMPTIONS_WRITTEN`, `VULNERABILITIES_WRITTEN`, `PRIOR_ART`, `IMPACT_ASSESSED`, `COMPLETED`) are the written sections, and a model is consumable once it reaches `COMPLETED` with its threats.
 The store moves the model `produced -> consumed` and archives a degraded unit's partial model to `abandoned/`; the model never evolves (a re-model is a new run).
-The **hunter** is dispatched per loop, not per config: the loop payload (the loop plus its unit context) is materialised at dispatch and the loop's dispatch id is the hunter store key (`docs/design/hunting-67-hunting-agent-spec.md`, `docs/design/hunting-164-state-graph-spec.md` section 14).
+The **hunter** is dispatched per threat, not per config: the threat payload (the threat plus its unit context) is materialised at dispatch and the threat's dispatch id is the hunter store key (`docs/design/hunting-67-hunting-agent-spec.md`, `docs/design/hunting-164-state-graph-spec.md` section 14).
 
 ---
 

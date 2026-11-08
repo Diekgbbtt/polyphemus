@@ -1,0 +1,1923 @@
+schema_version: 1
+trial:
+  trial_id: white-jotter-1-20261103T143924-1618c524
+  target: white-jotter
+  project_id: cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8
+  eval_sha: f020dafd12f3f8f525fad2496c64141b6e4f8fc8
+  stack_fingerprint: 3d396661b0ad9bb7f96101d102feaeba216b9189cef5c57ece87b9f69b56ede5
+  terminal: stopped
+official:
+  total: 7
+  identified: 3
+  partial: 2
+  missed: 2
+  identification_rate: 0.4286
+impact:
+  schema: v5
+  legacy_recomputation: false
+  impact_rows: 27
+  threats: 14
+  precursor_rows: 13
+  capability_rows: 27
+  red: 1
+  green: 14
+  green_share: 0.9333
+  threat_share: 0.5185
+  precursor_share: 0.4815
+  cia:
+    confidentiality:
+      none: 17
+      low: 6
+      medium: 0
+      high: 4
+    integrity:
+      none: 18
+      low: 4
+      medium: 0
+      high: 5
+    availability:
+      none: 24
+      low: 3
+      medium: 0
+      high: 0
+  risk_total: 100.0
+  risk_breakdown:
+    none: 0
+    low: 0
+    medium: 6
+    high: 0
+    critical: 7
+  rows:
+  - id: IA-1
+    key: IdentificationSystem::IA-1
+    unit: IdentificationSystem
+    disposition: precursor
+    capability: 'Hold an identifier''s authority with no bound: nothing but the holder''s own logout can end it, and no idle,
+      inactivity, absolute-lifetime or account-state event ever does.'
+    impact_description: 'No end damage is claimed by this row. Holding an identifier without a lifetime bound damages nobody
+      on its own: the copy that exists is the holder''s own, the service publishes the second representation only into the
+      holder''s own address bar and history, and the cross-origin channels that would carry a copy to a third party (a framed
+      console, a cross-origin Referer) are closed by browser defaults rather than by the application. What the row records
+      is the capability''s shape: this plane has no window that closes by itself, so any future primitive that exposes an
+      identifier - a delivery, a log, a shared URL, a theft - is amplified from a bounded incident into permanent authority.
+      The damage such a chain would reach (an end user''s account confidentiality and integrity) belongs to whichever unit
+      finds the exposure, and the rotation half of the composition is already scored by Service:sign-in.'
+    exploitability_description: 'No request achieves this: it is a property of the plane, measured by comparing an identifier''s
+      state across a long sequence of requests (still 200 with no challenge, no reissue, no re-authentication) against the
+      two controls that show the store and the logout path are healthy (a fresh identifier is terminated durably by the logout
+      path, and an identifier logged out earlier still answers 302). The gap is the missing exposure step, which this surface
+      does not provide; the capability is complete and waits for one.'
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: none
+      confidentiality: none
+      integrity: none
+      availability: none
+    risk: 0.0
+    band: none
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:N/SC:N/SI:N/SA:N
+    cia:
+      confidentiality: none
+      integrity: none
+      availability: none
+    mining: sufficient
+    scope: in
+  - id: IA-2
+    key: IdentificationSystem::IA-2
+    unit: IdentificationSystem
+    disposition: threat
+    capability: End another principal's authenticated session with a single top-level cross-site navigation, repeatably, at
+      any moment they are signed in.
+    impact_description: 'Victim: a signed-in end user, and through them the availability of the session they are working in.
+      Damaged property: availability, low - a third-party page or redirect can terminate the victim''s authenticated session
+      without the victim doing anything but visiting it, so the session ends, in-progress work is lost and the user is forced
+      to re-authenticate; the same mechanism can be repeated whenever they sign in. The damage stops there by construction:
+      the transition only destroys the identifier, it does not disclose or alter anything the identifier reaches, and every
+      other state change on this surface requires a JSON body on a non-GET method that a cross-site simple request cannot
+      produce, so no write of the back office is reachable this way.'
+    exploitability_description: 'One link or one redirect on an attacker-controlled page, followed by the victim as a top-level
+      navigation: the browser attaches the identity cookie because no SameSite attribute is set and the Lax default still
+      covers top-level GETs, the route is unguarded so no second check applies, there is no token to match anywhere on the
+      surface, and the response is a bare status that needs no rendering. Nothing has to be circumnavigated and no second
+      phase is needed; the only cost is the victim''s visit, which is why the interaction is active rather than passive.'
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: active
+      confidentiality: none
+      integrity: none
+      availability: low
+    risk: 5.1
+    band: medium
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:A/VC:N/VI:N/VA:L/SC:N/SI:N/SA:L
+    cia:
+      confidentiality: none
+      integrity: none
+      availability: low
+    mining: sufficient
+    scope: in
+  - id: IA-1
+    key: Service:navigation-menu::IA-1
+    unit: Service:navigation-menu
+    disposition: threat
+    capability: Keep receiving and rendering the back-office navigation a role confers after that role has been administratively
+      disabled.
+    impact_description: 'Victim: the application''s authorization state and the entitlement boundary of the account whose
+      role was withdrawn. Damaged properties: integrity, low - the operator''s disable is written to the role record and the
+      console reports it, but the derivation that decides the caller''s function set never reads it, so a revocation control
+      silently does nothing on this decision; and confidentiality, low - the withdrawn role''s screen and route inventory
+      stays disclosed and rendered to its holders, who keep the back-office client''s entries and therefore the function surface
+      that role named. Bounded because the tree is navigation metadata rather than data: what sits behind those routes is
+      a separate authorization decision owned by the controller units, and the grant dimension of this same derivation is
+      honoured immediately.'
+    exploitability_description: 'No special position and no further capability: the caller holds an account that was granted
+      the role - a basic authenticated role - and the failing action is the operator''s own routine disable. The caller does
+      nothing but load the console; there is no defence to circumnavigate, no second phase, and no victim interaction beyond
+      the operator''s standard revocation. The window is not bounded by the session either, since the derivation is evaluated
+      per request and the disable simply never reaches it.'
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: low
+      user_interaction: none
+      confidentiality: low
+      integrity: low
+      availability: none
+    risk: 5.3
+    band: medium
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:L/VI:L/VA:N/SC:L/SI:L/SA:N
+    cia:
+      confidentiality: low
+      integrity: low
+      availability: none
+    mining: sufficient
+    scope: in
+  - id: IA-1
+    key: Service:register::IA-1
+    unit: Service:register
+    disposition: threat
+    capability: Make the registration path commit more accounts for one name than its own lookups can resolve, and cost the
+      operator the account roster.
+    impact_description: 'Victim: the application - specifically its account-administration plane and the account store behind
+      it. Damaged properties: availability, low - the administrative account roster, the only surface that enumerates accounts,
+      answers the generic error envelope to every request and stayed that way for the whole observation window, while the
+      role catalogue, credential verification, registration and the keyed account writes all kept working, so the loss is
+      the operator''s ability to see and account for the roster rather than the service itself; and integrity, low - the store
+      is left holding an identity that its own uniqueness lookup calls free and its own credential lookup calls absent, so
+      the account data no longer reconciles with the service''s view of it. No end user''s data is disclosed by this and no
+      credential is exposed; the damage is to the administrative plane''s integrity and observability, which is what an auditor
+      or an operator relies on.'
+    exploitability_description: 'One anonymous caller, no account, no victim and no interaction: a handful of identical registration
+      bodies submitted inside the same commit window all receive the success envelope, because the uniqueness verdict is taken
+      in a read that nothing re-establishes at insert time. There is no defence to circumnavigate and no second phase - the
+      same request the service offers to every visitor is the whole attack, and the durable consequence is confirmed indirectly
+      because the surface that would show the row set is the surface that stopped answering (a re-submission is rejected by
+      a store constraint while the lookup reports the name free, and credential verification reports no such account).'
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: none
+      confidentiality: none
+      integrity: low
+      availability: low
+    risk: 6.9
+    band: medium
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:L/VA:L/SC:N/SI:L/SA:L
+    cia:
+      confidentiality: none
+      integrity: low
+      availability: low
+    mining: sufficient
+    scope: in
+  - id: IA-2
+    key: Service:register::IA-2
+    unit: Service:register
+    disposition: threat
+    capability: Place an account whose name is visually identical to an existing account's, so a routine name-addressed administrative
+      action can be aimed at the lookalike.
+    impact_description: 'Victim: the end user whose account an operator intends to administer, and the application''s account
+      and authorization store. Damaged property: integrity, low - the administration surface is addressed by account name,
+      and a name submitted with a leading space produces a second, distinct principal that is indistinguishable from the original
+      in every rendering the operator is given, so a routine disable, credential reset or role grant performed on the visible
+      name can land on the lookalike instead of the intended account. The boundary between the two identities exists only
+      inside the store''s collation: the response, the principal and the roster row all look the same, which is why the operator''s
+      ordinary flow - not an exotic one - is what completes the damage. Confidentiality is not claimed: neither account''s
+      records are disclosed by the ambiguity itself.'
+    exploitability_description: 'One anonymous registration with a single leading space, no credential and no second phase;
+      nothing has to be beaten because the service never normalises or constrains the name it stores as the identity key.
+      The remaining step is passive: an operator performing their ordinary roster work on the name they can see, at which
+      point the collation - invisible in every surface the operator has - decides which row moves. That the observed writes
+      did hit only the lookalike is a property of the collation, not of any control in this service, which is precisely why
+      the ambiguity is the damage.'
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: passive
+      confidentiality: none
+      integrity: low
+      availability: none
+    risk: 5.3
+    band: medium
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:P/VC:N/VI:L/VA:N/SC:N/SI:L/SA:N
+    cia:
+      confidentiality: none
+      integrity: low
+      availability: none
+    mining: sufficient
+    scope: in
+  - id: IA-1
+    key: AuthenticationMechanism::IA-1
+    unit: AuthenticationMechanism
+    disposition: precursor
+    capability: Hold a three-day server-issued opaque credential for every account that ever authenticates, minted whether
+      or not its owner wants it, and presented on every request of that browser.
+    impact_description: 'No end damage is claimed by this row. The persistent token admits nothing on its own - a caller presenting
+      only it is refused by both the state reporter and the guarded route, before and after sign-out - so possession of the
+      value grants no access and there is no victim whose data or authority it reaches. The three chains that would turn a
+      persistent credential into damage are all absent here: no script in the origin can read it (HttpOnly), no network position
+      is in scope, and a cross-site delivery buys nothing because the token does not authenticate. What the row records is
+      exposure breadth for a chain another unit owns: a 536-character bearer ciphertext is minted for every account that ever
+      signs in, lives three days, is re-minted on every login and cannot be observably revoked, and is decrypted and deserialised
+      back into a principal on every request - the sink Service:sign-in measured, whose only gap is key custody.'
+    exploitability_description: 'Obtaining the token is the ordinary act of signing in: any caller who holds an account''s
+      credential receives one whether or not they ask, so the primitive costs a valid credential and nothing else (low privilege,
+      no interaction, no defence to beat). What it does not do is anything with it. Turning it into an end damage requires
+      a further capability this surface does not provide - either a key-custody break at the deserialisation sink or a channel
+      that lifts the token out of an HttpOnly cookie - which is why the row stops here and names the sink''s owner instead
+      of claiming a chain.'
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: low
+      user_interaction: none
+      confidentiality: none
+      integrity: none
+      availability: none
+    risk: 0.0
+    band: none
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:N/VI:N/VA:N/SC:N/SI:N/SA:N
+    cia:
+      confidentiality: none
+      integrity: none
+      availability: none
+    mining: sufficient
+    scope: in
+  - id: IA-1
+    key: AuthorizationSystem::IA-1
+    unit: AuthorizationSystem
+    disposition: precursor
+    capability: Execute any function the guard admits while holding no permission for it, and make an operator's permission
+      grants and revocations inert on every request outcome.
+    impact_description: 'No end damage is claimed by this row. The missing check damages nothing by itself: the resources
+      the permission model names are answered empty at the edge on their canonical spelling, so a caller who lacks a permission
+      and a caller who holds it receive the same nothing on the surface the model describes. The only way the absent check
+      becomes data access is through the spelling primitive that reaches those handlers with no principal at all, and that
+      reach - confidentiality of the account roster and the RBAC model, integrity of the account store through the same handlers
+      - is measured and scored by ReverseProxy''s two threats. What this row records is the capability that makes that reach
+      total rather than bounded: there is no function-level backstop, so every administrative revocation the operator can
+      perform on a permission has no effect on any request outcome, and the model''s two halves may diverge without any component
+      noticing.'
+    exploitability_description: 'Nothing to exploit on its own: the row is a property of the pipeline, established by measurement
+      rather than by a request. Three observations fix it - the permission-named resources answer a permission-less caller,
+      the one guarded route admits a permission-less session and a fully permitted one identically, and the served client
+      has neither a permission branch nor a denial rendering. Closing the gap needs one further capability, the spelling primitive
+      that reaches a handler without passing the guard, which another unit holds and has scored; this row deliberately stops
+      short of it.'
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: none
+      confidentiality: none
+      integrity: none
+      availability: none
+    risk: 0.0
+    band: none
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:N/SC:N/SI:N/SA:N
+    cia:
+      confidentiality: none
+      integrity: none
+      availability: none
+    mining: sufficient
+    scope: in
+  - id: IA-1
+    key: IntegrationSystem:cross-origin-policy::IA-1
+    unit: IntegrationSystem:cross-origin-policy
+    disposition: precursor
+    capability: Be an authorised origin for the application's whole API - credentials allowed and every verb preflight-approved
+      - without controlling the application's own origin.
+    impact_description: 'No end damage is claimed by this row. The grant is real - one origin outside the application''s control
+      may read the API and preflight every verb, with credentials allowed by policy - but the only data it can actually read
+      is data it can read without the grant. The credentialed half never arrives: the identity cookie sets no SameSite attribute,
+      so browsers apply Lax and omit it from a cross-site fetch, which makes every authorised-origin read anonymous. What
+      remains anonymous is the public catalogue and article surface by design, plus the roster and role model that the parameterised
+      spelling reaches with no cookie at all - and that reach is ReverseProxy''s measured damage, not a second one: a page
+      at the authorised origin gains no access the attacker does not already have from a raw client. No victim''s confidentiality,
+      integrity or availability is reached through this entry today.'
+    exploitability_description: 'Exercising the grant costs no privilege and no victim interaction from the application''s
+      side: any page served from http://localhost:8080 in a victim''s browser is authorised automatically, and the preflight
+      approves every verb, so the chain needs nothing from the victim beyond loading that page. The missing pieces are on
+      the other side of the chain, not in the policy. First, the page has to exist on the victim''s loopback port, which is
+      a precondition outside the target''s own surface. Second, a credentialed read would need the session cookie to travel,
+      which the browser''s Lax default prevents. Third, the data reachable anonymously is public or already available through
+      ReverseProxy''s spelling bypass. That is why this row stops at the capability: the policy authorises the right origin-and-verb
+      combination and is missing only a victim-side delivery and a credential-scope change to become a cross-origin data read.'
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: none
+      confidentiality: none
+      integrity: none
+      availability: none
+    risk: 0.0
+    band: none
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:N/SC:N/SI:N/SA:N
+    cia:
+      confidentiality: none
+      integrity: none
+      availability: none
+    mining: sufficient
+    scope: out
+  - id: IA-1
+    key: RESTApi:api::IA-1
+    unit: RESTApi:api
+    disposition: threat
+    capability: Read rows from the API's own database through the catalogue search - any predicate of the caller's choosing,
+      and caller-authored rows via a UNION over the eight-column projection - without an identity.
+    impact_description: 'Victim: the application''s persisted data, held in the same database the API queries - the account
+      records the roster endpoint exposes (username, real name, telephone, e-mail, password hash, enabled state, role bindings),
+      the unpublished article and book rows behind the administrative routes, and the role/permission model. Damaged property:
+      confidentiality, high. The caller controls the predicate of an anonymous statement and can append its own result set
+      to an eight-column projection that the API renders back as JSON fields, so the read is not limited to rows the search
+      was meant to match and not limited to the catalogue table.'
+    exploitability_description: 'One anonymous GET per query: no account, no session, no victim action, no second phase. The
+      statement shape is already mapped (quote to confirm the literal, comment to truncate the mapper''s LIKE wrapper, ORDER
+      BY to fix the arity at eight, UNION to align types), so extraction is a matter of placing the target columns into the
+      rendered positions. I verified the sink and the projection using only caller-authored literals and deliberately extracted
+      no foreign row; the payload belongs to the hunter. The neighbouring credential query was probed as a negative control
+      and is bound, which localises the defect to the search mapper rather than the layer as a whole.'
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: none
+      confidentiality: high
+      integrity: none
+      availability: none
+    risk: 9.2
+    band: critical
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:H/SI:N/SA:N
+    cia:
+      confidentiality: high
+      integrity: none
+      availability: none
+    mining: sufficient
+    scope: in
+  - id: IA-2
+    key: RESTApi:api::IA-2
+    unit: RESTApi:api
+    disposition: threat
+    capability: Create an account whose persisted role association the caller chooses, so the caller's own principal becomes
+      administratively privileged with no privileged action.
+    impact_description: 'Victim: the application''s persisted authorization data and, through it, every account and catalogue
+      record the granted role reaches. Damaged property: integrity, high - a durable administrative role binding is written
+      into the authorization store by an unauthenticated self-registration, indistinguishable from an administrator''s grant
+      on every later read. Confidentiality, low as measured: the account''s derived authority is directly visible (the full
+      back-office navigation tree renders for it), while reading the records behind those functions needs the separate routing
+      primitive that ReverseProxy already filed.'
+    exploitability_description: 'Two anonymous requests and one login: register with the nested role array, then sign in as
+      the new account. No account is needed beforehand, no victim acts, no defence must be iterated, and the escalation is
+      not a race - it is a persisted association that survives every later session. Measured entirely on an account I created
+      for the purpose and returned to a role-less state afterwards; the restore needed the same role-update write the back
+      office uses, which the escalated account itself was permitted to perform.'
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: none
+      confidentiality: low
+      integrity: high
+      availability: none
+    risk: 9.2
+    band: critical
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:H/VA:N/SC:L/SI:H/SA:N
+    cia:
+      confidentiality: low
+      integrity: high
+      availability: none
+    mining: sufficient
+    scope: in
+  - id: IA-1
+    key: ReverseProxy::IA-1
+    unit: ReverseProxy
+    disposition: threat
+    capability: Read the entire account roster with personal data and role grants, and the full role-permission-menu model,
+      without an identity.
+    impact_description: 'Victim: the end users of the application (their account records) and the application''s persisted
+      authorization data. Damaged property: confidentiality, high. One anonymous request returns the complete account roster
+      with username, real name, telephone number, electronic-mail address, enabled state and granted roles for every account
+      (including the administrator), plus the complete role model: which role carries which permission, the permission catalogue
+      with its target URLs, and the menu catalogue each role may reach. No redaction is applied and no field requires a higher
+      entitlement.'
+    exploitability_description: 'The chain is one request with no account, no cookie and no victim participation. The caller
+      sends a back-office path whose spelling injects a literal '';'' path parameter into a filler segment (''/api/x/..;/admin/user''):
+      the edge decodes and dot-resolves the path for its own classification but forwards the raw target, so the request is
+      treated as an ordinary /api call and not as the /api/admin namespace; the authorisation filter matches its patterns
+      against the same un-stripped path and finds no rule; the servlet container then strips the path parameter, resolves
+      the dot segment and dispatches to the real admin controller, which executes with no principal. No defence must be iterated:
+      the spelling worked on the first attempt, and the remaining admin reads (role, permission and menu catalogues) use the
+      same shape. Human participation: none.'
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: none
+      confidentiality: high
+      integrity: none
+      availability: none
+    risk: 9.2
+    band: critical
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:H/SI:N/SA:N
+    cia:
+      confidentiality: high
+      integrity: none
+      availability: none
+    mining: sufficient
+    scope: in
+  - id: IA-2
+    key: ReverseProxy::IA-2
+    unit: ReverseProxy
+    disposition: threat
+    capability: Modify any account's attributes, enabled state and role grants without an identity, including granting an
+      administrative role to an account the attacker controls.
+    impact_description: 'Victim: the application''s persisted authorization and account data, and every end user whose account
+      is a target. Damaged property: integrity, high (confidentiality, low - the write responses confirm the affected account
+      name and message). The same bypass reaches the mutating back-office handlers: an account''s personal attributes, its
+      enabled state and its role grants can be rewritten by an anonymous caller. Granting the sysAdmin role to an account
+      the attacker controls, or disabling the accounts that defend the catalogue, is a durable change that survives the request
+      and cannot be attributed to any principal.'
+    exploitability_description: One request, unauthenticated. The capability of IA-1 (P-1) is used to read the roster and
+      the role identifiers; the same '/api/x/..;/admin/...' spelling then carries a PUT to the account-update and account-status
+      handlers, which reply with the application's success envelope. The request bodies observed in the client bundle name
+      the fields (username, name, phone, email, roles[]; enabled, username), so no further capability is needed to target
+      an arbitrary account. No victim action and no human participation are required; the only additional phase beyond IA-1
+      is choosing the target from the roster already read.
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: none
+      confidentiality: low
+      integrity: high
+      availability: none
+    risk: 9.2
+    band: critical
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:H/VA:N/SC:L/SI:H/SA:N
+    cia:
+      confidentiality: low
+      integrity: high
+      availability: none
+    mining: sufficient
+    scope: in
+  - id: IA-3
+    key: ReverseProxy::IA-3
+    unit: ReverseProxy
+    disposition: precursor
+    capability: Make a privileged namespace answer uniformly empty so its existence, its guard coverage and its true state
+      cannot be read from canonical traffic.
+    impact_description: 'No end damage follows from this row. The short-circuit returns no data, changes no state and never
+      establishes an identity, so there is no victim and no damaged property; its owner learns nothing from it. It is the
+      masking half of the chain scored in IA-1 and IA-2: because the canonical spelling always answers an empty 200, the namespace''s
+      live state and the real coverage of the guard cannot be measured from it, and the true state is only visible through
+      a different spelling. The capability is recorded so a later unit can reference it.'
+    exploitability_description: A single unauthenticated request to the canonical namespace, for any method, with or without
+      a session - the answer does not depend on identity. There is no chain to assemble and no human participation; the row
+      exists to name the observable '<em>namespace answers empty</em>' capability that the read and write rows in this unit
+      must be distinguished from.
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: none
+      confidentiality: none
+      integrity: none
+      availability: none
+    risk: 0.0
+    band: none
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:N/SC:N/SI:N/SA:N
+    cia:
+      confidentiality: none
+      integrity: none
+      availability: none
+    mining: sufficient
+    scope: in
+  - id: IA-4
+    key: ReverseProxy::IA-4
+    unit: ReverseProxy
+    disposition: precursor
+    capability: Tell apart the spellings the edge classifies as the privileged namespace from those that reach the backend,
+      and learn whether a backend route exists at all.
+    impact_description: 'No end damage follows from this row: the answers compared disclose no record and change nothing,
+      so there is no victim and no damaged property. The capability is a route-and-verdict oracle - which spelling the edge
+      classified as the privileged namespace, and whether a backend handler answered when the response is either the 404 shell
+      or the code-400 wrapper - which is what makes the masking in IA-3 navigable. It is recorded as a precursor so a later
+      unit can chain it.'
+    exploitability_description: Ordinary unauthenticated requests, compared by status, declared length and body bytes. No
+      chain is needed and no human participation is involved; the value of the row is the differential itself, not an effect
+      on the target.
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: none
+      confidentiality: none
+      integrity: none
+      availability: none
+    risk: 0.0
+    band: none
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:N/SC:N/SI:N/SA:N
+    cia:
+      confidentiality: none
+      integrity: none
+      availability: none
+    mining: sufficient
+    scope: in
+  - id: IA-5
+    key: ReverseProxy::IA-5
+    unit: ReverseProxy
+    disposition: threat
+    capability: Read the complete client application source and its route inventory anonymously from published build maps.
+    impact_description: 'Victim: the application itself - its source code and internal structure. Damaged property: confidentiality,
+      low. The disclosure is bounded (the map carries no credential, key or token, and the served root refuses version-control
+      metadata, directory listings and traversal out of the root) but it is total for what it does carry: the full Vue client
+      source with its router table, its store, and the exact request builders for the back-office API, including the admin
+      routes the front exposes.'
+    exploitability_description: 'One unauthenticated GET on the map file whose name is the bundle name the shell already publishes
+      plus ''.map''; the stylesheet map is fetched the same way. No chain, no defence to beat, no victim action. The capability
+      is reconnaissance-grade: it does not by itself reach a record, but it removes the route inventory from the attacker''s
+      unknowns and names every back-office operation the defect in IA-1 then reaches.'
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: none
+      confidentiality: low
+      integrity: none
+      availability: none
+    risk: 6.9
+    band: medium
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:N/VA:N/SC:L/SI:N/SA:N
+    cia:
+      confidentiality: low
+      integrity: none
+      availability: none
+    mining: sufficient
+    scope: in
+  - id: IA-1
+    key: Service:article-management::IA-1
+    unit: Service:article-management
+    disposition: threat
+    capability: Plant markup in a journal article that executes in the application origin for every reader who opens it, without
+      an identity and with no review step.
+    impact_description: 'Victim: every end user who opens the article - any reader of the public journal, and by extension
+      any signed-in editor or administrator who reviews it. Damaged properties: confidentiality and integrity, both high.
+      The stored body is the product''s only markup context, so caller-authored script runs in the application origin with
+      the reader''s authority: it can read and rewrite everything that reader can see in the console, act through that reader''s
+      session (the identity cookie is HttpOnly, so the script cannot copy the identifier, but it does not need to - it can
+      issue the requests), and present a fabricated interface on the article page. The publication is instant and unmoderated,
+      so the payload is live for the next reader after the success envelope and stays live until someone deletes the record;
+      the record carries no owner, so nothing in the store can even point at who wrote it.'
+    exploitability_description: 'Two phases, no account and no defence to beat. Phase one is a single anonymous POST to the
+      save route under the parameterised spelling that the edge answers empty on its canonical form (ReverseProxy''s P-4,
+      cited as the precursor); the handler stores the rendered body exactly as sent, and the responder returns the application''s
+      success envelope. Phase two is passive from the attacker: any reader who opens the article - which the public list links
+      to directly - receives the stored markup in an innerHTML assignment, with no sanitizer on the write path, no context
+      encoding at retrieval, and no content-security policy to stop inline execution. The interaction is a routine reading
+      flow, which is why it is passive rather than active.'
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: passive
+      confidentiality: high
+      integrity: high
+      availability: none
+    risk: 9.3
+    band: critical
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:P/VC:H/VI:H/VA:N/SC:H/SI:H/SA:N
+    cia:
+      confidentiality: high
+      integrity: high
+      availability: none
+    mining: sufficient
+    scope: in
+  - id: IA-2
+    key: Service:article-management::IA-2
+    unit: Service:article-management
+    disposition: threat
+    capability: Create, address, rewrite and destroy arbitrary journal articles without an identity, including records written
+      by someone else.
+    impact_description: 'Victim: the application''s persisted journal content and, through it, the readers who rely on it.
+      Damaged properties: integrity, high - any article''s title, body, abstract, cover address and publication date can be
+      replaced by an unauthenticated caller, and because the record carries no author or owner field the replacement is indistinguishable
+      from the original once written, with nothing in the store able to attribute it; availability, low - the same access
+      can delete records by identifier, and deleting every article empties the public reading surface (the application itself
+      stays up, which bounds the loss). No end-user data is disclosed by this row: reading is public by design, so the object-level
+      failure here is on the supply and destruction side, and the identifier - not a principal - is the whole authority needed.'
+    exploitability_description: 'One request per effect, anonymous: the save route under the parameterised spelling binds
+      whatever body and identifier the caller sends, and the delete route takes the identifier from the path. There is no
+      principal to satisfy, no ownership field to match against and no confirmation value in the body; the only capability
+      the chain needs is knowing the spelling that reaches the handler, which ReverseProxy''s P-4 supplies and its account-plane
+      measurements demonstrate. The overwrite face is inferred from the contract (the client sends the identifier it loaded)
+      rather than observed, because the shared store reseeded during my run and an identifier changed hands mid-probe - which
+      is also the plainest evidence of the failure: the deletes I issued by identifier landed on records I had not written.'
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: none
+      confidentiality: none
+      integrity: high
+      availability: low
+    risk: 9.2
+    band: critical
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:H/VA:L/SC:N/SI:H/SA:L
+    cia:
+      confidentiality: none
+      integrity: high
+      availability: low
+    mining: sufficient
+    scope: in
+  - id: IA-1
+    key: Service:library-catalog::IA-1
+    unit: Service:library-catalog
+    disposition: precursor
+    capability: Make the catalogue's own response carry a caller-chosen row set and caller-chosen row values - the whole store
+      on an unvalidated sentinel, or rows with values it never stored.
+    impact_description: 'No end damage is claimed by this row. Everything the catalogue can reach is already public by its
+      own contract - the rows carry no state, owner or restriction field, and the whole store is returned to any anonymous
+      caller - so authoring the row set adds no disclosure here, and the data-theft outcome the sink would otherwise reach
+      (reading other tables of the same database, where credentials and unpublished content live) is scored by RESTApi:api
+      as its threat-1 and is not re-filed. What the row records is the capability itself: this read interface cannot state
+      what it published.'
+    exploitability_description: 'One anonymous request, no account and no victim: the statement shape is mapped (quote, comment,
+      ORDER BY for arity, UNION for alignment), and even without the injection the zero selector returns the whole store.
+      The capability is complete on this interface; the missing piece is a target whose rows are not already public, which
+      is a property of another unit''s data, not of this request.'
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: none
+      confidentiality: none
+      integrity: none
+      availability: none
+    risk: 0.0
+    band: none
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:N/SC:N/SI:N/SA:N
+    cia:
+      confidentiality: none
+      integrity: none
+      availability: none
+    mining: sufficient
+    scope: in
+  - id: IA-2
+    key: Service:library-catalog::IA-2
+    unit: Service:library-catalog
+    disposition: precursor
+    capability: Make the catalogue instruct every reader's browser to contact a host of the writer's choosing, through the
+      cover address republished on each row.
+    impact_description: 'No end damage is claimed by this row. The channel is real and already live - rows carry absolute
+      third-party addresses and the client fetches them - but the harm needs the field to be set by an authoring principal,
+      and the write path belongs to book-management and was deliberately not exercised, so no reader was made to contact a
+      host of my choosing. The capability recorded is the delivery channel: whoever can write a cover value can direct every
+      reader''s browser at that host, disclosing the reader''s network identity and the fact of the visit, and can present
+      arbitrary imagery in the catalogue''s own card.'
+    exploitability_description: 'Reading the catalogue costs one anonymous request and needs no interaction beyond visiting
+      it; the writer''s side needs a book write, which this unit did not perform because it is another unit''s surface and
+      would have stored attacker content. There is no defence to circumnavigate on the read side: the value is republished
+      as stored and the client binds it without validation. The row therefore stops at the channel and names the write capability
+      as the missing piece.'
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: none
+      confidentiality: none
+      integrity: none
+      availability: none
+    risk: 0.0
+    band: none
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:N/SC:N/SI:N/SA:N
+    cia:
+      confidentiality: none
+      integrity: none
+      availability: none
+    mining: sufficient
+    scope: in
+  - id: IA-1
+    key: Service:sign-in::IA-1
+    unit: Service:sign-in
+    disposition: threat
+    capability: Decide, for any submitted name, whether an account exists and whether it is administratively disabled, without
+      possessing a credential.
+    impact_description: 'Victim: the end users whose accounts are in the directory, and the account namespace itself. Damaged
+      property: confidentiality, low. For every name it is tried against, the service discloses whether an account exists
+      and, if it does, whether it is administratively disabled - two facts about an account that no unauthenticated caller
+      is entitled to. The disclosure is per-name, exact (the message is the verdict, not a statistical signal) and reaches
+      no record contents, which bounds it to membership and administrative state.'
+    exploitability_description: One unauthenticated JSON POST per name, with any password; the response wording carries the
+      verdict and timing carries nothing (0.058-0.095 s across all three paths, so the oracle is not even timing-dependent).
+      No account, no session, no victim action and no second phase are needed; the only cost is one request per name, which
+      is ordinary fetch plus submit traffic. The primitive is therefore usable as a directory-mapping step by any unauthenticated
+      party.
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: none
+      confidentiality: low
+      integrity: none
+      availability: none
+    risk: 6.9
+    band: medium
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:N/VA:N/SC:L/SI:N/SA:N
+    cia:
+      confidentiality: low
+      integrity: none
+      availability: none
+    mining: sufficient
+    scope: in
+  - id: IA-2
+    key: Service:sign-in::IA-2
+    unit: Service:sign-in
+    disposition: precursor
+    capability: Hold a session identifier across the moment another party authenticates that session, i.e. keep a session
+      that becomes authenticated without being its original holder.
+    impact_description: 'No end damage follows from this row on its own. The capability is the fixation precondition - an
+      identifier that is minted for anonymous callers, is resolvable from a request path, and is not replaced when the session
+      becomes authenticated - but the delivery that would turn it into a victim''s authenticated session is absent from this
+      surface: the SPA never carries a URL-borne identifier into its credential POST and the service plants no cookie when
+      it adopts one from the URL. No victim is reached without that step, so the row is a precursor and names the gap.'
+    exploitability_description: 'The precondition costs one unauthenticated request: any guarded route mints an identifier
+      and publishes it in the Location header. What remains unfilled is the delivery phase - putting that identifier into
+      the request in which a victim authenticates - which needs a planting primitive this surface does not provide (an arbitrary
+      value is refused, so only a service-minted identifier can be used). The technical check of the invariant is a before-and-after
+      comparison of the identifier across a real login, which I ran on my own account.'
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: none
+      confidentiality: none
+      integrity: none
+      availability: none
+    risk: 0.0
+    band: none
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:N/SC:N/SI:N/SA:N
+    cia:
+      confidentiality: none
+      integrity: none
+      availability: none
+    mining: sufficient
+    scope: in
+  - id: IA-3
+    key: Service:sign-in::IA-3
+    unit: Service:sign-in
+    disposition: precursor
+    capability: Cause the service to decrypt and deserialise caller-supplied bytes into an identity, so that identity itself
+      is chosen by the caller rather than proven.
+    impact_description: 'No end damage is reached with the evidence in hand. The sink exists - a caller-held value is decrypted
+      and deserialised into a principal on every request, with no integrity tag and no server-side revocation - but the binding
+      is enforced: a tampered value is deleted, and none of the forty widely published Shiro default keys decrypts the issued
+      value, so no caller can mint one. No victim and no damaged property are reachable; the row is a precursor whose only
+      gap is key custody, and it records that the default-key forgery direction was tested and falsified rather than assumed.'
+    exploitability_description: Reaching the sink requires no request capability at all beyond carrying the cookie; reaching
+      the effect requires the symmetric key that the verifier holds. The strip path (an unsigned fallback that would accept
+      a base64 serialised stream directly) was deliberately not probed, because submitting a serialisation stream is a payload
+      rather than a mechanics probe; it remains an unprobed gap beside the key. Everything else was measured offline against
+      a value the service itself issued.
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: none
+      confidentiality: none
+      integrity: none
+      availability: none
+    risk: 0.0
+    band: none
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:N/SC:N/SI:N/SA:N
+    cia:
+      confidentiality: none
+      integrity: none
+      availability: none
+    mining: sufficient
+    scope: in
+  - id: IA-4
+    key: Service:sign-in::IA-4
+    unit: Service:sign-in
+    disposition: precursor
+    capability: Make the authenticated account differ from the account another reader of the same request would report, and
+      carry a caller-chosen principal spelling into downstream role resolution.
+    impact_description: 'No end damage follows: the divergence needs a second reader of the credential body that consumes
+      the first duplicate member or the stored spelling, and no such reader exists on this surface. The winning occurrence
+      is the one the credential is actually verified against, so the duplicate alone changes no record and discloses nothing.
+      The row is a precursor: the capability it yields is a principal mismatch, which only damages something in a unit where
+      two readers of one request disagree.'
+    exploitability_description: Two ordinary unauthenticated requests establish the precedence rule (both orderings), and
+      one more establishes the case-folding behaviour; no account, no victim action and no second phase. The precondition
+      is only that some other component treats the same body as authoritative - which this unit cannot show.
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: none
+      confidentiality: none
+      integrity: none
+      availability: none
+    risk: 0.0
+    band: none
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:N/SC:N/SI:N/SA:N
+    cia:
+      confidentiality: none
+      integrity: none
+      availability: none
+    mining: sufficient
+    scope: in
+  - id: IA-5
+    key: Service:sign-in::IA-5
+    unit: Service:sign-in
+    disposition: threat
+    capability: Retain an authenticated session, with the account's full authority, after the account's credential is reset
+      and after the account is disabled - i.e. survive both remediation actions an operator has.
+    impact_description: 'Victim: the end user whose account is being remediated, and the application''s access-control state.
+      Damaged properties: confidentiality and integrity, both low (bounded to what the already-issued session carried). After
+      an operator resets the account''s credential or disables it, the session granted under the old state keeps answering
+      as that user: the guarded route returns the authenticated confirmation, while the old credential is refused, the newly
+      set credential is the only one that logs in, and a fresh login on the disabled account is refused as disabled. The eviction
+      the remediation was meant to perform does not happen, so an intruder who already holds a session keeps the account''s
+      authority for the remaining lifetime of that identifier - and nothing in the service can address that session per account.'
+    exploitability_description: 'The chain needs one application primitive the intruder already has - a live session for the
+      victim''s account - and then no further action at all: the operator''s routine credential reset or account disable does
+      not touch it, and the session keeps passing the guarded chain on every subsequent request (verified with repeated reads,
+      so this is not a race). No victim interaction beyond the routine remediation, no extra phase, and no defence to circumnavigate:
+      the eviction control simply is not wired to the session store. The proof was run entirely on my own probe account, with
+      the enabled flag restored afterwards and only the credential left at the value the reset endpoint sets.'
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: low
+      user_interaction: none
+      confidentiality: low
+      integrity: low
+      availability: none
+    risk: 5.3
+    band: medium
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:L/VI:L/VA:N/SC:L/SI:L/SA:N
+    cia:
+      confidentiality: low
+      integrity: low
+      availability: none
+    mining: sufficient
+    scope: in
+  - id: IA-1
+    key: Service:user-administration::IA-1
+    unit: Service:user-administration
+    disposition: threat
+    capability: Become any account the caller can name - its credential, a fresh session under its principal, and every action
+      attributed to it - by resetting the credential to the published default and signing in.
+    impact_description: 'Victim: the end user whose account is named, and - through the account that administers the system
+      - the application and its whole persisted state. Damaged properties: confidentiality, high, and integrity, high. The
+      caller holds the account: its credential is now a value the caller knows, the account''s own personal data, its role-bound
+      reach and, for the administrator, the complete back-office surface are readable under the victim''s principal, and every
+      write the caller performs is attributed to the victim. The credential is replaced, so the owner''s access is destroyed
+      along with it - that lockout is the same replacement seen from the other side and is not counted a second time as availability
+      loss. Integrity is high rather than low because the change is to the account''s identity itself, not to one of its fields:
+      the victim cannot undo it, an operator''s roster is the only place it is visible, and that roster has answered the generic
+      error envelope since the registration unit''s fault.'
+    exploitability_description: 'Two requests. The reach is ReverseProxy''s measured namespace reach - the parameterised spelling
+      that answers an anonymous caller and whose canonical twin is terminated at 200/0 B - so the reset handler is treated
+      as already reachable, not as a new primitive this row needs. One write names the account and answers 重置密码成功; the console
+      prints the value it wrote, so the attacker does not have to derive it. One login with that value returns 200 as the
+      named account. No account, no credential, no token, no ownership claim and no victim action are needed; the victim does
+      not have to be present, and because the reset leaves the account''s earlier session answering, the takeover is silent
+      to its owner until their next sign-in is refused. The one capability the chain needs beyond the reach is knowing the
+      default, and that is published in the client rather than obtained - so it adds no phase. Measured on one reader account;
+      the handler''s only input is the account name, which is what carries the same two requests to any other name on the
+      store. Enumeration is not a precondition: names are user-chosen, the login route answers membership per name (Service:sign-in
+      threat-1), and the registration route answers it without a credential - the roster read would have been the convenient
+      source and it is currently broken, which removes a gift rather than a step.'
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: none
+      confidentiality: high
+      integrity: high
+      availability: none
+    risk: 9.9
+    band: critical
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:N/SC:H/SI:H/SA:N
+    cia:
+      confidentiality: high
+      integrity: high
+      availability: none
+    mining: sufficient
+    scope: in
+  - id: IA-1
+    key: WebPresentation:jotter-reading::reading-pages::IA-1
+    unit: WebPresentation:jotter-reading::reading-pages
+    disposition: precursor
+    capability: Make the application's own origin issue a credential-carrying GET to any API path the link's author chooses,
+      from a crafted /jotter/article?id= link.
+    impact_description: 'No end damage is claimed by this row, because the primitive''s reach is bounded by what a GET can
+      do on this surface and that reach is already scored elsewhere. Reads land in the victim''s own page: the forced response
+      is not an article, so the page renders its three empty bindings and the data never travels to the link''s author - there
+      is no exfiltration channel, only a request the reader did not intend. The one state-changing GET is logout, whose damage
+      IdentificationSystem''s threat-1 already measures as an end user''s session availability, low; this row supplies a second,
+      same-origin vehicle for that damage rather than a second damage. The one refinement it adds to that row''s scope is
+      that no third-party page is needed: the application''s own client builds the request, so a link on the application''s
+      own origin - including an anchor inside an article body - is enough to steer it.'
+    exploitability_description: 'The chain is one link and one click: the author writes /jotter/article?id=../logout and the
+      reader follows it, at which point the page builds /api/article/../logout, the browser''s URL parser removes the dot
+      segment, and a GET for /api/logout leaves the reader''s browser with the reader''s cookie attached - no third-party
+      origin, no form, no payload and no privilege. The victim''s action is specific rather than routine (following a crafted
+      link), which is why the interaction is active rather than passive. The steps that would turn the same primitive into
+      a data exposure are absent rather than merely hard: the response is bound to a record shape it does not match, so the
+      fetched data stays inert in the victim''s page, and encoded separators are refused by the container, so only the raw
+      dot-segment form works.'
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: active
+      confidentiality: none
+      integrity: none
+      availability: none
+    risk: 0.0
+    band: none
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:A/VC:N/VI:N/VA:N/SC:N/SI:N/SA:N
+    cia:
+      confidentiality: none
+      integrity: none
+      availability: none
+    mining: sufficient
+    scope: in
+  - id: IA-1
+    key: WebPresentation:register::registration-page::IA-1
+    unit: WebPresentation:register::registration-page
+    disposition: precursor
+    capability: Issue duplicate registrations of one name from the page's own submit, with no orchestration and no account,
+      because the form has no pending state, no single-submit guard and no per-intent key.
+    impact_description: 'No end damage is claimed by this row, because the damage at the end of this chain belongs to another
+      unit''s row. Service:register threat-1 already assesses it: the account store is left holding an identity whose own
+      uniqueness lookup calls the name free while its own constraint refuses a re-submission and its own credential lookup
+      reports the account absent, and the administrative roster - the only surface that enumerates accounts - answered the
+      generic error envelope for the whole observation window. That is availability and integrity, both low, on the application''s
+      account-administration plane. What this unit adds is not another instance of that damage but the observation that reaching
+      it costs nothing: a single double-click on a public form, over a check that does not serialise, with no account required
+      and no harness to build.'
+    exploitability_description: 'The chain needs no privilege, no account and no technique. The page is public, so the prerequisite
+      the duplication class assumes - a legitimate authenticated user entitled to perform the operation once - does not even
+      apply. One activation posts five fields; nothing on the page records that a request is in flight, so a second activation
+      posts the same five fields again, and the body carries no nonce or key by which the service could tell one intended
+      registration from two. The measured overlap the registration unit documented with a four-way parallel harness is therefore
+      reachable from the form''s own interface by an ordinary impatient gesture - and by anyone who can send the same two
+      requests directly. I did not fire the burst: that measurement already stands, and the store it broke has not recovered.'
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: none
+      confidentiality: none
+      integrity: none
+      availability: none
+    risk: 0.0
+    band: none
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:N/SC:N/SI:N/SA:N
+    cia:
+      confidentiality: none
+      integrity: none
+      availability: none
+    mining: sufficient
+    scope: in
+  precursors: 0
+  prior_art_reused: 2
+  class_binding_rate: 1.0
+  legacy_v2: null
+  legacy_v4: null
+  notes: 'Deterministic v5 block, reviewed by impact_review.yaml. 27 rows: 14 threats, 13 precursors; 14 green and 1 red (IntegrationSystem:cross-origin-policy::IA-1,
+    scope=out, risk 0). All rows carry a capability; 2 prior-art records reused in the primary (non-abandoned) set (6 across
+    all files including abandoned copies). DISCREPANCY: risk_total 100.0 / 6 medium + 7 critical excludes the 14th threat
+    file. The consumed Service:register/threat-1.yaml (risk 6.9, concurrent-duplication) has its parent model in produced/Service-register/,
+    so the metric cannot stamp its schema and drops it from the total. Summing the 14 impact threat rows gives 106.9 with
+    7 medium + 7 critical; report both.'
+narrowing:
+  threats_total: 57
+  broad: 31
+  narrow: 26
+  breadth_unknown: 0
+  substantial_specs: 40
+  well_formed_specs: 0
+  narrow_without_well_formed: 26
+  broad_without_well_formed: 31
+  notes: 'The deterministic block counts per-vuln matched rows, not distinct threat files: 57 rows over 14 distinct threats
+    (a threat is counted once per vuln it matches). Distinct-threat judgement: 7 broad (business-logic, sql-injection, mass-assignment,
+    bfla x3, idor) and 7 narrow (csrf-navigation-get, stored-artifact-disclosure, concurrent-duplication, username-enumeration-oracle,
+    session-management, account-recovery, xss-stored). 10 of 14 threats dispatched specs; 8 have 3 or more specs (substantial)
+    and every one of those sets has an overlapping primary axis (0 well-formed). The four threats with no spec are the low-risk
+    tail left by the 7M stop: IdentificationSystem threat-1, Service:navigation-menu threat-1, Service:register threat-2,
+    Service:sign-in threat-2. DISCREPANCY: metric downstream spec_count is computed against each vuln''s filtered spec rows,
+    so the same threat shows 3 to 13 specs depending on the vuln; the true counts by provenance are 4, 6, 3, 5, 4 for the
+    five GT-relevant threats (see the narrow table in measurements.md).'
+per_vuln:
+- vuln_id: white-jotter-001
+  type: Weak or Default Credentials
+  location: http://wj:8443/api/login
+  discovery: partial
+  confidence: 0.4
+  l0_l1:
+    core_score: 1.0
+    enriched_score: 1.0
+    floor_met: true
+    full_core: true
+    notes: The expected unit resolves through the alias sign-in (L1 Service:sign-in, business_function_slug account-sign-in).
+      2 of 3 expected L0 endpoints exist; /api/logout is absent from the graph. Typed backbone 1/1, service-to-system edges
+      3/3. Core 1.0 is a good unit, but the missing /api/logout is a real L0 recall gap.
+    evidence:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/threat_modeller/consumed/Service-sign-in/Service-sign-in.yaml
+    - metrics.yaml#per_vuln[white-jotter-001].graph
+  threat_model:
+    threat_candidate: true
+    sharpness: 3
+    bound_class: username-enumeration-oracle
+    bound_class_is_parent: false
+    breadth: narrow
+    breadth_notes: Bound class username-enumeration-oracle is a leaf in the suite (skills/web-vulnerability-testing/weak-credential-discovery/username-enumeration-oracle/SKILL.md,
+      0 variant leaves). The unit model also binds session-management (leaf).
+    direction_diversity: 2 threats on the expected unit (username-enumeration-oracle, session-management) and 5 vulnerabilities;
+      the shipped default-credential direction is absent.
+    notes: 'The expected unit completed and its enumeration threat is sharp: it names POST /api/login, the three-message state
+      transition, probe evidence, CVSS factors, risk 6.9 (medium), and a unique direction. However the GT fault is weak/default
+      credentials, not enumeration: the unit model calls the reset-to-123 "a weak-credential fault owned by user-administration"
+      and never binds the shipped admin/123 pair. threat_candidate is true only because the metric class hint matches the
+      word credential; the GT class is not modelled.'
+    evidence:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/threat_modeller/consumed/Service-sign-in/threat-1.yaml
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/threat_modeller/consumed/Service-sign-in/Service-sign-in.yaml
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/threat_modeller/notes.yaml
+  hunter:
+    spec_candidate: true
+    sharpness: 3
+    spec_count: 4
+    substantial: true
+    primary_axes:
+    - state-class
+    - state-class
+    - state-class
+    - state-class
+    axes_overlap: true
+    well_formed: false
+    discrimination: substantial_but_overlapping
+    completeness: 4/4 username-enumeration specs carry 5/5 required fields; the family is one dimension on state-class (absent-vs-wrong,
+      disabled-vs-enabled are both state-class values, not distinct primary axes).
+    procedure_grounding: Top-level skill_concretised_procedure is 7/7 populated in the list-walk spec (deterministic procedure_fields=0
+      measures provenance.skill_procedure, which is absent in all 40 specs; see measurement defect F-M2).
+    symptom_discrimination: Non-generic symptoms with a list-order control and a per-name latency control; not a status-only
+      check.
+    verify_claims: All 4 ratified; none dropped. No spec submits the shipped admin/123 pair.
+    notes: The hunter produced 4 sharp enumeration specs and 3 confirmed pods, but none tests the GT default credential. The
+      account-recovery semicolon spec (Service-user-administration__threat-1) would have submitted 123 after a reset but ran
+      on the substituted host and only probed test/123 and editor/123 on the direct port.
+    evidence:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/hunter/test-specs/Service-sign-in__threat-1/consumed/username-enumeration-oracle__absent-vs-wrong-credential__exact-spelling__list-walk.yaml
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/hunter/notes.yaml
+  pod:
+    run: true
+    confirmed: false
+    runner_quality: 2
+    triager_quality: 2
+    variant_quality: Variant sets exist (1-3 per pod). The account-recovery v1 derived variant changed the verification symptoms
+      (off-spec, recorded by the triager); its confirmation does not confirm the base symptom.
+    notes: Three enumeration pods confirmed (list-walk, pairwise, case-variant); one was lost to a triager degradation. No
+      GT default-credential pod. The account-recovery semicolon-matrix administrator pod terminaled technical-infeasibility
+      on the substituted upstream; on the direct port it found test/123 and editor/123 but never submitted admin/123. confirmed=false
+      is the GT confirmation, not the metric per-vuln pod_confirmed=true (which aggregates the enumeration pods).
+    evidence:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/username-enumeration-oracle__absent-vs-wrong-credential__exact-spelling__list-walk/c84d2ada-e05c-42ba-bb12-8386119796f8.yaml
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/account-recovery__semicolon-matrix__anonymous__administrator/c84d2ada-e05c-42ba-bb12-8386119796f8.yaml
+- vuln_id: white-jotter-002
+  type: Access Control Bypass / Unauthorized Read or Write
+  location: http://wj:8443/api/
+  discovery: identified
+  confidence: 0.82
+  l0_l1:
+    core_score: 0.6667
+    enriched_score: 0.6
+    floor_met: true
+    full_core: false
+    notes: 'The expected System AuthorizationSystem resolves, but none of its 3 expected L0 admin endpoints exists in the
+      graph (0/3), so l0_present is false. Link present; both required inbound AUTHORIZED_BY edges are absent (systems 0/2).
+      Core 0.667 is the floor artifact: unit-only presence carries it.'
+    evidence:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/threat_modeller/consumed/AuthorizationSystem/AuthorizationSystem.yaml
+    - metrics.yaml#per_vuln[white-jotter-002].graph
+  threat_model:
+    threat_candidate: false
+    sharpness: 3
+    bound_class: broken-function-level-authorization
+    bound_class_is_parent: true
+    breadth: broad
+    breadth_notes: Bound class broken-function-level-authorization is a suite parent with 3 variant leaves (bfla-deferred-execution,
+      bfla-client-identity-trust, bfla-alternate-path), so the class stays broad. The threat set actually uses at least two
+      variant shapes (authc-filter and edge-prefix).
+    direction_diversity: 3 threats on ReverseProxy (anonymous roster/RBAC read, anonymous privileged write, source-map disclosure);
+      the expected AuthorizationSystem unit itself has 0 threats.
+    notes: The threat binds the GT class and fault exactly (path-canonicalisation BFLA) and was confirmed, but on the L1 edge
+      unit ReverseProxy rather than the expected System AuthorizationSystem. The metric threat_candidate is false on the unit
+      match; direction reachability is real and the verdict identified. This is a unit-granularity split, not a missing direction.
+    evidence:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/threat_modeller/consumed/ReverseProxy/threat-2.yaml
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/threat_modeller/consumed/ReverseProxy/threat-1.yaml
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/threat_modeller/consumed/AuthorizationSystem/AuthorizationSystem.yaml
+  hunter:
+    spec_candidate: false
+    sharpness: 3
+    spec_count: 6
+    substantial: true
+    primary_axes:
+    - guard
+    - guard
+    - guard
+    - guard
+    - guard
+    - guard
+    axes_overlap: true
+    well_formed: false
+    discrimination: substantial_but_overlapping
+    completeness: 6 BFLA specs; 5/5 required fields each. All primary axes are guard, so the set is one dimension even though
+      the secondary values (authc-filter, edge-prefix, vhost, canonical) differ.
+    procedure_grounding: Top-level skill_concretised_procedure 7/7 populated in the confirmed spec (deterministic 0 on the
+      provenance path; see defect F-M2).
+    symptom_discrimination: The confirmed spec carries a canonical-denial-beside-injected-success differential and a same-length
+      route control; not a status-only check.
+    verify_claims: 6 ratified; 3 sibling path-variant specs in ReverseProxy__threat-1 were dropped with no recorded reason.
+    notes: The hunter authored the GT direction correctly, but on ReverseProxy; the expected AuthorizationSystem unit has
+      no spec of its own. spec_candidate is false only on the unit match.
+    evidence:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/hunter/test-specs/ReverseProxy__threat-2/consumed/broken-function-level-authorization__authc-filter__menu-read__read.yaml
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/hunter/test-specs/ReverseProxy__threat-2/consumed/
+  pod:
+    run: true
+    confirmed: true
+    runner_quality: 2
+    triager_quality: 2
+    variant_quality: v0 runner-failure (both probes failed on the substituted upstream); v1 confirmed on headers inside a
+      ~61 s white-jotter window. The triager recorded that re-confirmation is outstanding. Derived variant basis valid for
+      v1.
+    notes: The authc-filter/menu-read pod confirmed GET /api/menu 302+JSESSIONID vs GET /api/;/menu 200 application/json,
+      no Set-Cookie. It is a real GT confirmation but depended on a brief upstream window; v0 failed. clean=true but one interpretation
+      classification is empty.
+    evidence:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/broken-function-level-authorization__authc-filter__menu-read__read/c84d2ada-e05c-42ba-bb12-8386119796f8.yaml
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/broken-function-level-authorization__authc-filter__menu-read__read/experiment-log/1.yaml
+- vuln_id: white-jotter-003
+  type: Stored XSS
+  location: http://wj:8443/api/admin/content/article
+  discovery: identified
+  confidence: 0.95
+  l0_l1:
+    core_score: 0.6667
+    enriched_score: 0.7333
+    floor_met: true
+    full_core: false
+    notes: The expected unit resolves via the alias article-management. The expected POST /api/admin/content/article endpoint
+      is absent from L0 (l0_present false); the unit links to 2 other endpoints. Typed 2/2; systems 2/3 (AUTHORIZED_BY absent).
+    evidence:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/threat_modeller/consumed/Service-article-management/Service-article-management.yaml
+    - metrics.yaml#per_vuln[white-jotter-003].graph
+  threat_model:
+    threat_candidate: true
+    sharpness: 3
+    bound_class: xss-stored
+    bound_class_is_parent: false
+    breadth: narrow
+    breadth_notes: Bound class xss-stored is a leaf (the xss parent has xss-dom and xss-stored variants; xss-stored has none).
+    direction_diversity: 2 threats on the expected unit (xss-stored, idor); the stored-XSS threat names the exact GT write
+      route and reader sink.
+    notes: 'The expected unit binds the GT class and fault exactly: the threat names the anonymous write path, the verbatim
+      storage, the innerHTML sink and the missing CSP, with evidence, risk 9.3 (critical) and the exact victim. Confirmed
+      by two pods. This is the strongest threat of the trial.'
+    evidence:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/threat_modeller/consumed/Service-article-management/threat-1.yaml
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/threat_modeller/consumed/Service-article-management/Service-article-management.yaml
+  hunter:
+    spec_candidate: true
+    sharpness: 3
+    spec_count: 3
+    substantial: true
+    primary_axes:
+    - write-path
+    - write-path
+    - write-path
+    axes_overlap: true
+    well_formed: false
+    discrimination: substantial_but_overlapping
+    completeness: 3 xss specs (event-handler element, srcdoc frame, id-addressed overwrite), 5/5 required fields each; all
+      primary axes are write-path, so the set is one dimension by the structural rule.
+    procedure_grounding: Top-level skill_concretised_procedure 7/7 populated (deterministic 0 on the provenance path; see
+      defect F-M2).
+    symptom_discrimination: Each spec carries an execution marker (window.__xss_marker) and a fresh-browser load, with the
+      canonical-path refusal as the control; not a status-only check.
+    verify_claims: 3 ratified; none dropped. The id-addressed overwrite spec terminaled watchdog, not a verify-claims drop.
+    notes: The spec set is sharp and confirmed, but the three specs differ only by write path, so the discrimination is one-dimensional.
+    evidence:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/hunter/test-specs/Service-article-management__threat-1/consumed/xss-stored__anonymous-create__srcdoc-frame.yaml
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/hunter/test-specs/Service-article-management__threat-1/consumed/
+  pod:
+    run: true
+    confirmed: true
+    runner_quality: 3
+    triager_quality: 2
+    variant_quality: Event-handler and srcdoc variants both confirmed. The srcdoc export is successful/symptom-confirmed with
+      clean=false, a triager inconsistency; the id-addressed overwrite pod consumed the watchdog (3 iterations).
+    notes: Two pods confirmed stored XSS with real script execution (title PWNED, window.__xss_marker=EXEC_OK) and no CSP;
+      one overwrite pod watchdogged. The triager left one confirmed pod clean=false.
+    evidence:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/xss-stored__anonymous-create__srcdoc-frame/c84d2ada-e05c-42ba-bb12-8386119796f8.yaml
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/xss-stored__anonymous-create__event-handler-element/c84d2ada-e05c-42ba-bb12-8386119796f8.yaml
+- vuln_id: white-jotter-004
+  type: Remote Code Execution
+  location: http://wj:8443/api/admin/user
+  discovery: missed
+  confidence: 0.9
+  l0_l1:
+    core_score: 0.6667
+    enriched_score: 0.6
+    floor_met: true
+    full_core: false
+    notes: The expected System AuthorizationSystem resolves but the expected GET /api/admin/user endpoint is absent from L0
+      and both AUTHORIZED_BY inbound edges are absent. Core 0.667 is unit-only presence.
+    evidence:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/threat_modeller/consumed/AuthorizationSystem/AuthorizationSystem.yaml
+    - metrics.yaml#per_vuln[white-jotter-004].graph
+  threat_model:
+    threat_candidate: false
+    sharpness: 0
+    bound_class: ''
+    bound_class_is_parent: null
+    breadth: unknown
+    breadth_notes: No threat binds a logging sink, a lookup evaluation or a code-execution class, so there is no class to
+      measure for breadth.
+    direction_diversity: 0 JNDI/logging directions; the expected AuthorizationSystem model has 0 threats.
+    notes: No threat exists for the JNDI/Log4j2 RCE. The expected unit has 0 threats; Service:register and Service:user-administration
+      do not bind a logging sink; Service:operations-telemetry explicitly refused log-injection ("no sink/log seen"). A case-insensitive
+      search of the hunting tree finds no jndi/log4j/log4shell. The metric class_candidate=true rows come from the metric
+      matching the GT type hints against the whole resolved unit-model text, not from any RCE threat.
+    evidence:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/threat_modeller/consumed/AuthorizationSystem/AuthorizationSystem.yaml
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/threat_modeller/abandoned/Service-operations-telemetry/Service-operations-telemetry.yaml
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/threat_modeller/notes.yaml
+  hunter:
+    spec_candidate: false
+    sharpness: 0
+    spec_count: 0
+    substantial: false
+    primary_axes: []
+    axes_overlap: null
+    well_formed: false
+    discrimination: insufficient
+    completeness: No spec. The suite has no JNDI/logging-sink class (rce holds only rce-command-injection and rce-pipeline-execution).
+    procedure_grounding: n/a
+    symptom_discrimination: n/a
+    verify_claims: n/a
+    notes: No spec and no pod was ever produced for the logging-sink direction.
+    evidence:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/hunter/test-specs/
+  pod:
+    run: false
+    confirmed: false
+    runner_quality: 0
+    triager_quality: 0
+    variant_quality: n/a
+    notes: No pod. The metric per-vuln pod_run=true aggregates class-matched XSS/SQLi/source-map pods, not an RCE pod.
+    evidence:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/
+- vuln_id: white-jotter-005
+  type: SQL Injection
+  location: http://wj:8443/api/search
+  discovery: identified
+  confidence: 0.96
+  l0_l1:
+    core_score: 0.6667
+    enriched_score: 0.8
+    floor_met: true
+    full_core: false
+    notes: The expected unit resolves via the alias library-catalog. The expected GET /api/search endpoint is absent from
+      L0 (l0_present false), though the unit links to 4 other endpoints. Typed 2/2; systems 2/2.
+    evidence:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/threat_modeller/consumed/Service-library-catalog/Service-library-catalog.yaml
+    - metrics.yaml#per_vuln[white-jotter-005].graph
+  threat_model:
+    threat_candidate: false
+    sharpness: 3
+    bound_class: sql-injection
+    bound_class_is_parent: true
+    breadth: broad
+    breadth_notes: Bound class sql-injection is a suite parent with 6 variant leaves (boolean-blind, OAST, second-order, union,
+      time-blind, error-based), so it is broad. The spec set uses only the union shape.
+    direction_diversity: 1 threat on RESTApi:api (sql-injection) plus 1 mass-assignment; the expected book-search unit itself
+      has 0 threats.
+    notes: The threat binds the exact GT fault at the exact GT endpoint (/api/search?keywords, concatenated LIKE predicate)
+      with ordered evidence, risk 9.2 (critical) and a confirmed private-row read. It is filed on RESTApi:api, not the expected
+      book-search unit (alias library-catalog), whose own model has 0 threats. Metric threat_candidate is false on the unit
+      match; direction reachability is true.
+    evidence:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/threat_modeller/consumed/RESTApi-api/threat-1.yaml
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/threat_modeller/consumed/Service-library-catalog/Service-library-catalog.yaml
+  hunter:
+    spec_candidate: false
+    sharpness: 3
+    spec_count: 5
+    substantial: true
+    primary_axes:
+    - extraction-channel
+    - extraction-channel
+    - extraction-channel
+    - extraction-channel
+    - extraction-channel
+    axes_overlap: true
+    well_formed: false
+    discrimination: substantial_but_overlapping
+    completeness: 5 SQLi specs (boolean-envelope, boolean-row-delta, union-rendered x3), 5/5 required fields each; all primary
+      axes are extraction-channel, so the set is one dimension.
+    procedure_grounding: Top-level skill_concretised_procedure 7/7 populated (deterministic 0 on the provenance path; see
+      defect F-M2).
+    symptom_discrimination: The confirmed spec renders a caller-chosen id and an engine-list in the catalogue fields; the
+      boolean specs pair a row-delta with a control. Not a status-only check.
+    verify_claims: 5 ratified; none dropped. The unpublished-content spec node-timed out rather than dropping.
+    notes: The spec set is sharp and the metadata-dialect pod confirmed; the expected book-search unit has no spec of its
+      own.
+    evidence:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/hunter/test-specs/RESTApi-api__threat-1/consumed/sql-injection__union-rendered__metadata-dialect.yaml
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/hunter/test-specs/RESTApi-api__threat-1/consumed/
+  pod:
+    run: true
+    confirmed: true
+    runner_quality: 3
+    triager_quality: 3
+    variant_quality: The metadata-dialect variant confirmed with a caller-chosen id and a real MariaDB engine list. 3 siblings
+      terminaled unsuccessful (2 watchdog, 1 node-timeout); none was a variant-basis defect.
+    notes: The confirmed pod proves caller-controlled SQL text in the /api/search predicate with id=999 and the engine list
+      in the cover field. Two watchdog and one node-timeout siblings did not reach a verdict.
+    evidence:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/sql-injection__union-rendered__metadata-dialect/c84d2ada-e05c-42ba-bb12-8386119796f8.yaml
+- vuln_id: white-jotter-006
+  type: Arbitrary File Read
+  location: http://wj:8443/api/file/
+  discovery: missed
+  confidence: 0.88
+  l0_l1:
+    core_score: 0.3333
+    enriched_score: 0.4
+    floor_met: true
+    full_core: false
+    notes: The expected unit resolves via the alias media-asset-serving, but the expected GET /api/file/cover.png is absent
+      from L0, no L0-to-L1 link exists, and both EXPOSED_VIA edges are absent. Core 0.333 is the loose floor met by unit_present
+      alone; it is not a good unit.
+    evidence:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/threat_modeller/abandoned/Service-media-asset-serving/Service-media-asset-serving.yaml
+    - metrics.yaml#per_vuln[white-jotter-006].graph
+  threat_model:
+    threat_candidate: false
+    sharpness: 0
+    bound_class: ''
+    bound_class_is_parent: null
+    breadth: unknown
+    breadth_notes: No threat; the unit closed with 0 threats and was archived abandoned.
+    direction_diversity: 0 directions on the expected unit.
+    notes: The expected unit was modelled but closed with zero threats and archived abandoned. Its wellformedness note refused
+      path-traversal-lfi-rfi because the old layer answered 400 to an encoded %2e%2e and the cover-store path was never requested;
+      it never sent a request to /api/file/. The unit was authored after the 21:19Z substitution, so it had no white-jotter
+      window in which to probe the route.
+    evidence:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/threat_modeller/abandoned/Service-media-asset-serving/Service-media-asset-serving.yaml
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/threat_modeller/notes.yaml
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/threat_modeller/consumed/Service-library-catalog/Service-library-catalog.yaml
+  hunter:
+    spec_candidate: false
+    sharpness: 0
+    spec_count: 0
+    substantial: false
+    primary_axes: []
+    axes_overlap: null
+    well_formed: false
+    discrimination: insufficient
+    completeness: No spec. No Service-media-asset-serving dispatch directory exists.
+    procedure_grounding: n/a
+    symptom_discrimination: n/a
+    verify_claims: n/a
+    notes: No spec and no pod; the traversal-read skill (separator/encoding/repeated-decoding matrix) was never applied.
+    evidence:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/hunter/test-specs/
+  pod:
+    run: false
+    confirmed: false
+    runner_quality: 0
+    triager_quality: 0
+    variant_quality: n/a
+    notes: No pod for /api/file/. The double-decoded read was never requested.
+    evidence:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/
+- vuln_id: white-jotter-007
+  type: IDOR / Unauthorized Write or Overwrite
+  location: http://wj:8443/api/register
+  discovery: partial
+  confidence: 0.55
+  l0_l1:
+    core_score: 1.0
+    enriched_score: 1.0
+    floor_met: true
+    full_core: true
+    notes: The expected unit resolves via the alias register (Service:register). The expected POST /api/register endpoint
+      is present; link present; typed 2/2; systems 3/3. Full core.
+    evidence:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/threat_modeller/produced/Service-register/Service-register.yaml
+    - metrics.yaml#per_vuln[white-jotter-007].graph
+  threat_model:
+    threat_candidate: false
+    sharpness: 3
+    bound_class: mass-assignment
+    bound_class_is_parent: true
+    breadth: broad
+    breadth_notes: Bound class mass-assignment is a suite parent with 3 variant leaves (bulk-collection, nested-relation,
+      bulk-nested-relation), so it is broad. The spec set uses only the nested-role binding shape.
+    direction_diversity: 2 threats on the expected Service:register (business-logic, concurrent-duplication) plus 2 on RESTApi:api
+      (sql-injection, mass-assignment); the GT mass-assignment direction is on RESTApi:api, not the expected unit.
+    notes: The mass-assignment threat on RESTApi:api binds the GT fault (caller-authored role association on POST /api/register)
+      and the pod observed the single-role GT symptom, but the expected account-registration unit binds only business-logic
+      and concurrent-duplication. Metric threat_candidate is false on the unit/class split; semantic reachability is true.
+    evidence:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/threat_modeller/consumed/RESTApi-api/threat-2.yaml
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/threat_modeller/produced/Service-register/Service-register.yaml
+  hunter:
+    spec_candidate: false
+    sharpness: 3
+    spec_count: 4
+    substantial: true
+    primary_axes:
+    - binding-shape
+    - binding-shape
+    - binding-shape
+    - binding-shape
+    axes_overlap: true
+    well_formed: false
+    discrimination: substantial_but_overlapping
+    completeness: 4 mass-assignment specs, 5/5 required fields each; all primary axes are binding-shape (roles-array-objects,
+      roles-array-multi, roles-array-name-only), so the set is one dimension.
+    procedure_grounding: Top-level skill_concretised_procedure is 5/7 for the confirmed line (missing advanced_technique and
+      preliminary_chaining), 6/7 for name-only; this is the weakest procedure group.
+    symptom_discrimination: The multi-role spec requires the union of two role menu branches plus a role-less control; specific
+      and non-generic, but the pod did not execute it.
+    verify_claims: 4 ratified; none dropped.
+    notes: 'The spec set is sharp but the pod diverged: it registered single-role accounts (id 1 and id 2) instead of the
+      spec''s two-element roles array, so the spec''s union symptom was not executed even though the GT single-role symptom
+      appeared.'
+    evidence:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/hunter/test-specs/RESTApi-api__threat-2/consumed/mass-assignment__roles-array-multi__existing-sysadmin-plus-content-manager.yaml
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/hunter/test-specs/RESTApi-api__threat-2/consumed/
+  pod:
+    run: true
+    confirmed: false
+    runner_quality: 2
+    triager_quality: 1
+    variant_quality: The pod has variants, but the executed shape is single-role, not the spec's two-element union; the derived-variant
+      basis is one attribute off the spec.
+    notes: The mass-assignment pod observed the GT symptom in its raw trail (role id 1 -> 1575-byte admin menu, role id 2
+      -> 1000 bytes, role-less control -> []), then the host was re-pointed and it exported unsuccessful/pod-watchdog-timeout
+      with iterations 1 and no interpretations. confirmed=false is the GT pod terminal; the metric per-vuln pod_confirmed=true
+      comes from the BFLA authc-filter pod, not this one.
+    evidence:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/mass-assignment__roles-array-multi__existing-sysadmin-plus-content-manager/c84d2ada-e05c-42ba-bb12-8386119796f8.yaml
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/mass-assignment__roles-array-multi__existing-sysadmin-plus-content-manager/experiment-log/0.yaml
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/notes.yaml
+workflow:
+  modeller:
+    order: All 14 valid unit models are COMPLETED with sections technical_sharpening, trust_model, assumptions, vulnerabilities,
+      impact_assessment, threats in the canonical gate order; the 13 abandoned copies are also stamped COMPLETED but invalid.
+      No gate-transition trace is persisted, so the order is read from the final sections and the notes only. Notes order
+      is canonical where present (technical_sharpening, trust_model, wellformedness, prior_art, impact).
+    defects:
+    - '38 rejected notes writes: the bound notes tool requires `cmd`, the model sent `option`/`body`; the prompt documents
+      no argument contract (Langfuse TOOL errors: 3f0476bf79571d4c, db0802cbbc33c885, 45d33a81b3ca51e5, ...).'
+    - '9 rejected hunts_store writes: extra fields (dynamic_state_trust.note, confidence_note, control_flows_extra, interface_agreements.boundary,
+      notes) and non-dict `sections` (Langfuse 7228d2fc32fbabec, f55d3e83b199939b, c83d8d722f5fc897, a66a282de297b7b1).'
+    - '1 rejected assess_impact write: missing `id` (Langfuse 3644e04e58f24919).'
+    - 13/13 abandoned models are COMPLETED with validation.valid=false (missing assumptions, vulnerabilities, impact_assessment);
+      4 have dangling interface_agreement refs.
+    - 'Phase-note coverage is incomplete: only ReverseProxy has an `assumptions` note; Service:user-administration has only
+      wellformedness+impact and no technical_sharpening/trust_model; 10 units lack an impact_assessed note (some use the older
+      `impact` name); 6 lack technical_sharpening. Root cause is the rejected notes writes.'
+    - No gate-transition record and no phase summary for the modeller states; only the final sections are observable.
+    - No `record_skill_lesson` call was made despite the prompt requiring a lesson when a skill shaped a decision (SKILL_EVOLUTION_ENABLED=0
+      in the arm).
+    score: 0.83
+  hunter:
+    order: The eight hunter states are not persisted as notes; the spec lifecycle is observable (37 ratified, 3 dropped) and
+      37 pod dirs match the 37 ratified specs. 10 of 14 threats dispatched specs; the four lowest-risk threats were never
+      dispatched before the 7M stop. The three dropped specs have no pod dir.
+    defects:
+    - 'The 3 dropped BFLA path-variant specs record `status: dropped` but no drop reason; the verify-claims drop reasons are
+      absent from the artifact.'
+    - 3 account-recovery specs lack the `assumptions` field (4/5 required fields).
+    - '7 of 40 specs have an incomplete 7-field skill procedure at top level: 4 at 6/7 (missing preliminary_chaining) and
+      3 at 5/7 (missing advanced_technique and preliminary_chaining).'
+    - No hunter phase notes (the notes file holds only pod-export records), so GROUNDING/SLICE/COLLECT/DISCRIMINATE/GENERATE/WELL-FORMEDNESS/VERIFY-CLAIMS/COMPLETE
+      are unobservable.
+    - 0 `record_skill_lesson` calls.
+    - Only 2 of 40 specs cite the KB (one `kb_query:lightrag`, one `kb:jackson...`); 26/40 cite an HTTP baseline and 40/40 cite recon probes/skills, so KB grounding is
+      effectively absent.
+    score: 0.91
+  pod:
+    order: Runner -> triager -> terminal is observable in the 37 exports. 15 exports are successful/symptom-confirmed; 13
+      are pod-watchdog-timeout, 2 node-timeout, 2 technical-infeasibility, 5 no-symptom-evidence. Infrastructure failures
+      are exported unsuccessful (no fabricated domain verdict), but the watchdog terminal also swallowed an observed GT symptom
+      in white-jotter-007.
+    defects:
+    - 13/37 pods (35%) terminaled pod-watchdog-timeout; 2 more node-timed out on the runner_agent idle timeout (600 s).
+    - 3 triager degradations (`dict` object has no attribute `model_dump`) produced noise interpretations and unsuccessful/no-symptom
+      exports.
+    - The graph_view tool refused a read-only MATCH ... WHERE ... query as "write-shaped cypher", terminaling the idor destroy
+      pod as technical-infeasibility (Langfuse 662620ced27da6fb).
+    - The white-jotter-007 mass-assignment pod executed single-role registrations instead of the spec's two-element roles
+      union, and the watchdog terminal discarded the observed GT symptom.
+    - 1 successful/symptom-confirmed export carries clean=false (srcdoc); 2 exports carry an empty interpretation classification.
+    - The target substitution caused 2 technical-infeasibility terminals and a TrialTail of failed re-confirmations; the pipeline
+      has no target-identity assertion.
+    score: 0.62
+  tool_contract:
+    violations: 49
+    notes: '49 TOOL observations ended ERROR: 38 notes (schema), 9 hunts_store (schema), 1 assess_impact (schema), 1 graph_view
+      (false read-only refusal). Separately 3 triager turns failed on `dict.model_dump`. The notes and hunts_store errors
+      are retried but cost turns and left the phase notes incomplete.'
+    evidence:
+    - Langfuse session c84d2ada-e05c-42ba-bb12-8386119796f8:hunting_threat_modeller
+    - Langfuse observation 3f0476bf79571d4c
+    - Langfuse observation 7228d2fc32fbabec
+    - Langfuse observation 3644e04e58f24919
+    - Langfuse observation 662620ced27da6fb
+  prompt:
+    defects:
+    - The modeller prompt lists the `notes` tool but not its argument schema; the model sent `option`/`body` while the tool
+      requires `cmd`, producing 38 rejections.
+    - 'The pod triager prompt has a malformed heading: one sentence is split across three H1 headings ("Decision vocabulary
+      (a binary verdict plus one terminal_reason, SEPARATE", "outputs - never a slash-joined value, which the model copies
+      verbatim into", "verdict and the binary guard then degrades as unsuccessful)").'
+    notes: The composed system prompts were read from the first generation of each role. No duplicate sections and no retired
+      fault-hypothesis vocabulary; "hypothesis" appears only in the reasoning/`hypothesised` spec-status sense. The modeller
+      prompt carries the seven-state section in order.
+    evidence:
+    - Langfuse session c84d2ada-e05c-42ba-bb12-8386119796f8:hunting_threat_modeller (18:34:35 generation)
+    - Langfuse session c84d2ada-e05c-42ba-bb12-8386119796f8:ReverseProxy__threat-1:hunting_hunter (01:44:50 generation)
+    - Langfuse session c84d2ada-e05c-42ba-bb12-8386119796f8:xss-stored__id-addressed-overwrite__event-handler-element:pod_triager
+      (01:38:16 generation)
+  bound_tools:
+    defects:
+    - 'graph_view over-broad read-only guard: a MATCH ... WHERE ... CONTAINS read was refused as write-shaped cypher.'
+    - notes tool arg schema not discoverable from the prompt; 38 rejected writes.
+    - record_skill_lesson is bound and documented but never called.
+    notes: The bound surface otherwise matches the calls (hunts_store, assess_impact, notes, search_http_history/get_http_artifact,
+      exec, skill_list/skill_load, auth_store).
+  structured_output:
+    defects:
+    - 38 notes schema failures (missing cmd).
+    - 9 hunts_store schema failures (extra fields / sections not a dict).
+    - 1 assess_impact schema failure (missing id).
+    - 3 triager model_dump failures.
+    - 2 empty interpretation classifications in successful/no-symptom exports.
+    notes: The provider transport also failed 6 generation calls (2 x-opencode-session 400, 2 RemoteProtocolError, 1 ReadTimeout,
+      1 connection error); 7 model CHAIN errors carry only an opaque `<object object at ...>` status.
+  coupling:
+    defects:
+    - 'Service:register is split across families: the model is produced/Service-register/Service-register.yaml while threat-1
+      is consumed/Service-register/threat-1.yaml, leaving the threat without a parent model for the metric (and dropping 6.9
+      from risk_total).'
+    - 4 threats (IdentificationSystem threat-1, Service:navigation-menu threat-1, Service:register threat-2, Service:sign-in
+      threat-2) have no spec and no pod; they are the low-risk tail of the budget stop.
+    - 3 dropped specs have no drop reason, so the threat->spec->pod identity chain is broken at verify-claims.
+    - The deterministic per-vuln pod rows aggregate every spec whose unit or class matches, so 001/002/004/007 list pods that
+      do not belong to the GT direction.
+    notes: The 37 ratified specs each have exactly one pod dir and all 37 pod dirs resolve to a spec id; the 3 dropped specs
+      have none. That part of the chain is sound.
+  schemas:
+    artifact_defects:
+    - '13 abandoned unit models: state COMPLETED with validation.valid=false (missing assumptions, vulnerabilities, impact_assessment);
+      4 with dangling interface_agreement refs.'
+    - 3 account-recovery specs missing the `assumptions` field.
+    - 3 dropped specs missing a drop reason.
+    - Pod notes have an empty note_name and an uncontrolled symptom_status vocabulary (confirmed, observed, symptom_observed,
+      not_observed, absent, empty).
+    - 'The three notes files use three different top-level shapes: modeller {notes: [...]}, hunter [...], pod [...].'
+    lesson_defects:
+    - No skill-usage lesson record exists for the trial; 0 record_skill_lesson calls. SKILL_EVOLUTION_ENABLED=0 in the arm,
+      so this is consistent with configuration but leaves the lesson axis unmeasured.
+    notes: All 27 models parse; 14 validate and 13 abandoned copies do not. All 40 specs parse and carry YAML mappings. The
+      notes and pod exports parse.
+  memory:
+    defects:
+    - 38 rejected note writes; 26/27 modeller units lack the assumptions note and 10 lack an impact note.
+    - No hunter phase notes; only pod-export records.
+    - No skill-usage lesson records.
+    notes: 'The episodic memory that did land is substantive: the threat-modeller wellformedness/prior-art notes carry probe
+      evidence, and the pod notes record the shared-front discovery and the mass-assignment symptom. The write path is the
+      defect, not the content.'
+  adherence_score: 0.33
+token_tax:
+  source: 'trial.yaml token_spectrum (authoritative); cross-checked against GET /projects/cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/usage
+    and usage/usage.yaml (both exact matches: capped 7003040, generated 2306959, cached_input 202469888, uncached_input 4696081,
+    total 209472928, calls 2510).'
+  per_agent:
+    hunting_threat_modeller:
+      visible: 420523
+      reasoning: 353135
+      cached_input: 117276416
+      uncached_input: 645447
+      generated: 773658
+      total: 118695521
+      capped: 1419105
+      calls: 522
+    hunting_hunter:
+      visible: 145590
+      reasoning: 206124
+      cached_input: 18721920
+      uncached_input: 931062
+      generated: 351714
+      total: 20004696
+      capped: 1282776
+      calls: 291
+    pod_runner:
+      visible: 412242
+      reasoning: 670758
+      cached_input: 65934208
+      uncached_input: 2268362
+      generated: 1083000
+      total: 69285570
+      capped: 3351362
+      calls: 1614
+    pod_triager:
+      visible: 27882
+      reasoning: 70705
+      cached_input: 537344
+      uncached_input: 851210
+      generated: 98587
+      total: 1487141
+      capped: 949797
+      calls: 83
+  totals:
+    capped: 7003040
+    generated: 2306959
+    uncached_input: 4696081
+    cached_input: 202469888
+  notes: 'Capped shares: modeller 20.26%, hunter 18.32%, pod runner 47.86%, pod triager 13.56%. Generated share 1.10% of total;
+    reasoning is 56.38% of generated. Cached input is 97.73% of input and 96.67% of the raw total; the budget axis counts
+    only 4,696,081 uncached input + 2,306,959 generated = 7,003,040. Per GT vuln 1,000,434 capped; per identified 2,334,347;
+    per GT-confirmed pod 2,334,347; per ratified spec 175,076. Overshoot 3,040 (0.043%) over the 7,000,000 budget. Cache-detail
+    omitted is 0 for every agent (known zero, not unknown).'
+benchmark_scope_tightness:
+  confirmed_non_gt: 11
+  rows:
+  - spec_id: account-recovery__semicolon-matrix__anonymous__second-account
+    judgement: novel
+    notes: A name-keyed password reset to the published default 123, reached past the /api/admin gate via the semicolon spelling.
+      Not a GT bundle; the assessor treated the same reset flow as the white-jotter-001 evidence gap. Confirmed clean in 1
+      iteration.
+    evidence:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/account-recovery__semicolon-matrix__anonymous__second-account/c84d2ada-e05c-42ba-bb12-8386119796f8.yaml
+  - spec_id: concurrent-duplication__burst-escalation__duplicate-rows-and-contradictory-lookups__anonymous-only
+    judgement: novel
+    notes: Anonymous concurrent registration of one name creates duplicate rows because the uniqueness check is not atomic;
+      the roster read then answers the generic error envelope. A real new finding; duplicates the sibling parallel-burst spec.
+    evidence:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/concurrent-duplication__burst-escalation__duplicate-rows-and-contradictory-lookups__anonymous-only/c84d2ada-e05c-42ba-bb12-8386119796f8.yaml
+  - spec_id: concurrent-duplication__parallel-burst__duplicate-rows-and-contradictory-lookups__anonymous-only
+    judgement: novel
+    notes: Same fault as the burst-escalation spec, confirmed by a parallel burst (K=2 2/2, K=4 4/4, K=8 7/8). Novel class,
+      duplicate of the sibling.
+    evidence:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/concurrent-duplication__parallel-burst__duplicate-rows-and-contradictory-lookups__anonymous-only/c84d2ada-e05c-42ba-bb12-8386119796f8.yaml
+  - spec_id: idor__create__absent__no-identifier
+    judgement: duplicate
+    notes: Anonymous article creation with no identifier; the same unauthenticated article write that underpins GT white-jotter-003
+      (stored XSS). A real symptom, but the root cause is already scored by the GT XSS row.
+    evidence:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/idor__create__absent__no-identifier/c84d2ada-e05c-42ba-bb12-8386119796f8.yaml
+  - spec_id: stored-artifact-disclosure__app-bundle__none
+    judgement: novel
+    notes: The app bundle .map is served anonymously (31,369 B) with sourcesContent; bounded source disclosure. A real new
+      finding; duplicates the three sibling artifact specs.
+    evidence:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/stored-artifact-disclosure__app-bundle__none/c84d2ada-e05c-42ba-bb12-8386119796f8.yaml
+  - spec_id: stored-artifact-disclosure__css-bundle__none
+    judgement: novel
+    notes: The CSS source map is served with populated sourcesContent; same class as the app-bundle spec.
+    evidence:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/stored-artifact-disclosure__css-bundle__none/c84d2ada-e05c-42ba-bb12-8386119796f8.yaml
+  - spec_id: stored-artifact-disclosure__lazy-chunk__runtime-manifest
+    judgement: novel
+    notes: A lazy-chunk source map carries intact SFC sources absent from the served bundle; same class as the sibling artifact
+      specs.
+    evidence:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/stored-artifact-disclosure__lazy-chunk__runtime-manifest/c84d2ada-e05c-42ba-bb12-8386119796f8.yaml
+  - spec_id: stored-artifact-disclosure__vendor-bundle__none
+    judgement: novel
+    notes: The vendor source map exposes node_modules paths; same class as the sibling artifact specs.
+    evidence:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/stored-artifact-disclosure__vendor-bundle__none/c84d2ada-e05c-42ba-bb12-8386119796f8.yaml
+  - spec_id: username-enumeration-oracle__absent-vs-wrong-credential__case-variant__pairwise
+    judgement: novel
+    notes: Account-existence oracle at POST /api/login; a real finding at the GT white-jotter-001 locus but not the GT class
+      (weak/default credentials). The assessor scored 001 partial on this evidence; duplicates the two sibling enumeration
+      specs.
+    evidence:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/username-enumeration-oracle__absent-vs-wrong-credential__case-variant__pairwise/c84d2ada-e05c-42ba-bb12-8386119796f8.yaml
+  - spec_id: username-enumeration-oracle__absent-vs-wrong-credential__exact-spelling__list-walk
+    judgement: novel
+    notes: The 29-name list walk reproduces the per-name verdicts; same finding as the sibling enumeration specs, at the GT
+      001 locus.
+    evidence:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/username-enumeration-oracle__absent-vs-wrong-credential__exact-spelling__list-walk/c84d2ada-e05c-42ba-bb12-8386119796f8.yaml
+  - spec_id: username-enumeration-oracle__absent-vs-wrong-credential__exact-spelling__pairwise
+    judgement: novel
+    notes: Pairwise exact-spelling enumeration; same finding as the sibling enumeration specs, at the GT 001 locus.
+    evidence:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/username-enumeration-oracle__absent-vs-wrong-credential__exact-spelling__pairwise/c84d2ada-e05c-42ba-bb12-8386119796f8.yaml
+failures:
+- domain: environment
+  severity: high
+  signal: The synthetic host t-1618c524.target was re-pointed to other co-tenant deployments (SIYUCMS ThinkPHP at 21:19Z,
+    PrestaShop 401 at 07:25Z and through 08:49Z) for most of the hunt; white-jotter stayed up on its published host port 46271
+    throughout. Pod notes call :80 "a shared nginx proxy ... that time-slices co-tenant deployments". A concurrent Langfuse
+    session e2e-siyucms-20261103T013954Z exists in the same project.
+  evidence:
+  - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/notes.yaml
+  - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/mass-assignment__roles-array-multi__existing-sysadmin-plus-content-manager/c84d2ada-e05c-42ba-bb12-8386119796f8.yaml
+  - diagnoses.yaml#cross-cutting-environment-finding
+  - Langfuse session e2e-siyucms-20261103T013954Z
+  - ph-eval-front:/etc/nginx/conf.d/eval-target-t-1618c524.target.conf (mtime 2026-11-03 13:55:40Z)
+- domain: pod
+  severity: high
+  signal: 13 of 37 pod directories terminaled pod-watchdog-timeout (35%), 2 node-timed out on the runner_agent idle timeout
+    (600 s); 2 technical-infeasibility. The watchdog is always unsuccessful/clean=false and can discard an observed GT symptom
+    (white-jotter-007).
+  evidence:
+  - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/notes.yaml
+  - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/mass-assignment__roles-array-multi__existing-sysadmin-plus-content-manager/c84d2ada-e05c-42ba-bb12-8386119796f8.yaml
+  - Langfuse observation 3aeadab1f80d40c3
+- domain: pod
+  severity: high
+  signal: 3 triager turns failed with "'dict' object has no attribute 'model_dump'"; the affected pods exported as noise/no-symptom-evidence.
+  evidence:
+  - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/username-enumeration-oracle__disabled-vs-enabled__exact-spelling__pairwise/c84d2ada-e05c-42ba-bb12-8386119796f8.yaml
+  - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/broken-function-level-authorization__vhost-host-header__anonymous/c84d2ada-e05c-42ba-bb12-8386119796f8.yaml
+  - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/hunter/notes.yaml
+- domain: modeller
+  severity: high
+  signal: 38 notes tool writes were rejected because the required `cmd` field was missing (the model sent `option`/`body`);
+    the prompt documents no argument contract. Phase notes are consequently incomplete.
+  evidence:
+  - Langfuse observation 3f0476bf79571d4c
+  - Langfuse observation db0802cbbc33c885
+  - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/threat_modeller/notes.yaml
+- domain: modeller
+  severity: medium
+  signal: 9 hunts_store writes and 1 assess_impact write were rejected on schema (extra fields, non-dict sections, missing
+    id).
+  evidence:
+  - Langfuse observation 7228d2fc32fbabec
+  - Langfuse observation f55d3e83b199939b
+  - Langfuse observation 3644e04e58f24919
+- domain: tooling
+  severity: high
+  signal: The graph_view read-only guard refused a MATCH ... WHERE ... CONTAINS read as "write-shaped cypher", terminaling
+    the idor destroy pod as technical-infeasibility.
+  evidence:
+  - Langfuse observation 662620ced27da6fb
+  - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/idor__destroy__path-segment__pre-existing-row/c84d2ada-e05c-42ba-bb12-8386119796f8.yaml
+- domain: environment
+  severity: medium
+  signal: 6 generation transport errors (2 x-opencode-session 400, 2 RemoteProtocolError, 1 ReadTimeout, 1 connection error)
+    and 7 model CHAIN errors whose status is only an opaque `<object object at ...>`.
+  evidence:
+  - Langfuse observation 1118025570abb445
+  - Langfuse observation 55ef65d8030c241c
+  - Langfuse observation 8885108f76b65205
+  - Langfuse observation e14a3b36e1b078c7
+- domain: modeller
+  severity: medium
+  signal: 13/13 abandoned unit models are stamped COMPLETED with validation.valid=false (missing assumptions, vulnerabilities,
+    impact_assessment); 4 have dangling interface_agreement refs. The media-asset-serving and operations-telemetry units closed
+    with zero threats and no hunter work.
+  evidence:
+  - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/threat_modeller/abandoned/Service-media-asset-serving/Service-media-asset-serving.yaml
+  - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/threat_modeller/abandoned/Service-operations-telemetry/Service-operations-telemetry.yaml
+  - metrics.yaml#artifact_inventory.models
+- domain: hunter
+  severity: medium
+  signal: 3 dropped specs carry no drop reason; 3 account-recovery specs miss the `assumptions` field; 7 of 40 specs have
+    an incomplete 7-field skill procedure.
+  evidence:
+  - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/hunter/test-specs/ReverseProxy__threat-1/produced/broken-function-level-authorization__path-parameter__anonymous.yaml
+  - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/hunter/test-specs/Service-user-administration__threat-1/consumed/account-recovery__semicolon-matrix__anonymous__administrator.yaml
+- domain: measurement
+  severity: medium
+  signal: 'Deterministic metric discrepancies: procedure_fields is 0 for all 40 specs because the metric reads provenance.skill_procedure
+    while the artifact stores skill_concretised_procedure at top level (33/40 full, 4 at 6/7, 3 at 5/7); risk_total 100.0/6
+    medium+7 critical omits the consumed Service:register threat-1 (true 106.9/7+7); downstream spec_count is per-vuln-filtered
+    (3-13) not the provenance count (4/6/3/5/4); confirmed_non_gt 10 miscounts the BFLA and SQLi GT confirmations and the
+    3 enumeration confirmations; per-vuln pod rows aggregate unrelated class-matched pods (001/002/004/007 show pod_run/confirmed
+    true for pods that do not test the GT direction); class_match is evaluated over the whole resolved model text and is an
+    upper bound.'
+  evidence:
+  - metrics.yaml#impact
+  - metrics.yaml#narrowing
+  - metrics.yaml#per_vuln
+  - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/threat_modeller/consumed/Service-register/threat-1.yaml
+- domain: termination
+  severity: medium
+  signal: The trial ran 20 h 12 m (2026-11-02T18:27:04Z to 2026-11-03T14:39:24Z) although the plan states a 14,400 s wall-clock
+    phase deadline; the record carries no budget_s and no note explains the multi-hour gap between the modeller activity (ends
+    ~22:24Z) and the first pod runner turn (01:07Z). The 7M token budget, not the deadline, was the terminator.
+  evidence:
+  - trial.yaml
+  - PLAN.md#runtime-configuration
+  - Langfuse session c84d2ada-e05c-42ba-bb12-8386119796f8:hunting_threat_modeller
+- domain: surface
+  severity: medium
+  signal: 'The inherited L0 graph has 3 of 11 expected GT endpoints: /api/logout, /api/admin/user, /api/admin/content/article,
+    /api/search and /api/file/cover.png are missing; L0 recall 0.273, edge recall 0.588. This is an iteration-C recon gap
+    inherited by the seeded hunting-only arm, not a hunting failure.'
+  evidence:
+  - metrics.yaml#per_vuln[].graph
+  - http://localhost:8080/projects/cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/graph
+- domain: prompt
+  severity: low
+  signal: The pod triager prompt has a sentence split across three H1 headings; the modeller notes-tool contract is undocumented.
+  evidence:
+  - Langfuse session c84d2ada-e05c-42ba-bb12-8386119796f8:xss-stored__id-addressed-overwrite__event-handler-element:pod_triager
+    (01:38:16 generation)
+- domain: schema
+  severity: low
+  signal: Pod notes carry an empty note_name and an uncontrolled symptom_status vocabulary; the three notes files use three
+    different top-level shapes; no skill-usage lesson records exist.
+  evidence:
+  - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/notes.yaml
+  - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/hunter/notes.yaml
+  - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/threat_modeller/notes.yaml
+open_questions:
+- Which process re-pointed ph-eval-front for t-1618c524.target, and did the concurrent e2e-siyucms session share the synthetic
+  host? The front conf was last rewritten 2026-11-03T13:55:40Z and the white-jotter container never moved.
+- Would white-jotter-007 be identified if the watchdog salvaged an observed raw symptom or if the pod exceeded its window
+  while the triager progressed?
+- Why do 13/37 pods consume the 5,400 s watchdog? The substitution explains the polls against a 401/502 upstream, but not
+  every watchdog pod.
+- Would the four undispatched threats (all risk 5.1-5.3) cover any GT vulnerability? None of the four names a GT class, but
+  the budget stop means they were never tested.
+- Is the 7M budget the right terminator for white-jotter? The run reached the cap with 4 threats pending and 10/14 threats
+  dispatched.
+- Are the L0 endpoint gaps inherited from iteration C or introduced by the graph copy? The seeded arm cannot change recon.
+- Would a stable upstream have changed the 3 dropped ThinkPHP path-variant specs and the account-recovery technical-infeasibility
+  pod into usable evidence?

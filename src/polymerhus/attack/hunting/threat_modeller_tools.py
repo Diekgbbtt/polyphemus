@@ -3,7 +3,8 @@
 Split out of `threat_modeller.py` in T2b (#386). The pass module keeps the gate
 tracker, the unit cell, the degradation breaker, and the pass itself; this
 module owns the tool surface built over those seams: `hunts_store` (the
-threat-model read/write), `notes` (the shared notes tool with the bound
+threat-model read/write), `assess_impact` (the sole writer of one schema-5
+assessment row, ticket #407), `notes` (the shared notes tool with the bound
 `<unit_name>:<note_name>` key), the HTTP-history read pair, the Kali `exec`
 probe, and the web-vulnerability suite pair (`skill_list` / `skill_load`). The
 auth store and the project skill arrive through the role's `load_skill` binding
@@ -15,34 +16,75 @@ This module imports no driver and performs no I/O at import (CODING_STANDARD 6).
 """
 from __future__ import annotations
 
+import json
 import logging
-from collections.abc import Callable, Sequence
+import re
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from langchain_core.tools import BaseTool
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from polymerhus.app.memory.tool_contract import (
     NotesFieldMap,
     StoreToolBase,
     build_notes_tool,
+    coded_teaching_rejection,
 )
 
-from .threat_model import GATE_SECTIONS, ModelSections, ModelState
-from .threat_model_store import NOTE_KINDS, ThreatModelIdentityError
+from .risk_score import FACTOR_DESCRIPTIONS, RiskMetrics
+from .threat_model import (
+    GATE_SECTIONS,
+    FieldFilter,
+    ModelSections,
+    ModelState,
+    PriorArtKind,
+    no_fault_terminal,
+)
+from .threat_model_store import (
+    NOTE_KINDS,
+    QUERY_DEFAULT_LIMIT,
+    QUERY_MAX_LIMIT,
+    ImpactAssessmentError,
+    ThreatModelIdentityError,
+    ThreatModelSchemaVersionError,
+    ThreatQueryError,
+)
 from .threat_modeller import (
     GATE_HINTS,
     ModellerUnit,
     PassiveGateTracker,
+    normalise_note_name,
 )
 
 logger = logging.getLogger(__name__)
 
+MAX_SKILL_FILTER_CHARS = 200
+MAX_SKILL_LIST_ENTRIES = 20
+
 MODEL_SECTIONS: tuple[str, ...] = (
-    "technical_sharpening", "trust_model", "assumptions", "vulnerabilities",
-    "failure_modes", "loops",
+    "technical_sharpening", "prior_art", "trust_model", "assumptions",
+    "vulnerabilities", "impact_assessment", "precursors", "threats",
 )
+# `impact_assessment` rides this READ summary although no gate writes it: the
+# `assess_impact` tool owns the rows, and the model must still see that it holds
+# them. It is not an accepted section of any `hunts_store` write.
+
+
+def _section_holds(value: Any) -> bool:
+    """Whether a persisted section carries authored content.
+
+    The schema materialises every section with its empty defaults, so a plain
+    truthiness test counts a never-written mapping (`prior_art` dumps to
+    `{"queries": [], "reused": [], "notes": ""}`). A section is held when a
+    mapping has at least one held value or a sequence has at least one held
+    entry."""
+    if isinstance(value, Mapping):
+        return any(_section_holds(item) for item in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_section_holds(item) for item in value)
+    return bool(value)
 
 
 @dataclass
@@ -72,16 +114,21 @@ class ModellerHuntsStoreArgs(BaseModel):
     the model id, and every derived symbol are bound at construction and are
     never request fields. The read carries `{cmd, unit_id?, section?}` - no
     `unit_id` reads the bound unit, a `unit_id` reads another unit's model for
-    prior insight, a `section` projects one section.
+    prior insight, a `section` projects one section. The query carries
+    `{cmd, kind, filters, limit?}`: a regex field filter over one record kind,
+    scoped to the project and excluding the bound unit unless a filter path is
+    `unit_id`.
     """
 
-    cmd: Literal["read", "write"] = Field(
-        description="The operation: 'read' or 'write' (required).")
+    cmd: Literal["read", "write", "query"] = Field(
+        description="The operation: 'read', 'write', or 'query' (required).")
     state: str | None = Field(
         default=None,
         description="Write payload: the gate state, one of UNIT_TECHNICAL_SHARP, "
                     "TRUST_MODELLED, TRUST_ASSUMPTIONS_WRITTEN, "
-                    "VULNERABILITIES_WRITTEN, COMPLETED.")
+                    "VULNERABILITIES_WRITTEN, PRIOR_ART, COMPLETED. "
+                    "IMPACT_ASSESSED carries no section: the `assess_impact` "
+                    "tool owns that transition.")
     sections: ModelSections | None = Field(
         default=None,
         description="Write payload: the typed section content for that gate. "
@@ -93,24 +140,138 @@ class ModellerHuntsStoreArgs(BaseModel):
     section: str | None = Field(
         default=None,
         description="Read projection: return only this section.")
+    kind: str | None = Field(
+        default=None,
+        description="Query filter: the record kind, one of threat, "
+                    "vulnerability, precursor, assumption, impact (required).")
+    filters: list[FieldFilter] | None = Field(
+        default=None,
+        description="Query filter: a non-empty AND list of {path, regex, flags}. "
+                    "Each is a re.search over the value at the dotted path; `*` "
+                    "iterates a list; an unknown path, an invalid regex, and an "
+                    "empty list are rejected.")
+    limit: int = Field(
+        default=QUERY_DEFAULT_LIMIT, ge=1, le=QUERY_MAX_LIMIT,
+        description="Query filter: the maximum matches to return (1..50).")
 
     model_config = ConfigDict(extra="forbid")
 
 
+# The vulnerabilities decision node (approved 2026-11-05). The empty
+# vulnerabilities write is legitimate only when every trust assumption is
+# falsified. Otherwise the model must reflect on the runtime vulnerability a
+# non-falsified assumption would yield.
+VULNERABILITIES_REFLECT_HINT = (
+    "You wrote no vulnerability, but at least one trust assumption is NOT "
+    "falsified. Reflect more deeply on the vulnerabilities that could "
+    "characterise the application at runtime if that assumption were "
+    "effectively implemented. Write at least one vulnerability for every "
+    "non-falsified assumption, or falsify the assumption with a probe and "
+    "record the evidence. This write was refused and the vulnerability "
+    "section is NOT closed: write the missing vulnerabilities next."
+)
+VULNERABILITIES_NO_FAULT_HINT = (
+    "Every trust assumption is falsified, so no vulnerability can be cited. "
+    "End the flow for this unit: no impact assessment is needed. The model is "
+    "now COMPLETED with no threats."
+)
+IMPACT_RESIDUAL_HINT = (
+    "The impact assessment is not complete: these non-dropped vulnerabilities "
+    "have no scored assessment row: {ids}. Call `assess_impact` for each "
+    "residual vulnerability before you end the impact phase. The state stays "
+    "at IMPACT_ASSESSED."
+)
+
+
+def _residual_from_model(model: Any) -> list[str]:
+    """The non-dropped vulnerability ids without a scored row, from the
+    PERSISTED document. The fallback when no live tracker index exists (a
+    direct unit seam): the document is the authoritative coverage record."""
+    if not isinstance(model, Mapping):
+        return []
+    assessed: set[str] = set()
+    for row in model.get("impact_assessment") or []:
+        if hasattr(row, "model_dump"):
+            row = row.model_dump()
+        if not isinstance(row, Mapping):
+            continue
+        reference = str(row.get("vulnerability_ref") or "")
+        if reference:
+            assessed.add(reference)
+    residual: list[str] = []
+    for row in model.get("vulnerabilities") or []:
+        if hasattr(row, "model_dump"):
+            row = row.model_dump()
+        if not isinstance(row, Mapping):
+            continue
+        vulnerability_id = str(row.get("id") or "")
+        if (vulnerability_id and not row.get("dropped", False)
+                and vulnerability_id not in assessed):
+            residual.append(vulnerability_id)
+    return residual
+
+
+def _coverage_residual(store, tracker, *, read_model) -> list[str]:
+    """The coverage residual, preferring the live tracker index.
+
+    The tracker is the fast path the pass keeps current at every observation.
+    When it holds no index at all (a raw store handed to a direct seam), the
+    persisted document answers instead, so the guard never silently no-ops."""
+    if tracker is None:
+        tracker = getattr(store, "tracker", None)
+    if tracker is not None:
+        tracked = getattr(tracker, "vulnerabilities", None)
+        residual = getattr(tracker, "residual_vulnerabilities", None)
+        if tracked and callable(residual):
+            return list(residual())
+    return _residual_from_model(read_model())
+
+
 _HUNTS_STORE_DESCRIPTION = (
-    "Read or write the unit threat model through the per-project threat model "
-    "store.\n"
+    "Read, write, or query the unit threat model through the per-project threat "
+    "model store.\n"
     "cmd='write': pass the gate `state` and the `sections` that gate carries. "
     "The unit identity is BOUND: never pass a unit id, a file name, a model id, "
     "or a path. The states and their sections are: UNIT_TECHNICAL_SHARP "
     "(technical_sharpening), TRUST_MODELLED (trust_model), "
     "TRUST_ASSUMPTIONS_WRITTEN (assumptions), VULNERABILITIES_WRITTEN "
-    "(vulnerabilities), COMPLETED (failure_modes + loops; the store computes the "
-    "risk profile and runs the completion checker). A section outside the "
-    "state's set is rejected; the model state is monotonic, so a later write for "
+    "(vulnerabilities), PRIOR_ART (prior_art), COMPLETED (threats; the store "
+    "mirrors the derived risk, computes the risk profile, and runs the "
+    "completion checker). The IMPACT_ASSESSED gate carries NO section and is "
+    "not a write of this tool: `assess_impact` is the sole writer of an "
+    "assessment row and owns that transition. A section outside the state's set "
+    "is rejected; the model state is monotonic, so a later write for "
     "an earlier gate updates that section without regressing the state.\n"
+    "The VULNERABILITIES_WRITTEN write runs the decision node: when every trust "
+    "assumption is falsified, an empty vulnerabilities list is accepted and the "
+    "model moves to COMPLETED with no impact assessment; when a non-falsified "
+    "assumption remains, an empty list is refused and the response tells you to "
+    "reflect on the runtime vulnerabilities. The COMPLETED write is refused "
+    "when the model has no vulnerability and is not a no-fault model, and "
+    "while a non-dropped vulnerability has no assessment row. Its success "
+    "response carries the validation and the derived risk profile.\n"
     "cmd='read': pass an optional `unit_id` (default: the unit you are modelling) "
-    "and an optional `section` to project one section. Reads are read-only."
+    "and an optional `section` to project one section. Reads are read-only.\n"
+    "cmd='query': pass `kind` (threat, vulnerability, precursor, assumption, or "
+    "impact), a non-empty `filters` list of {path, regex, flags}, and an optional "
+    "`limit` (1..50, default 20). The filters are AND; each is a re.search over "
+    "the value at the dotted path, `*` iterates a list, and a missing path is no "
+    "match. The query reads the produced and consumed models of THIS project, "
+    "excludes your bound unit unless a filter path is `unit_id`, and returns "
+    "summaries with each model's state and the matched path/value pairs - never "
+    "a full model. An empty filter list, an invalid regex, and an unknown path "
+    "are rejected.\n"
+    "Every reference field carries an ID, never prose. "
+    "`trust_model.trust_agreements[].interface_agreement_refs` names "
+    "`technical_sharpening.interface_agreements[].id` (`IA-*`), "
+    "`trust_model.dynamic_state_trust.violations[].maps_to_fault` names an "
+    "`assumptions[].fault.id` (`F-*`), `threats[].impact_ref` names an "
+    "`assess_impact` row (`IA-*`), `impact_assessment[].capability_id` "
+    "is this row's capability key (`P-*`), and `threats[].enabling_precursors` "
+    "is an ordered pair of `[capability, provider]`, each a `P-*` or "
+    "`Unit::P-*` key or `null`. The `precursor` query returns the impact rows "
+    "with `disposition=precursor`. The store resolves every reference and "
+    "archives a model with an unresolved one."
 )
 
 
@@ -122,18 +283,21 @@ class ModellerHuntsStoreTool(StoreToolBase):
     description: str = _HUNTS_STORE_DESCRIPTION
     args_schema: type[BaseModel] = ModellerHuntsStoreArgs
     _discriminator: str = "cmd"
+    _known_commands: tuple[str, ...] = ("read", "write", "query")
     _rejection_name: str = "hunts_store"
     _require_write_intent: bool = False
     _as_json: bool = False
 
     def __init__(self, *, store=None, project_id: str = "", unit_id: str = "",
-                 run_id: str = "", unit: "ModellerUnit | None" = None, **data):
+                 run_id: str = "", unit: "ModellerUnit | None" = None,
+                 tracker=None, **data):
         super().__init__(**data)
         self._store = store
         self._project_id = project_id
         self._unit_id = unit_id
         self._run_id = run_id
         self._unit = unit
+        self._tracker = tracker
 
     @property
     def _bound_project(self) -> str:
@@ -148,14 +312,22 @@ class ModellerHuntsStoreTool(StoreToolBase):
         return self._unit.run_id if self._unit is not None else self._run_id
 
     @staticmethod
-    def _rejected(fields: list[str], detail: str) -> dict:
+    def _rejected(fields: list[str], detail: str,
+                  *, error: str = "hunts_store_write_rejected") -> dict:
         """The coded contract rejection (the `coded_teaching_rejection`
         convention): a machine error code plus the field name(s) the model must
         supply - never a silent degenerate write and never a bare raise."""
         return {
-            "ok": False, "error": "hunts_store_write_rejected",
+            "ok": False, "error": error,
             "fields": list(fields), "detail": detail, "rejected": True,
         }
+
+    def _dispatch_other(self, args: ModellerHuntsStoreArgs, command: str):
+        """The prior-art query is this seam's third command; read/write keep
+        the shared base's dispatch."""
+        if command == "query":
+            return self._query(args)
+        return super()._dispatch_other(args, command)
 
     def _read(self, args: ModellerHuntsStoreArgs) -> dict:
         if self._store is None:
@@ -178,11 +350,50 @@ class ModellerHuntsStoreTool(StoreToolBase):
         return {
             "unit_id": unit_id,
             "state": model.get("state"),
-            "sections": [name for name in MODEL_SECTIONS if model.get(name)],
+            "sections": [
+                name for name in MODEL_SECTIONS if _section_holds(model.get(name))
+            ],
             "model": model,
             "risk_profile": model.get("risk_profile"),
             "validation": model.get("validation"),
         }
+
+    def _query(self, args: ModellerHuntsStoreArgs) -> dict:
+        """The project-scoped prior-art query (S2 section 7).
+
+        The record kind and the non-empty AND filters are the command's
+        contract; the store rejects a bad path or regex with its coded error,
+        re-surfaced here with the query error code. The typed args bound the
+        limit. A read failure degrades to an empty result (O4), never a raise
+        into the turn."""
+        if self._store is None:
+            return {"error": "threat model store unavailable", "degraded": True}
+        raw_kind = str(args.kind or "").strip()
+        known = ", ".join(member.value for member in PriorArtKind)
+        if not raw_kind:
+            return self._rejected(
+                ["kind"], f"a query needs `kind`, one of {known}",
+                error="hunts_store_query_rejected")
+        try:
+            kind = PriorArtKind(raw_kind)
+        except ValueError:
+            return self._rejected(
+                ["kind"], f"unknown kind {raw_kind!r}; known: {known}",
+                error="hunts_store_query_rejected")
+        filters = list(args.filters or [])
+        try:
+            return self._store.query_prior_art(
+                self._bound_project, kind=kind, filters=filters,
+                limit=args.limit, bound_unit_id=self._bound_unit)
+        except ThreatQueryError as exc:
+            return self._rejected(
+                list(exc.fields), str(exc), error="hunts_store_query_rejected")
+        except Exception as exc:  # noqa: BLE001 - a read failure degrades (O4)
+            logger.warning("hunts_store query degraded (%s)", exc)
+            return {
+                "matches": [], "count": 0, "truncated": False,
+                "error": f"hunts_store query degraded: {exc}",
+            }
 
     def _write(self, args: ModellerHuntsStoreArgs) -> dict:
         if not self._bound_unit:
@@ -226,6 +437,14 @@ class ModellerHuntsStoreTool(StoreToolBase):
         if self._store is None:
             return {"ok": False, "error": "hunts_store_unavailable",
                     "degraded": True, "state": gate.value}
+        if gate is ModelState.VULNERABILITIES_WRITTEN:
+            decision = self._vulnerabilities_decision(sections)
+            if decision is not None:
+                return decision
+        if gate is ModelState.COMPLETED:
+            rejection = self._completion_rejection()
+            if rejection is not None:
+                return rejection
         try:
             path = self._store.write_sections(
                 self._bound_project, self._bound_unit, gate, sections,
@@ -238,8 +457,388 @@ class ModellerHuntsStoreTool(StoreToolBase):
                 ["sections"], f"the {gate.value} sections are unparseable: {exc}")
         # A store write failure (an OSError) raises to the harness (O3, warned
         # and counted), never into the turn silently.
-        return {"ok": True, "state": gate.value, "sections": sorted(sections),
-                "path": str(path), "hint": GATE_HINTS.get(gate)}
+        if gate is ModelState.COMPLETED:
+            return self._completed_response(
+                path, sections, GATE_HINTS.get(gate))
+        return {"ok": True, "state": gate.value,
+                "sections": sorted(sections), "path": str(path),
+                "hint": GATE_HINTS.get(gate)}
+
+    def _completion_rejection(self) -> dict | None:
+        """The terminal invariant of the workflow (approved 2026-11-05).
+
+        A COMPLETED model is either impact-bearing or a no-fault model. A
+        forward jump can reach COMPLETED without ever writing the
+        vulnerabilities gate, where the decision node lives; the terminal
+        write must refuse that same shape, or the C.a failure returns.
+
+        The residual check is the second half: a non-dropped vulnerability
+        without a scored row keeps the state at IMPACT_ASSESSED. The
+        controller owns both rules; the store stays a passive writer."""
+        model = self._read_bound_model()
+        if not isinstance(model, Mapping):
+            return None
+        assumptions = list(model.get("assumptions") or [])
+        vulnerabilities = list(model.get("vulnerabilities") or [])
+        if not vulnerabilities and not no_fault_terminal(
+                assumptions, vulnerabilities):
+            return {
+                "ok": False,
+                "error": "completed_write_rejected",
+                "fields": ["sections.vulnerabilities"],
+                "detail": (
+                    "the COMPLETED write is refused: the model has no "
+                    "vulnerability and it is not a no-fault model. Write at "
+                    "least one vulnerability for every non-falsified trust "
+                    "assumption, or falsify every assumption with probe "
+                    "evidence, before the COMPLETED write."
+                ),
+                "rejected": True,
+            }
+        residual = self._residual_vulnerabilities()
+        if residual:
+            return {
+                "ok": False,
+                "error": "impact_assessment_incomplete",
+                "fields": ["impact_assessment"],
+                "detail": (
+                    "the COMPLETED write is refused: these non-dropped "
+                    "vulnerabilities have no scored assessment row: "
+                    + ", ".join(residual)
+                    + ". Call `assess_impact` for each residual "
+                    "vulnerability before the COMPLETED write."
+                ),
+                "residual_vulnerabilities": residual,
+                "rejected": True,
+            }
+        return None
+
+    def _completed_response(self, path, sections: Mapping[str, Any],
+                            hint: str | None) -> dict:
+        """The COMPLETED success envelope, shared by the normal and no-fault
+        branches: sorted sections plus the store's validation and the derived
+        risk profile, so an invalid write is repairable feedback."""
+        response = {"ok": True, "state": ModelState.COMPLETED.value,
+                    "sections": sorted(sections), "path": str(path),
+                    "hint": hint}
+        model = self._read_bound_model()
+        if isinstance(model, Mapping):
+            response["validation"] = model.get("validation")
+            response["risk_profile"] = model.get("risk_profile")
+        return response
+
+    def _vulnerabilities_decision(self, sections: Mapping[str, Any]):
+        """The decision node at the vulnerabilities gate (approved 2026-11-05).
+
+        An empty `vulnerabilities` list is a legitimate no-fault terminal only
+        when at least one trust assumption exists and every one of them is
+        falsified. When a non-falsified assumption remains - or no assumption
+        was written at all - the write is refused and the response tells the
+        model to reflect on the runtime vulnerability. When every assumption is
+        falsified, the empty section lands and the harness moves the model to
+        COMPLETED with no impact assessment.
+
+        Returns None for the normal non-empty branch, so `_write` performs the
+        ordinary gate write.
+        """
+        vulnerabilities = sections.get("vulnerabilities") or []
+        if vulnerabilities:
+            return None
+        model = self._read_bound_model()
+        assumptions = list((model or {}).get("assumptions") or [])
+        if not no_fault_terminal(assumptions, vulnerabilities):
+            return {
+                "ok": False,
+                "error": "vulnerabilities_write_rejected",
+                "fields": ["sections.vulnerabilities"],
+                "detail": VULNERABILITIES_REFLECT_HINT,
+                "hint": VULNERABILITIES_REFLECT_HINT,
+                "rejected": True,
+            }
+        try:
+            self._store.write_sections(
+                self._bound_project, self._bound_unit,
+                ModelState.VULNERABILITIES_WRITTEN, sections,
+                run_id=self._bound_run)
+            path = self._store.write_sections(
+                self._bound_project, self._bound_unit,
+                ModelState.COMPLETED, {"threats": []},
+                run_id=self._bound_run)
+        except (ThreatModelIdentityError, ValueError) as exc:
+            return self._rejected(
+                ["state"], f"the no-fault completion failed: {exc}")
+        return self._completed_response(
+            path, {"vulnerabilities": [], "threats": []},
+            VULNERABILITIES_NO_FAULT_HINT)
+
+    def _read_bound_model(self):
+        read = getattr(self._store, "read_model", None)
+        if not callable(read):
+            return None
+        try:
+            return read(self._bound_project, self._bound_unit)
+        except Exception:  # noqa: BLE001 - a read failure is no signal
+            return None
+
+    def _residual_vulnerabilities(self) -> list[str]:
+        return _coverage_residual(
+            self._store, self._tracker,
+            read_model=self._read_bound_model)
+
+
+
+# --- the `assess_impact` tool for the threat model (schema-5 spec 4) ----------
+
+# The factor rules the ASSESSMENT enters per argument: the domain mapping, not
+# the standard's wording (ADR 3). The per-VALUE semantics and examples live in
+# `risk_score.FACTOR_DESCRIPTIONS`, which the description below renders, so the
+# tool contract and the system prompt cannot drift (spec 1).
+_FACTORS_ARG_DESCRIPTION = (
+    "The eight CVSS 4.0 base factors of the attack AS IT WOULD RUN IF THE FAULT "
+    "IS PRESENT; never discount one for an `ASSUMED` premise. `PR`: the role and "
+    "the permissions the chain's application primitives need. `AC`: the defence "
+    "that must be circumnavigated (a sanitizer, a rate limiter, CSP, CORS, a "
+    "cookie attribute, an authorization control, a trust control), never the "
+    "step count. `AT`: any other attacker capability that adds a phase (a "
+    "planted XSS payload, DNS rebinding for SSRF and TOCTOU, JWKS access for "
+    "forged tokens and session fixation); a multi-request chain is not "
+    "`present`. `AV`: the network position. `UI`: passive for a routine flow or "
+    "a common application state, active for a specific non-routine victim "
+    "action. `VC`/`VI`/`VA`: `high` for a direct serious loss, `low` for a "
+    "partial or bounded loss, `none` for no loss. Each value's semantic and "
+    "example follows."
+)
+
+
+def _factor_contract_lines() -> list[str]:
+    """The eight factors rendered from `FACTOR_DESCRIPTIONS`.
+
+    ONE source for the tool contract and the system prompt: the prompt renders
+    the same entries, and both are checked against the constant."""
+    lines: list[str] = []
+    for name, values in FACTOR_DESCRIPTIONS.items():
+        lines.append(f"{name}:")
+        lines.extend(f"- {value}: {text}" for value, text in values.items())
+    return lines
+
+
+ASSESS_IMPACT_DESCRIPTION = "\n".join([
+    "Write ONE impact-assessment row: the scored claim of one vulnerability "
+    "exploitation, and the ONLY writer of the assessment rows (the "
+    "`hunts_store` surface refuses that section).",
+    "The row carries the two prose blocks and the eight CVSS 4.0 base factors. "
+    "The tool validates the row and advances the model state to "
+    "IMPACT_ASSESSED; the persistence derives the score and the vector inside "
+    "the write, so never send a score, a vector, or a factor echo - success is "
+    "`{ok: true}` plus the next-state hint, and a failure is a coded rejection "
+    "naming the field and the fix.",
+    "Call it once per assessment row, and at least once for every vulnerability "
+    "that is not dropped. A second row for the same vulnerability needs a "
+    "distinct `capability_id`. If a non-dropped vulnerability still has no row, "
+    "the success response carries `residual_vulnerabilities` and the residual "
+    "hint; the state stays at IMPACT_ASSESSED.",
+    "The factors describe the attack AS IT WOULD RUN IF THE FAULT IS PRESENT; "
+    "never discount one for an `ASSUMED` premise. Confidence plans the "
+    "verification of the technical and trust-model claims; it never lowers a "
+    "factor and it is not a field of this row.",
+    "The factors (CVSS 4.0 base group; the subsequent system mirrors the "
+    "vulnerable one):",
+    *_factor_contract_lines(),
+])
+
+
+class AssessImpactArgs(BaseModel):
+    """The `assess_impact` args contract: one assessment row, atomically.
+
+    `risk` and `risk_vector` are NOT fields, so an authored score is a rejected
+    field: the persistence derives both from `factors` (ADR 2, 3). The `factors`
+    schema renders `risk_score.FACTOR_DESCRIPTIONS`."""
+
+    id: str = Field(
+        description="The row id (`IA-*`), the key `threats[].impact_ref` names "
+                    "(for example `IA-1`).")
+    vulnerability_ref: str = Field(
+        description="The id of the `vulnerabilities[]` row this exploitation is "
+                    "of (`V-*`), never prose.")
+    disposition: Literal["threat", "precursor"] = Field(
+        description="`threat` for a row that reaches a concrete end damage; "
+                    "`precursor` for a capability with no end damage.")
+    impact_description: str = Field(
+        description="The victim and the damaged property for a `threat` row; "
+                    "for a `precursor` row, why no end damage follows.")
+    exploitability_description: str = Field(
+        description="The chain: its capabilities, its phases, and the human "
+                    "participation it needs.")
+    capability: str = Field(
+        description="The adversarial capability gained when this impact is "
+                    "realised.")
+    capability_id: str = Field(
+        description="This row's capability key (`P-*`), the key other units "
+                    "reference.")
+    capability_path: list[str] = Field(
+        description="The capabilities required before this one, in execution "
+                    "order, each a `P-*` or `Unit::P-*`; empty for a direct "
+                    "impact.")
+    evidence_refs: list[str] = Field(
+        description="The probes and records behind the assessment.")
+    factors: RiskMetrics = Field(description=_FACTORS_ARG_DESCRIPTION)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ModellerAssessImpactTool(BaseTool):
+    """The modeller's `assess_impact` binding: the sole writer of one schema-5
+    assessment row, bound to the store, the project, the unit, and the run.
+
+    The success envelope is `{ok: true}` plus the next-state cadence hint (the
+    tool, not `hunts_store`, owns the `IMPACT_ASSESSED` transition); a failure
+    is a coded teaching rejection naming the row field and the fix. The tool
+    never returns the score, the vector, or a factor echo, so the model cannot
+    iterate on a value it must not author (ADR 2)."""
+
+    name: str = "assess_impact"
+    description: str = ASSESS_IMPACT_DESCRIPTION
+    args_schema: type[BaseModel] = AssessImpactArgs
+
+    def __init__(self, *, store=None, project_id: str = "", unit_id: str = "",
+                 run_id: str = "", unit: "ModellerUnit | None" = None,
+                 tracker=None, **data):
+        super().__init__(**data)
+        self._store = store
+        self._project_id = project_id
+        self._unit_id = unit_id
+        self._run_id = run_id
+        self._unit = unit
+        self._tracker = tracker
+
+    @property
+    def _bound_project(self) -> str:
+        return self._unit.project_id if self._unit is not None else self._project_id
+
+    @property
+    def _bound_unit(self) -> str:
+        return self._unit.unit_id if self._unit is not None else self._unit_id
+
+    @property
+    def _bound_run(self) -> str:
+        return self._unit.run_id if self._unit is not None else self._run_id
+
+    def _read_bound_model(self):
+        read = getattr(self._store, "read_model", None)
+        if not callable(read):
+            return None
+        try:
+            return read(self._bound_project, self._bound_unit)
+        except Exception:  # noqa: BLE001 - a read failure is no signal
+            return None
+
+    def invoke(self, input, config=None, **kwargs):
+        """Translate a schema-drift `ValidationError` into a coded teaching
+        rejection, so an authored score or an unknown field names itself and
+        the model corrects in one pass (the shared rejection convention).
+
+        A direct unit-test invocation keeps the plain payload; a harness
+        ToolCall gets the ToolMessage the graph expects (`type == "tool_call"`,
+        never the row's own `id` field)."""
+        try:
+            return super().invoke(input, config=config, **kwargs)
+        except ValidationError as exc:
+            coded = coded_teaching_rejection(
+                tool_name=self.name, tool_input=input, exc=exc,
+                discriminator="", known_commands=(),
+                require_write_intent=False, args_schema=self.args_schema)
+            if coded is None:
+                raise
+            if isinstance(input, dict) and input.get("type") == "tool_call":
+                from langchain_core.messages import ToolMessage  # noqa: PLC0415
+
+                return ToolMessage(content=json.dumps(coded),
+                                   tool_call_id=str(input.get("id")))
+            return coded
+
+    @staticmethod
+    def _rejected(fields: list[str], detail: str) -> dict:
+        return {
+            "ok": False, "error": "assess_impact_rejected",
+            "fields": list(fields), "detail": detail, "rejected": True,
+        }
+
+    def _run(self, **kwargs: Any) -> dict:
+        if self._store is None:
+            return {"ok": False, "error": "assess_impact_unavailable",
+                    "degraded": True,
+                    "detail": "no threat model store is bound to this tool"}
+        if not self._bound_unit:
+            # the sibling store tool returns a coded rejection for an unbound
+            # identity; this tool must not raise where it does
+            return self._rejected(
+                ["unit_id"],
+                "no unit is bound to this tool; the assessment row cannot derive "
+                "the unit directory")
+        if not self._bound_run:
+            return self._rejected(
+                ["run_id"],
+                "no run is bound to this tool; the assessment write stamps the "
+                "harness-held run id")
+        # The minimal request validation layer (approved 2026-11-05): the core
+        # fields are required and must not be blank. The pydantic schema proves
+        # their presence; this guard proves their content.
+        core = (
+            "id", "vulnerability_ref", "disposition",
+            "impact_description", "exploitability_description",
+            "capability", "capability_id",
+        )
+        missing = [
+            name for name in core
+            if not str(kwargs.get(name) or "").strip()
+        ]
+        if missing:
+            return self._rejected(
+                missing,
+                "these core assessment fields are required and must not be "
+                "empty: " + ", ".join(missing))
+        try:
+            self._store.write_impact_assessment(
+                self._bound_project, self._bound_unit, self._bound_run,
+                id=kwargs["id"],
+                vulnerability_ref=kwargs["vulnerability_ref"],
+                disposition=kwargs["disposition"],
+                impact_description=kwargs["impact_description"],
+                exploitability_description=kwargs["exploitability_description"],
+                capability=kwargs["capability"],
+                capability_id=kwargs["capability_id"],
+                capability_path=kwargs["capability_path"],
+                evidence_refs=kwargs["evidence_refs"],
+                factors=kwargs["factors"],
+            )
+        except ImpactAssessmentError as exc:
+            # the store's coded teaching rejection, re-surfaced verbatim: the
+            # referential and factor rules belong to the document, not here
+            return self._rejected(list(exc.fields), str(exc))
+        except ThreatModelSchemaVersionError as exc:
+            # a v4 (or unreadable) document is never written into (spec 11)
+            return self._rejected(["state"], str(exc))
+        # The score is derived and NEVER echoed. The success envelope carries
+        # the next-state cadence hint, exactly like every `hunts_store` gate
+        # write, because this tool owns the IMPACT_ASSESSED transition: without
+        # it the completion pointer would be a table entry nothing emits. When
+        # a non-dropped vulnerability still has no row, the response carries
+        # the residual ids and the coverage hint instead (approved 2026-11-05).
+        residual = self._residual_vulnerabilities()
+        if residual:
+            return {
+                "ok": True,
+                "residual_vulnerabilities": residual,
+                "hint": IMPACT_RESIDUAL_HINT.format(ids=", ".join(residual)),
+            }
+        return {"ok": True,
+                "residual_vulnerabilities": [],
+                "hint": GATE_HINTS[ModelState.IMPACT_ASSESSED]}
+
+    def _residual_vulnerabilities(self) -> list[str]:
+        return _coverage_residual(
+            self._store, self._tracker,
+            read_model=self._read_bound_model)
 
 
 # --- the `notes` tool for the threat model (S1 5.2) --------------------------
@@ -247,17 +846,28 @@ class ModellerHuntsStoreTool(StoreToolBase):
 _NOTE_ACTIONS = ("append", "update", "delete")
 
 _NOTES_DESCRIPTION = (
+    "REQUIRED on every call: `cmd` must be exactly \"read\" or \"write\". "
+    "A call without it is rejected even when `option`, `note_name`, and "
+    "`body` are present; those fields do NOT imply a write.\n"
     "Read or write the project's episodic notes through the per-project threat "
     "model store's notes file.\n"
     "The note key is BOUND to the current unit: `<unit_name>:<note_name>` - you "
     "supply only the note name, never the unit.\n"
-    "Commands: read / write. A write MUST set cmd='write' and an `option` "
-    "(append | update | delete); `kind` is one of "
-    f"{', '.join(NOTE_KINDS)}. Each reasoning phase ends with ONE episodic note "
-    "through this tool: the decision nodes and the rationales of the branches you "
-    "took, in prose.\n"
-    "A read with `key` (a note name or a `<unit_name>:<note_name>` key) filters "
-    "to that note; a read with no key returns the unit's notes, latest-first."
+    "A write is `cmd=\"write\"` plus `option` (append | update | delete) and "
+    "`note_name`; `kind` is one of "
+    f"{', '.join(NOTE_KINDS)}. Example: "
+    "{\"cmd\": \"write\", \"option\": \"append\", \"note_name\": \"grounding\", "
+    "\"kind\": \"freeform\", \"body\": \"...\"}.\n"
+    "Each reasoning phase ends with ONE episodic note through this tool: the "
+    "decision nodes and the rationales of the branches you took, in prose. "
+    "The phase notes are `vulnerabilities` (the local impact baseline), "
+    "`trust_assumption` (opens the well-formedness phase), `wellformedness` "
+    "(closes it into prior art), `prior_art`, and `impact_assessed` (closes "
+    "the impact phase; a residual unassessed vulnerability is named in the "
+    "response).\n"
+    "A read is `cmd=\"read\"`; with `key` (a note name or a "
+    "`<unit_name>:<note_name>` key) it filters to that note, and with no key it "
+    "returns the unit's notes, latest-first."
 )
 
 
@@ -266,7 +876,9 @@ class ModellerNotesArgs(BaseModel):
     unit key bound on the handle, so no request field carries the unit."""
 
     cmd: Literal["read", "write"] = Field(
-        description="The operation: 'read' or 'write' (required).")
+        description=(
+            "REQUIRED on every call: 'read' or 'write'. Never omit it; "
+            "`option` and `body` do not imply a write."))
     option: Literal["append", "update", "delete"] | None = Field(
         default=None, description="The write option.")
     key: str = Field(
@@ -295,7 +907,9 @@ _MODEL_NOTES_FIELD_MAP = NotesFieldMap(
     note="body",
     note_id="note_id",
     attributes="attributes",
-    passthrough=("note_name", "kind", "evidence"),
+    note_name="note_name",
+    kind="kind",
+    evidence="evidence",
 )
 
 
@@ -309,11 +923,12 @@ class ModellerNotesHandle:
     kinds are the store's, and the harness never raises for one."""
 
     def __init__(self, store, project_id: str, unit_id: str,
-                 unit: "ModellerUnit | None" = None) -> None:
+                 unit: "ModellerUnit | None" = None, tracker=None) -> None:
         self._store = store
         self._project_id = project_id
         self._unit_id = unit_id
         self._unit = unit
+        self._tracker = tracker
 
     @property
     def _bound_project(self) -> str:
@@ -390,17 +1005,51 @@ class ModellerNotesHandle:
         if key is None:
             return {"ok": False, "error": "note_missing",
                     "note_name": request.note_name}
-        return {"ok": True, "key": key}
+        response = {"ok": True, "key": key}
+        if self._tracker is not None:
+            observe_note = getattr(self._tracker, "observe_note", None)
+            if callable(observe_note):
+                hint = observe_note(request.note_name, request.kind)
+                if hint:
+                    response["hint"] = hint
+        residual = self._residual_vulnerabilities(request.note_name)
+        if residual:
+            response["residual_vulnerabilities"] = residual
+            response["hint"] = IMPACT_RESIDUAL_HINT.format(
+                ids=", ".join(residual))
+        return response
+
+    def _read_bound_model(self):
+        read = getattr(self._store, "read_model", None)
+        if not callable(read):
+            return None
+        try:
+            return read(self._bound_project, self._bound_unit)
+        except Exception:  # noqa: BLE001 - a read failure is no signal
+            return None
+
+    def _residual_vulnerabilities(self, note_name: str) -> list[str]:
+        """The residual unassessed vulnerability ids at the impact exit note.
+
+        The impact phase ends with ONE episodic note. The state does not move
+        to COMPLETED while a non-dropped vulnerability has no scored row, so
+        the note response injects the residual ids (approved 2026-11-05)."""
+        if normalise_note_name(note_name) not in ("impact_assessed", "impact"):
+            return []
+        return _coverage_residual(
+            self._store, self._tracker,
+            read_model=self._read_bound_model)
 
 
 def build_modeller_notes_tool(store, project_id: str, unit_id: str,
-                              unit: "ModellerUnit | None" = None):
+                              unit: "ModellerUnit | None" = None,
+                              tracker=None):
     """Build the modeller's bound `notes` tool: the ONE shared notes
     implementation over the unit-bound handle."""
     from .conciseness import append_conciseness_directive  # noqa: PLC0415
 
     return build_notes_tool(
-        ModellerNotesHandle(store, project_id, unit_id, unit),
+        ModellerNotesHandle(store, project_id, unit_id, unit, tracker=tracker),
         args_schema=ModellerNotesArgs,
         field_map=_MODEL_NOTES_FIELD_MAP,
         name="notes",
@@ -422,23 +1071,16 @@ def build_modeller_notes_tool(store, project_id: str, unit_id: str,
 # fail-open, recording the gap instead of breaking the class mapping.
 
 SKILL_LIST_DESCRIPTION = (
-    "List the web-vulnerability suite: one entry per suite skill, carrying the "
-    "name (a class parent or a variant leaf) and its frontmatter description. "
-    "The class parent is the directory name you store in "
-    "`web_vulnerability_class`; a variant leaf is additional procedure material "
-    "for an assumption check. Call it before mapping a freely named canonical "
-    "class onto the suite class that covers it. When the suite is unavailable "
-    "the call degrades to a coded gap (`suite_gap` true): keep the canonical "
-    "class name, leave `web_vulnerability_class` empty, and flag the gap - "
-    "never invent a suite class."
+    "List the suite by a REQUIRED case-insensitive regex over names. A parent "
+    "match includes its leaves; a leaf match includes its parent. Parent: "
+    "`web_vulnerability_class`. Missing/invalid -> `skill_filter_required`/"
+    "`skill_filter_invalid`; no match -> []; unavailable -> `suite_gap`."
 )
 
 SKILL_LOAD_DESCRIPTION = (
-    "Load one web-vulnerability suite skill by its name (a class parent or a "
-    "variant leaf from `skill_list`): the class procedure the downstream hunter "
-    "binds, or a variant leaf for an assumption check. A name the suite does "
-    "not carry degrades to a coded gap (`suite_gap` true) - keep the canonical "
-    "name you reasoned from and flag the gap."
+    "Load one suite skill by name from `skill_list` (a class parent or a "
+    "variant leaf). An unknown name degrades to a coded `suite_gap`; keep the "
+    "canonical name and flag the gap."
 )
 
 
@@ -447,7 +1089,8 @@ class VulnerabilitySuiteSeam:
     """The web-vulnerability suite seam behind `skill_list` / `skill_load`.
 
     `classes` is the assumed suite's skill set (the class parents and the
-    variant leaves); `read_fn` is the optional injected skill-body reader (the
+    variant leaves); `parents` maps every skill to its class parent (a parent
+    maps to itself); `read_fn` is the optional injected skill-body reader (the
     suite's own contract). A
     seam with no classes - the suite has not landed, or its store is empty -
     degrades fail-open: the listing returns an empty class set, the load returns
@@ -455,6 +1098,7 @@ class VulnerabilitySuiteSeam:
     degraded class mapping instead of silently inventing one."""
 
     classes: tuple[str, ...] = ()
+    parents: Mapping[str, str] = field(default_factory=dict)
     read_fn: Callable[[str], str] | None = None
     gaps: list[str] = field(default_factory=list)
 
@@ -465,23 +1109,67 @@ class VulnerabilitySuiteSeam:
     def available(self) -> bool:
         return bool(self.classes) and self.read_fn is not None
 
-    def list_classes(self) -> dict:
+    def list_classes(self, pattern: re.Pattern[str] | None = None) -> dict:
+        """List the suite, optionally filtered by a compiled name regex.
+
+        A matched class parent expands to its variant leaves. A matched leaf
+        adds its class parent. The response is grouped parent-first and capped;
+        `omitted` states how many selected entries the cap hid. With no
+        pattern the call lists the whole suite (the seam's fail-open default);
+        the tool always passes a pattern.
+        """
         if not self.classes:
             self.record_gap("suite_unavailable: no suite class is resolvable")
             return {"skills": [], "suite_gap": True,
                     "error": "suite_unavailable",
                     "detail": "the web-vulnerability suite is not available; "
                               "keep the canonical classes and flag the gap"}
+        matched = [
+            name for name in self.classes
+            if pattern is None or pattern.search(name)
+        ]
+        if pattern is not None and not matched:
+            return {"skills": [], "suite_gap": False,
+                    "detail": "no suite skill matches the filter"}
+        selected: set[str] = set()
+        for name in matched:
+            parent = self.parents.get(name, name)
+            selected.add(name)
+            if parent != name:
+                if parent in self.classes:
+                    selected.add(parent)
+            else:
+                selected.update(
+                    child for child, child_parent in self.parents.items()
+                    if child_parent == name and child in self.classes
+                )
+        ordered = sorted(selected, key=lambda name: (
+            self.parents.get(name, name),
+            0 if self.parents.get(name, name) == name else 1,
+            name,
+        ))
+        omitted = max(0, len(ordered) - MAX_SKILL_LIST_ENTRIES)
+        ordered = ordered[:MAX_SKILL_LIST_ENTRIES]
         entries = []
-        for name in self.classes:
+        for name in ordered:
             description = ""
             if self.read_fn is not None:
                 try:
                     description = _frontmatter_description(self.read_fn(name))
                 except Exception:  # noqa: BLE001 - a per-entry degrade
                     description = ""
-            entries.append({"name": name, "description": description})
-        return {"skills": entries, "suite_gap": False}
+            entry = {"name": name, "description": description}
+            parent = self.parents.get(name, name)
+            if self.parents:
+                entry["kind"] = "parent" if name == parent else "leaf"
+                if name != parent:
+                    entry["parent"] = parent
+            entries.append(entry)
+        result = {"skills": entries, "suite_gap": False}
+        if omitted:
+            result["omitted"] = omitted
+            result["detail"] = "narrow the filter; the cap hid the remaining matches"
+        return result
 
     def load_class(self, name: str) -> dict:
         if not self.classes:
@@ -526,7 +1214,14 @@ class _SuiteArgs(BaseModel):
 
 
 class SkillListArgs(_SuiteArgs):
-    pass
+    filter: str = Field(
+        default="",
+        description=(
+            "REQUIRED. Case-insensitive Python regex over suite skill names. "
+            "A class-parent match also returns its variant leaves; a leaf "
+            "match also returns its class parent."
+        ),
+    )
 
 
 class SkillLoadArgs(_SuiteArgs):
@@ -543,12 +1238,31 @@ class _SkillListTool(BaseTool):
         self._suite = suite
 
     def _run(self, **kwargs: Any) -> dict:
+        filter_text = str(kwargs.get("filter") or "").strip()
+        if not filter_text:
+            return {"skills": [], "suite_gap": False,
+                    "error": "skill_filter_required",
+                    "detail": "pass filter, a case-insensitive regex over suite "
+                              "skill names; for example 'session|csrf'"}
+        if len(filter_text) > MAX_SKILL_FILTER_CHARS:
+            return {"skills": [], "suite_gap": False,
+                    "error": "skill_filter_invalid",
+                    "detail": f"filter is longer than "
+                              f"{MAX_SKILL_FILTER_CHARS} characters"}
         try:
-            return self._suite.list_classes()
+            pattern = re.compile(filter_text, re.IGNORECASE)
+        except re.error as exc:
+            return {"skills": [], "suite_gap": False,
+                    "error": "skill_filter_invalid",
+                    "detail": str(exc), "filter": filter_text}
+        try:
+            result = self._suite.list_classes(pattern=pattern)
         except Exception as exc:  # noqa: BLE001 - fail-open, never into the turn
             self._suite.record_gap(f"suite_list_failed: {exc}")
             return {"skills": [], "suite_gap": True,
                     "error": "suite_list_failed", "detail": str(exc)}
+        result["filter"] = filter_text
+        return result
 
 
 class _SkillLoadTool(BaseTool):
@@ -571,6 +1285,7 @@ class _SkillLoadTool(BaseTool):
 
 def build_vulnerability_suite_tools(
     *, classes: Sequence[str] = (), read_fn: Callable[[str], str] | None = None,
+    parents: Mapping[str, str] | None = None,
     suite: VulnerabilitySuiteSeam | None = None,
 ) -> list[BaseTool]:
     """Build the `skill_list` / `skill_load` pair over the suite seam.
@@ -579,9 +1294,11 @@ def build_vulnerability_suite_tools(
     client component written against its assumed names. A seam without classes
     binds the same tools in the fail-open mode (coded gaps, recorded), so the
     role is always enabled with an honest class-mapping contract instead of a
-    missing tool."""
+    missing tool. `parents` maps every suite skill to its class parent; the
+    filtered listing uses it to expand a parent to its leaves and a leaf to its
+    parent."""
     seam = suite or VulnerabilitySuiteSeam(
-        classes=tuple(classes), read_fn=read_fn)
+        classes=tuple(classes), parents=dict(parents or {}), read_fn=read_fn)
     return [_SkillListTool(suite=seam), _SkillLoadTool(suite=seam)]
 
 
@@ -605,8 +1322,9 @@ class ModellerTools:
     unit's pass (the actor's captured tools share it); `unit_cell` is the
     retargetable unit identity; `exec_fn` / `http_search_fn` / `http_get_fn` are
     the live probe and HTTP-history seams (each absent degrades fail-open);
-    `suite` / `suite_tools` / `suite_classes` / `suite_read_fn` are the
-    web-vulnerability suite seam and its injectable pair; `context_provider`
+    `suite` / `suite_tools` / `suite_classes` / `suite_read_fn` /
+    `suite_parents` are the web-vulnerability suite seam and its injectable
+    pair; `context_provider`
     plus the explicit `projection` / `surface_overview` are the grounding-input
     seams (S1 4.6, 5.6). The auth store and the project skill are NOT seams
     here: they arrive through the role's `load_skill` binding (the
@@ -621,6 +1339,7 @@ class ModellerTools:
     suite_tools: Sequence[Any] = ()
     suite_classes: Sequence[str] = ()
     suite_read_fn: Callable[[str], str] | None = None
+    suite_parents: Mapping[str, str] = field(default_factory=dict)
     suite: VulnerabilitySuiteSeam | None = None
     unit_cell: ModellerUnit | None = None
     # The RUN-scoped passive tracker. The per-run actor captures its tool
@@ -640,6 +1359,11 @@ class ModellerTools:
     seam_gaps: ToolSeamGaps | None = None
     # The one agent-facing browser tool, bound by the actor for its run.
     browser_tool: Any = None
+    # The project's free-text posture statement (#438). The run reads it ONCE
+    # at its start (`runtime._run_intake`) from `settings.hunting` and stamps
+    # it here; the pass copies it verbatim onto every turn prompt. It never
+    # rides the run record (S6: the run record does not duplicate it).
+    threat_model_scope: str = ""
 
 
 def build_grounding_provider(project_id: str, *, read_fn=None):
@@ -689,12 +1413,17 @@ def build_modeller_tool_surface(
         # ONE sink per tools instance (the suite seam's pattern), so the actor's
         # captured surface records into the same log the pass reads
         tools.seam_gaps = ToolSeamGaps()
+    tracker = getattr(tools, "tracker", None) or getattr(
+        tools.threat_store, "tracker", None)
     surface: list[BaseTool] = [
         ModellerHuntsStoreTool(
             store=tools.threat_store, project_id=project_id, unit_id=unit_id,
-            run_id=tools.run_id, unit=tools.unit_cell),
+            run_id=tools.run_id, unit=tools.unit_cell, tracker=tracker),
+        ModellerAssessImpactTool(
+            store=tools.threat_store, project_id=project_id, unit_id=unit_id,
+            run_id=tools.run_id, unit=tools.unit_cell, tracker=tracker),
         build_modeller_notes_tool(tools.threat_store, project_id, unit_id,
-                                  tools.unit_cell),
+                                  tools.unit_cell, tracker=tracker),
         HttpHistorySearchTool(http_search_fn=tools.http_search_fn,
                               project_id=project_id,
                               gap_sink=tools.seam_gaps),
@@ -716,6 +1445,11 @@ def build_modeller_tool_surface(
             # recorded (a fresh seam per surface build would lose them)
             tools.suite = VulnerabilitySuiteSeam(
                 classes=tuple(tools.suite_classes),
+                parents=dict(tools.suite_parents),
                 read_fn=tools.suite_read_fn)
         surface.extend(build_vulnerability_suite_tools(suite=tools.suite))
+    if tools.suite is not None:
+        setter = getattr(tools.threat_store, "set_class_names", None)
+        if setter is not None:
+            setter(tools.suite.classes)
     return {tool.name: tool for tool in surface}

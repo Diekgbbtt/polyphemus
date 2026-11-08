@@ -385,7 +385,7 @@ def test_hunt_launch_is_a_loud_410_and_the_enqueue_seam_is_gone():
     assert resp.status_code == 410, resp.text
     detail = resp.json()["detail"]
     assert "retired" in detail.lower()
-    assert "loop file" in detail.lower()
+    assert "threat file" in detail.lower()
     assert "T10b" in detail and "#397" in detail
 
 

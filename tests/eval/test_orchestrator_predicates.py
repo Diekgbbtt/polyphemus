@@ -111,11 +111,13 @@ def test_recon_entry_blocks_without_an_l1_scaffold() -> None:
 
 def test_recon_entry_blocks_an_auth_surface_without_the_authn_skill(tmp_path) -> None:
     files = FileStore()
+    skills_root = tmp_path / "skills"
     state = predicates.PhaseState(
         project_id=PROJECT,
         target_seed="t.test",
         auth_surface=True,
         data_root=tmp_path,
+        skills_root=skills_root,
     )
 
     result = predicates.recon_entry(
@@ -128,7 +130,7 @@ def test_recon_entry_blocks_an_auth_surface_without_the_authn_skill(tmp_path) ->
     assert "authn" in result.reason
 
     # The skill bundle at its designed location lifts the block.
-    files.write_text(authn_skill_path(tmp_path, PROJECT), "# authn\n")
+    files.write_text(authn_skill_path(skills_root, PROJECT), "# authn\n")
     result = predicates.recon_entry(
         _routed(**{"GET /projects/pid/auth": {"overview": "sign in", "accounts": [{"name": "a"}]}}),
         files,
@@ -141,12 +143,14 @@ def test_recon_entry_blocks_an_auth_surface_without_overview_or_credentials(
     tmp_path,
 ) -> None:
     files = FileStore()
-    files.write_text(authn_skill_path(tmp_path, PROJECT), "# authn\n")
+    skills_root = tmp_path / "skills"
+    files.write_text(authn_skill_path(skills_root, PROJECT), "# authn\n")
     state = predicates.PhaseState(
         project_id=PROJECT,
         target_seed="t.test",
         auth_surface=True,
         data_root=tmp_path,
+        skills_root=skills_root,
     )
 
     no_overview = predicates.recon_entry(
@@ -205,6 +209,7 @@ def test_recon_entry_accumulates_the_auth_surface_blocks(tmp_path) -> None:
         target_seed="t.test",
         auth_surface=True,
         data_root=tmp_path,
+        skills_root=tmp_path / "skills",
     )
 
     result = predicates.recon_entry(
@@ -412,14 +417,14 @@ def test_hunting_entry_blocks_when_configured_premined_artifacts_are_absent(
     FileStore().write_text(
         produced / "unit-web-x" / "unit-web-x.yaml", "state: COMPLETED\n"
     )
-    # A model document alone is NOT dispatchable work: no loop file yet.
+    # A model document alone is NOT dispatchable work: no threat file yet.
     result = predicates.hunting_entry(
         _routed(**{"GET /projects/pid/recon/r1": _recon_run()}), FileStore(), state
     )
     assert not result.ok
 
     FileStore().write_text(
-        produced / "unit-web-x" / "loop-1.yaml", "loop:\n  id: loop-1\n"
+        produced / "unit-web-x" / "threat-1.yaml", "threat:\n  id: threat-1\n"
     )
     result = predicates.hunting_entry(
         _routed(**{"GET /projects/pid/recon/r1": _recon_run()}), FileStore(), state
@@ -429,7 +434,7 @@ def test_hunting_entry_blocks_when_configured_premined_artifacts_are_absent(
 
 def test_hunting_entry_accepts_premined_test_specs_present(tmp_path) -> None:
     # A setup that pre-mines only test specs must still pass the gate: presence
-    # counts both the threat-model loop files and the test-spec inboxes.
+    # counts both the threat-model threat files and the test-spec inboxes.
     state = predicates.PhaseState(
         project_id=PROJECT,
         recon_run_id="r1",
@@ -443,7 +448,7 @@ def test_hunting_entry_accepts_premined_test_specs_present(tmp_path) -> None:
     assert not result.ok
 
     spec_dir = hunter_test_specs_family_dir(
-        tmp_path, PROJECT, "unit-web-x__loop-1", "produced"
+        tmp_path, PROJECT, "unit-web-x__threat-1", "produced"
     )
     FileStore().write_text(spec_dir / "s.yaml", "id: s\n")
     result = predicates.hunting_entry(

@@ -6,7 +6,7 @@ Written against the intended API (shells_to_batch + bootstrap_reasoned) BEFORE t
 build - per /to-assertions they collect, execute, and FAIL for the predicate's
 reason (the path is NotImplementedError), and go green when the build fills the
 stubs. Expected values come from the spec, not recomputed. Verifier-gated tier; not
-selected by the tdd unit loop.
+selected by the tdd unit threat.
 """
 import pytest
 

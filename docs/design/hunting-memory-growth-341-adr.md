@@ -1,7 +1,7 @@
 # ADR: bounded retention for the whole-file hunting memory stores
 
 *Historical note (T10b #397).*
-The `hunt_configs/` store named below is RETIRED (T4b #387); the live hunter spec set is keyed by the loop dispatch id
+The `hunt_configs/` store named below is RETIRED (T4b #387); the live hunter spec set is keyed by the threat dispatch id
 and the threat-model model/loop documents are bounded single files.
 
 ## Status
@@ -53,3 +53,14 @@ Resolves #341 (the growth follow-up deferred by #340 / EV-29).
 - #341 (this bug), #340 (atomic write, `docs/design/atomic-write-340-adr.md`), #338 (the orphan that amplified growth), #202 (the sibling prior-hunt insight reads), #169 Q16 (the durable pod-export record).
 - `docs/design/hunting-memory-system-spec.md` section 10; `src/polymerhus/attack/hunting/CONTEXT.md`; `src/polymerhus/attack/hunting/hunt_store.py`; `src/polymerhus/attack/hunting/hunter_memory.py`.
 - `tests/attack/test_hunter_memory.py`; `tests/attack/test_hunt_store.py`.
+
+## Amendment 2026-11-07: the pod-export stubs have their own store
+
+The Q16 pod-export stubs no longer share `hunting/hunter/notes.yaml`.
+They live in `hunting/pod-export/notes.yaml` (`PodExportStore`).
+The split removes the shared writer and the protected-eviction coupling.
+The hunter notes file now carries the episodic phase notes only.
+The legacy `provenance.verdict_stub` protection remains for a stub already present in an old file.
+The pod-export store keeps the same key `<hunt_key>:pod-export:<spec_id>` and its own bound `POD_EXPORT_NOTES_MAX_RECORDS`/`POD_EXPORT_NOTES_MAX_BYTES` (1000 / 64 MiB).
+The base compose binds `${INSTANCE_DATA_ROOT:-./data}` to `/srv/data`, so the file survives a container kill.
+The live module context is `src/polymerhus/attack/hunting/CONTEXT.md`.

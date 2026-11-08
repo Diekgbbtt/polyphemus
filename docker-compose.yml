@@ -301,6 +301,12 @@ services:
       postgres: { condition: service_healthy }
       neo4j: { condition: service_healthy }
     volumes:
+      # The app-owned data root (#234): every hunting artifact, project memory
+      # and pod-export record lands on the HOST path here, so a container kill
+      # or recreation never loses it. `${INSTANCE_DATA_ROOT}` is the eval
+      # orchestrator's host path; a plain clone binds its own ./data. The code
+      # addresses `/srv/data` only, so the host layout stays external.
+      - ${INSTANCE_DATA_ROOT:-./data}:/srv/data
       - ./lightrag/data/ingestion:/data/ingestion
       # The project-specific skill branch persists across container recreation;
       # the rest of /srv/skills stays baked catalogue content.

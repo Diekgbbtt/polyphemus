@@ -268,7 +268,7 @@ class KbQueryTool(BaseTool):
             degraded = {
                 "schema_version": "lightrag-answer/v2",
                 "scenario_id": kwargs.get("scenario_id", ""),
-                "summary": "query_lightrag degraded - grounded on the loop payload alone",
+                "summary": "query_lightrag degraded - grounded on the threat payload alone",
                 "ontology_explanations": [],
                 "provenance_references": [],
                 "knowledge_gaps": [f"knowledge base unavailable ({type(exc).__name__})"],
@@ -287,7 +287,7 @@ class KbQueryTool(BaseTool):
             degraded = {
                 "schema_version": "lightrag-answer/v2",
                 "scenario_id": kwargs.get("scenario_id", ""),
-                "summary": "query_lightrag degraded - grounded on the loop payload alone",
+                "summary": "query_lightrag degraded - grounded on the threat payload alone",
                 "ontology_explanations": [],
                 "provenance_references": [],
                 "knowledge_gaps": [f"knowledge base unavailable ({type(exc).__name__})"],

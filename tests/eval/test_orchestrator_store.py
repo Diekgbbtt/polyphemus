@@ -60,8 +60,8 @@ def _verdict_row(vuln_id: str = "v1", identified: str = "identified") -> dict:
             "symptom": "s",
         },
         "evidence_chain": {
-            "loop": "pid/hunting/threat_modeller/consumed/service-web-viewer/loop-1.yaml",
-            "spec_dir": "pid/hunting/hunter/test-specs/service-web-viewer__loop-1",
+            "threat": "pid/hunting/threat_modeller/consumed/service-web-viewer/threat-1.yaml",
+            "spec_dir": "pid/hunting/hunter/test-specs/service-web-viewer__threat-1",
             "experiment_logs": [
                 "pid/hunting/test-executor-pod/spec-1/experiment-log/order-0.yaml"
             ],
@@ -94,8 +94,8 @@ def _make_data_root(root: Path) -> Path:
     """Populate a minimal instance data root matching the evidence chain paths."""
     unit_dir = root / "pid/hunting/threat_modeller/consumed/service-web-viewer"
     unit_dir.mkdir(parents=True)
-    (unit_dir / "loop-1.yaml").write_text("loop: 1\n", encoding="utf-8")
-    spec_dir = root / "pid/hunting/hunter/test-specs/service-web-viewer__loop-1"
+    (unit_dir / "threat-1.yaml").write_text("threat: 1\n", encoding="utf-8")
+    spec_dir = root / "pid/hunting/hunter/test-specs/service-web-viewer__threat-1"
     spec_dir.mkdir(parents=True)
     (spec_dir / "spec.yaml").write_text("spec: a\n", encoding="utf-8")
     (root / "pid/hunting/test-executor-pod/spec-1/experiment-log").mkdir(parents=True)
@@ -319,8 +319,8 @@ def test_materialize_assembles_the_full_trial_tree(tmp_path) -> None:
         "verdicts.yaml",
         "diagnoses.yaml",
         "run-manifest.yaml",
-        "pid/hunting/threat_modeller/consumed/service-web-viewer/loop-1.yaml",
-        "pid/hunting/hunter/test-specs/service-web-viewer__loop-1/spec.yaml",
+        "pid/hunting/threat_modeller/consumed/service-web-viewer/threat-1.yaml",
+        "pid/hunting/hunter/test-specs/service-web-viewer__threat-1/spec.yaml",
         "pid/hunting/test-executor-pod/spec-1/experiment-log/order-0.yaml",
         "pid/hunting/test-executor-pod/spec-1/export.yaml",
     ):
@@ -345,8 +345,8 @@ def test_materialize_preserves_chain_structure_so_relative_paths_resolve(tmp_pat
         eval_sha=EVAL_SHA,
         stack_fingerprint=FP,
     )
-    assert rows[0].evidence_chain.loop == (
-        "pid/hunting/threat_modeller/consumed/service-web-viewer/loop-1.yaml"
+    assert rows[0].evidence_chain.threat == (
+        "pid/hunting/threat_modeller/consumed/service-web-viewer/threat-1.yaml"
     )
 
 
@@ -370,20 +370,20 @@ def test_materialize_is_idempotent_and_replaces_a_changed_copy(tmp_path) -> None
     trial_dir, data_root = _make_trial(tmp_path)
     store_dir = tmp_path / "store"
     files = FileStore()
-    loop_file = (
+    threat_file = (
         data_root
-        / "pid/hunting/threat_modeller/consumed/service-web-viewer/loop-1.yaml"
+        / "pid/hunting/threat_modeller/consumed/service-web-viewer/threat-1.yaml"
     )
 
     first = store.materialize(trial_dir, store=store_dir, data_root=data_root, files=files)
-    loop_file.write_text("loop: edited\n", encoding="utf-8")
+    threat_file.write_text("threat: edited\n", encoding="utf-8")
     second = store.materialize(trial_dir, store=store_dir, data_root=data_root, files=files)
 
     assert first == second
-    copied = first / "pid/hunting/threat_modeller/consumed/service-web-viewer/loop-1.yaml"
-    assert copied.read_text(encoding="utf-8") == "loop: edited\n"
+    copied = first / "pid/hunting/threat_modeller/consumed/service-web-viewer/threat-1.yaml"
+    assert copied.read_text(encoding="utf-8") == "threat: edited\n"
     # No temp file survived the atomic replacement.
-    assert sorted(p.name for p in copied.parent.iterdir()) == ["loop-1.yaml"]
+    assert sorted(p.name for p in copied.parent.iterdir()) == ["threat-1.yaml"]
 
 
 def test_run_manifest_carries_the_trial_pointers(tmp_path) -> None:
@@ -411,7 +411,7 @@ def test_run_manifest_carries_the_trial_pointers(tmp_path) -> None:
     assert manifest["stack_fingerprint"] == FP
     assert manifest["copied_at"] == "2026-09-28T12:00:00+00:00"
     assert (
-        "pid/hunting/hunter/test-specs/service-web-viewer__loop-1"
+        "pid/hunting/hunter/test-specs/service-web-viewer__threat-1"
         in manifest["chain_sources"]
     )
 

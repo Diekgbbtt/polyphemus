@@ -198,7 +198,7 @@ def test_seeded_trial_places_premined_artifacts(tmp_path) -> None:
     source = tmp_path / "premined" / "unit-web-sqli"
     source.mkdir(parents=True)
     (source / "unit-web-sqli.yaml").write_text("state: COMPLETED\n", encoding="utf-8")
-    (source / "loop-1.yaml").write_text("loop:\n  id: loop-1\n", encoding="utf-8")
+    (source / "threat-1.yaml").write_text("threat:\n  id: threat-1\n", encoding="utf-8")
 
     api_runner = RecordingApi(_seeded_routes(hunting_status="complete"))
     files = FileStore()
@@ -213,7 +213,7 @@ def test_seeded_trial_places_premined_artifacts(tmp_path) -> None:
     assert record.terminal == "complete"
     produced = threat_model_dir(tmp_path / "data", SEED, "produced") / "unit-web-sqli"
     assert sorted(p.name for p in files.list_files(produced)) == [
-        "loop-1.yaml",
+        "threat-1.yaml",
         "unit-web-sqli.yaml",
     ]
     assert set(api_runner.methods_paths).isdisjoint(_forbidden_project_calls(SEED))

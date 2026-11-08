@@ -1,5 +1,32 @@
 # ADR: the threat modeller binds live-evidence tools (HTTP-history reads, exec probes, skills)
 
+## Amendment 2026-10-31: the `assess_impact` binding
+
+The CVSS 4.0 risk-scoring workstream adds one tool binding and removes one write path.
+The authoritative spec is `docs/design/cvss4-risk-scoring-spec.md`; the decision is `docs/design/impact-assessment-atomic-write-adr.md`; the component map is `docs/design/cvss4-risk-scoring-impact-map.md`.
+
+- The modeller binds `assess_impact` as the sole writer of one `ImpactAssessment` row.
+- `hunts_store` no longer accepts the `impact_assessment` section.
+- The first successful `assess_impact` call advances the model state to `IMPACT_ASSESSED`.
+- The tool returns success or a coded rejection; it never returns the score or the vector.
+
+## Amendment 2026-11-05: the coverage signal and the actionable responses
+
+The iteration C.a diagnosis adds these response rules.
+The authoritative record is the 2026-11-05 amendment in `docs/design/impact-assessment-system-spec.md`.
+
+- The `assess_impact` success response carries `residual_vulnerabilities` and the coverage hint while a non-dropped vulnerability has no row.
+- The `impact_assessed` note response carries the same residual signal.
+- The `COMPLETED` write is refused while a residual remains.
+- The `COMPLETED` success response carries the `validation` and the derived `risk_profile`.
+- `assess_impact` rejects a strictly required core field that is present but blank.
+  `hunts_store` already rejects a missing `state` and an empty section payload, so its required parameters are covered.
+
+> **Vocabulary note (2026-10-25).** The artifact called a **loop** in this historical document is now a **threat** in the module and the current documentation.
+> **Superseded 2026-10-26.** The impact-assessment system supersedes the impact-first and five-state model in this historical document.
+> The authoritative spec is `docs/design/impact-assessment-system-spec.md`; the prototype is `docs/design/impact-assessment-system-prototype.md`.
+> The current model is: `threat` (a concrete victim and damaged property), `placeholder` (no concrete damage), `precursor` (a capability entity), a first-class impact assessment, and a `hunts_store` query phase.
+
 ## Status
 Accepted (design phase, 2026-10-15).
 Bound to the unit threat model grilling (`docs/design/unit-threat-model-workbench.md`, R1-5 and the Q10-Q17 answers).

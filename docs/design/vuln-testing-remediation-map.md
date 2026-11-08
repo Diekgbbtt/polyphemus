@@ -1,6 +1,6 @@
 # Vuln-testing remediation map
 
-**AMENDED (unit threat model; carried by T10 #383).** The D4 field list in this map predates the REDUCED D4 (S5 8.4, S3 8.6): `testing_pattern`, `payload_vector_space`, and `interpretation_guidance` are retired, and the dispatch payload is the loop payload. The defect register and the remediation decisions stand as the historical W7/W8 record.
+**AMENDED (unit threat model; carried by T10 #383).** The D4 field list in this map predates the REDUCED D4 (S5 8.4, S3 8.6): `testing_pattern`, `payload_vector_space`, and `interpretation_guidance` are retired, and the dispatch payload is the threat payload. The defect register and the remediation decisions stand as the historical W7/W8 record.
 
 
 *Status: working map (2026-10-03). Records the operator-green-lit decisions and the critical-defect register from the W7 synthesis / W8 critic review of the vuln-groundtruth corpus. Implementation is gated by the technical-mechanisms assessment and the simplicity scoring gate. This document authorises no code change by itself; tickets are filed after the map is coherent.*

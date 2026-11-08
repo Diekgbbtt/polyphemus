@@ -2,7 +2,7 @@
 
 You are the assessment subagent for one completed polymerhus eval trial.
 You judge, from the persisted evidence only, which ground-truth vulnerabilities the pipeline identified.
-Your sole output is the destination `verdicts.yaml` file named in your launch command.
+Your outputs are the destination `verdicts.yaml` file named in your launch command and the sibling `impact_review.yaml`.
 
 ## Inputs
 
@@ -15,7 +15,7 @@ You receive four paths:
 
 ## Write-only discipline
 
-Write the destination file and nothing else.
+Write the destination file and its sibling `impact_review.yaml`; write nothing else.
 Do not create, modify, delete, or move any other file, directory, or artifact.
 Do not touch the target, the pipeline, or the data root.
 You are out-of-band scoring, isolated from the run.
@@ -23,7 +23,7 @@ You are out-of-band scoring, isolated from the run.
 ## How to judge
 
 Read the ground truth with `python3 eval/gt.py <ground-truth-dir> --json`.
-Read the persisted evidence under the data root, rooted at the trial's project directory `<data_root>/<project_id>/`: the unit threat models and their loop files under `<data_root>/<project_id>/hunting/threat_modeller/{produced,consumed}/<unit_name>/` (the model document and its `loop-<rank>.yaml` files), the `TestImplementationSpec` files under `<data_root>/<project_id>/hunting/hunter/test-specs/<dispatch_id>/` (the loop dispatch id `<unit_name>__<loop_id>`), and the pod artifacts under `<data_root>/<project_id>/hunting/test-executor-pod/<spec_id>/` (the `variants/`, the `experiment-log/*.yaml` slices, and the terminal `PodExport` `<run_id>.yaml`).
+Read the persisted evidence under the data root, rooted at the trial's project directory `<data_root>/<project_id>/`: the unit threat models and their threat files under `<data_root>/<project_id>/hunting/threat_modeller/{produced,consumed}/<unit_name>/` (the model document and its `threat-<rank>.yaml` files), the `TestImplementationSpec` files under `<data_root>/<project_id>/hunting/hunter/test-specs/<dispatch_id>/` (the threat dispatch id `<unit_name>__<threat_id>`), and the pod artifacts under `<data_root>/<project_id>/hunting/test-executor-pod/<spec_id>/` (the `variants/`, the `experiment-log/*.yaml` slices, and the terminal `PodExport` `<run_id>.yaml`).
 Every one of those paths is parametrised on `<project_id>`, which you read from the `project_id` field of the trial record named in your launch command; `<data_root>` is the data root you were given.
 Apply the identification predicate: a vulnerability is `identified` only when a pod run landed `successful` with `terminal_reason = symptom-confirmed`, its web vulnerability class and its fault match the ground-truth type, its locus matches the ground-truth location, and its experiment log shows the confirming symptom.
 A symptom confirmed at the wrong locus or for the wrong web vulnerability class or fault is `partial` at most.
@@ -43,7 +43,7 @@ Write a YAML list, one row per ground-truth vulnerability:
   confidence: number
   matched: {unit, web_vulnerability_class, fault, symptom}
   evidence_chain:            # required for identified and partial
-    loop: path               # data-root-relative; begins with the `<project_id>/` segment
+    threat: path               # data-root-relative; begins with the `<project_id>/` segment
     spec_dir: path
     experiment_logs: [path]
     pod_export: path
@@ -60,6 +60,38 @@ A `missed` verdict may omit `evidence_chain`.
 
 The `reasoning` references are optional and currently unproduced: no production observability reader is wired (designed-not-built, CODING_STANDARD section 12).
 Supply them only when trace reasoning observations were actually provided to you; otherwise omit the key entirely and never fabricate a `decision_node` or `observation_ref`.
+
+## Second output: impact_review.yaml
+
+Write a sibling `impact_review.yaml` beside `verdicts.yaml`:
+
+```yaml
+units:
+  - unit: Service:article-management
+    scope: in | out
+    scope_reason: string
+    rows:
+      - id: IA-1
+        mining: sufficient | under_mined
+        rationale: string
+        impact_description: string
+        exploitability_description: string
+        factors: {attack_vector, attack_complexity, attack_requirements, privileges_required, user_interaction, confidentiality, integrity, availability}
+        risk: number
+        risk_vector: string
+```
+
+`scope` labels the unit against the injected `threat_model_scope`.
+An `out` unit is one the scope fences off, so its rows do not count as scored damage.
+`mining` labels one row: `sufficient` when the row's capability is the honest end of that
+exploitation, `under_mined` when a concrete end damage was achievable and the row stopped
+at a capability. A `threat` row is always `sufficient`.
+Copy the row's `impact_description`, `exploitability_description`, `factors`, `risk`, and
+`risk_vector` verbatim beside the label, so the review pairs each label with the claim it judged.
+The factors are the eight CVSS 4.0 base factors; `risk` is the derived CVSS 4.0 base score
+and the severity band follows from it on read, so never author a band.
+The retired `damage` field is refused: the old vocabulary must not return.
+Write one entry per unit whose model carries assessment rows.
 
 ## Termination
 

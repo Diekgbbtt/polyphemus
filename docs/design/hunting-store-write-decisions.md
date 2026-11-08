@@ -53,7 +53,7 @@ The write payload (`OrchestratorHuntsStoreArgs.hunt_config`) carries the values 
 ### 4.2 hunting agent `hunts_store` and `notes`
 
 **SUPERSEDED 2026-10-18 for the hunter key and status lifecycle.** The hunter is dispatched per loop, not per config.
-Its store key is the loop dispatch id `<unit_name>__<loop_id>`; the folder is `test-specs/<hunt_key>/`.
+Its store key is the threat dispatch id `<unit_name>__<threat_id>`; the folder is `test-specs/<hunt_key>/`.
 The spec status values are `{hypothesised, ratified, dropped}`.
 The derived-symbol rules below still apply to the file name `<fault_keyword>_<strategy_keyword>.yaml`.
 See `docs/design/hunting-67-threat-model-artifact-spec.md` section 8 and `docs/design/hunting-67-hunting-agent-spec.md` section 8.7.
@@ -133,7 +133,7 @@ The two hunting memory stores carry a **status-varying schema by design**, becau
 - **Hunter spec** (`HunterMemoryStore`): the body is the reduced typed `TestImplementationSpec` at every status (`target_identity` / `verification_symptoms` / `assumptions` / `rationale` / `parent_spec_ref` / `provenance`).
   The status values are `hypothesised | ratified | dropped`, and the body shape does not vary by status.
   `testing_pattern`, `payload_vector_space`, and `interpretation_guidance` are retired.
-  The store key is the loop dispatch id `<unit_name>__<loop_id>`; the folder is `test-specs/<hunt_key>/`.
+  The store key is the threat dispatch id `<unit_name>__<threat_id>`; the folder is `test-specs/<hunt_key>/`.
   **Superseded 2026-10-18** by `docs/design/hunting-67-hunting-agent-spec.md` section 8.6.
 - **The spec identity is the file-name stem** `<fault_keyword>_<strategy_keyword>` (the ADR #169 Q13 semantic `spec_id`, the pod session discriminator, the `pod-export:<spec_id>` note key). It is a DERIVED symbol (Rule 1 / #298): a typed `specified` payload carries no `spec_id` field, so any consumer needing the identity derives it from the file name (or the payload's `fault_keyword` / `strategy_keyword`), never reads a payload `spec_id`.
 

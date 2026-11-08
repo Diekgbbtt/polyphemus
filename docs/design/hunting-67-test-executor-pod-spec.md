@@ -1,12 +1,50 @@
 # Hunting agent spec: test-executor pod
 
+## Amendment 2026-10-25: impact-first elicitation
+
+The threat-model impact-elicitation workstream supersedes the likelihood-only risk score and the failure-mode artifact in this document.
+The decisions are in `docs/design/threat-model-impact-elicitation-adr.md`; the component map is `docs/design/threat-model-impact-elicitation-impact-map.md`.
+Where this document and the amendment disagree, the amendment wins.
+
+- A threat carries `VC`, `VI`, and `VA` plus a literal end impact. The store computes `impact = 1 - (1-VC)(1-VI)(1-VA)`, the ordinal weight, and `threat risk = likelihood_weight * impact_weight`.
+- The ranking and the dispatch buckets use the combined risk. The run record carries `impact_weights` and `impact_breakdown`.
+- The `failure_modes` artifact, `Threat.failure_mode_refs`, and the pod `failure-mode` variant basis are removed. The modeller no longer judges technical feasibility; the hunter and the pod own the effective attempt.
+- The trust procedure uses the four axes `identity`, `spatial`, `temporal`, and `controls_semantics`.
+- The well-formedness phase runs between `VULNERABILITIES_WRITTEN` and `PRIOR_ART`. Its entry is the `trust_assumption` note, its exit is the `wellformedness` note, and a lower-gate write re-enters the phase.
+- Every vulnerability binds a suite class parent or leaf. Technique families are not classes. `suite_gap` is removed. Class findings are non-blocking.
+
+## Amendment 2026-10-26: impact assessment system
+
+The impact-assessment system supersedes the 2026-10-25 impact-first amendment in this document.
+The authoritative spec is `docs/design/impact-assessment-system-spec.md`.
+The prototype is `docs/design/impact-assessment-system-prototype.md`.
+Where this document and the new spec disagree, the new spec wins.
+
+- The impact assessment is a first-class model section.
+  A row is a `threat` when it names a concrete victim and damaged property, otherwise a `placeholder`.
+- A `precursor` is an impact-assessment row with no concrete end damage that still yields its capability.
+  The threat references its precursors through `enabling_precursors`.
+- The `damage` field merges the victim and the damage into one semantic field.
+  The damage-family and victim-class enums are removed.
+- The CVSS 4.0 base score is derived at persistence, after the impact assessment.
+  The `end_impact` string is removed from the threat; the damage lives in the impact assessment.
+- The workflow has seven gates: `UNIT_TECHNICAL_SHARP`, `TRUST_MODELLED`, `TRUST_ASSUMPTIONS_WRITTEN`, `VULNERABILITIES_WRITTEN`, `PRIOR_ART`, `IMPACT_ASSESSED`, `COMPLETED`.
+- `hunts_store` gains `cmd=query`: a required `kind` plus a non-empty AND list of `{path, regex, flags}` filters over the threat-file and model fields. An empty filter, an invalid regex, or an unknown path is a coded rejection.
+- The project `threat_model_scope` string is applied at the assumptions layer and appended verbatim to the prompt.
+- The hunter payload carries the impact assessment and the precursors.
+  The spec contract and the pod contract are unchanged.
+  No damage symptom or damage verdict is added.
+- The class-based green gate is retired.
+  The impact metric is the CIA red/green share over all impact rows.
+
+
 Part of [#67](https://github.com/Diekgbbtt/polyphemus/issues/67) (per-agent specs), bottom of the agent hierarchy.
 The parent, merged spec is `docs/design/hunting-67-per-agent-specs-spec.md`; it holds the inter-agent logic (walkthrough S0-S7, domain data contracts D1-D11, interface agreements IA-1..IA-8, failure-handling canon, agent-attribute compliance).
 This document disambiguates the test-executor pod from the combined spec: everything below is the pod's contract alone, written to the depth an implementation session can build from without re-reading the parent.
 
 *T10b (#397) note.*
 The pre-redesign E2 full-chain walkthrough (candidate set -> `HuntConfig` -> hunting agents) is historical.
-The live chain is a produced loop file -> the hunter spec set -> the pod; the pod's D4 contract below is current.
+The live chain is a produced threat file -> the hunter spec set -> the pod; the pod's D4 contract below is current.
 
 *Status: spec (contract), being re-specified by the #84 regrounding.
 Implementation decisions from the 2026-08-21 grilling live in `docs/design/hunting-84-regrounding-decisions.md` (D84-1..D84-25) and are authoritative over this document where they clash; this document is corrected so no clash remains.
@@ -57,7 +95,17 @@ The plan itself lives in the Runner's ReAct session thread, preserved across lap
 - **`query_lightrag` (`KbQueryTool`)** - the single knowledge-base tool from the `lightrag` branch, **always-bound as of #197** (the `HUNTING_LIGHTRAG_TOOL` opt-in gate is REMOVED; D84-26, resolved when the `lightrag` merge landed). Bound as a LangChain `BaseTool` into the Runner's `create_agent` `tools=[...]` - the SAME pattern the hunting agent's author lane uses. The former `kb_retrieve` symptom-technique typed seam (surface B) is **retired**; the pod binds `KbQueryTool`, which wraps the real `query_lightrag` and - T3/#179 - records every KB response as a first-class `KbObservation` into the variant's experiment-log file (distinct from the exec `RawObservation`). Fail-open (empty/raising -> a denoted degraded bundle, O13).
 - **`graph_view` (#197)** - the shared read-only L0/L1 tool (`graph_view_tool.py::build_graph_view_tool`, the SAME single-source contract the orchestrator and hunter bind), riding `ReadOnlyGraphView(project_id).read` and bound into the Runner's AND the Triager's `tools=[...]` - always-on, never gated.
 - **`note_tool`** - the note write/read tool (D84-17/20/27): the Runner writes ONE consolidated experiment-summary note at P3 exhaustion (prompt-verbatim); the Triager reads it per lap as its primary reasoning artifact. Bound into the respective agents' `tools=[...]` (Runner: write; Triager: read).
+- **`auth_store`** - the shared per-project auth view, bound READ-ONLY into the Runner and the Triager. The pod reads the login overview and the account records to type an authenticated request. It never writes the store and never replays a secret.
+- **`load_skill` / `record_skill_lesson`** - the project skill loader and the skill-usage lesson recorder, bound into the Runner and the Triager through the shared auth-capable binding.
 - **Tool-call validation is the tool's own contract** (D84-22): a wrong parameter fails as a tool-call request REJECTED with an error message + code describing the semantic explicitly - the harness does not re-validate arguments, it only enforces the cap, raw recording (G4), and dedup (O7).
+
+The request tool definitions are the full tool surface.
+The system prompts carry a complete human tool summary, not a second description body.
+The top-level descriptions carry purpose, operation, constraints, the coded error envelope, and the critical usage clauses.
+The schemas remain the machine contract.
+
+The first human context is pinned through compaction for both pod roles.
+The pinned message carries the spec and the target context.
 
 The specialised fault-targeting tool registry is #71's future home.
 The tool calls are the only place the live target is touched.
@@ -66,13 +114,15 @@ The tool calls are the only place the live target is touched.
 
 The `TestImplementationSpec` (D4); the communication interface with the parent HuntingAgent (the typed handoff: D4 in, D5 + D6 out); the memory and observability seams; and the pod experiment-memory store.
 
-The pod has **no graph access**.
+The pod has **no graph write access**.
+It binds the read-only `graph_view` tool for the target surface.
 It OWNS a pod experiment-memory store (D84-33 through D84-38, adapted as of T1/#177 and re-scoped 2026-08-24): a per-project, deterministic-key store at `data/<project_id>/test-executor-pod/` with three bodies under the per-spec directory `<fault>_<strategy>/` - `variants/<variant-ref>.yaml` (the minted TestImplementationSpec variants, `v0`/`v1`/...), `experiment-log/<order>.yaml` (one file per variant - the D6 slice with the `executed` dedup ledger and the `experiment_summary` terminal record, overwritten idempotently) and the per-project `notes.yaml` keyed `<fault>_<strategy>:<order>:<note_name>`. The variant ref `vN` and the order `N` are the SAME ordinal in two spellings, easily mappable. The spec identifier is the #164 hunter's `<fault>_<strategy>` (D84-34), NOT a content-addressed hash; the order number is the variant ordinal. There is NO `_seq`/`_ref` (D84-36): the deterministic key plus the natural list order disambiguate every artifact; reads are latest-first. The note tool reads/writes this store; the `experiment_summary` write sinks into the variant's experiment-log file as its terminal record (D84-35), `kb_insight`/`freeform` accumulate in `notes.yaml`. The authoritative build spec for the store is `docs/design/hunting-84-pod-memory-system-spec.md`.
 The pod prompts embed an INDEXABLE LIST of the pod memory's keys (notes by key + the experiment-log identifiers, spec id + orders on file) plus note-reading guidance, mirroring the hunt-orchestrator's prior-config key-list + reading-tool pattern, so the Runner/Triager can index into the store when required (D84-27).
 
 ### 1.6 Output template
 
-- The pod verdict record (D5, Q3-amended): `{verdict: successful | unsuccessful, terminal_reason: <6-value>, clean: bool, init_validation: [str], iterations}`.
+- The pod verdict record (D5, Q3-amended): `{verdict: successful | unsuccessful, terminal_reason: <11-value>, clean: bool, init_validation: [str], iterations}`.
+  Five reasons are domain choices; six are harness-owned terminals.
 - The experiment log record (D6): `{variant_specs, raw_observations, interpretations}` - the full evidence trail (D67-08), plus the pod notes (D84-17/20).
 
 ### 1.7 Produced outcome
@@ -92,16 +142,48 @@ Langfuse is fail-open and never a gate (C12).
 - Fail-open: section 5.
 - Fixed internal caps: budget and timeout are pod-internal (D67-09), set by the pod, env-overridable, never carried in the spec.
   `HUNT_POD_MAX_TOOL_CALLS` defaults to **200** (D84-22), `HUNT_POD_MAX_ITERS` defaults to 8, `MAX_POD_ITERS = 3`, `EXEC_TIMEOUT_S = 300`.
+  The pod graph's node idle timeout defaults to 600 seconds and its tool idle timeout to 300 seconds.
+  A node run timeout is off by default; the surfer's one-hour pod backstop is the hard wall clock.
+
+### 1.10 Pod control-plane failure handling and resume (2026-10-26)
+
+The pod graph owns the primary failure detection.
+
+- `runner_agent`, `triager`, and `tool_exec` carry a LangGraph `TimeoutPolicy`.
+  The idle clock resets on model tokens, tool results, state writes, and child-task starts.
+- The node `error_handler` classifies the failure:
+  - provider 429, 5xx, transport timeout, or quota re-raises for the surfer's retry and pause policy;
+  - node timeout, context-window overflow, graph recursion limit, and tool timeout route to `degraded_terminal`;
+  - a generic error keeps the `technical-infeasibility` degrade.
+- All terminal paths call `pod/finalize.py`, the only production `PodExport` writer.
+  It assembles the evidence from the in-memory log or hydrates the durable store.
+  A fallback terminal never overwrites an execution terminal.
+  An execution terminal replaces a prior export for the same spec and run.
+- `degraded_terminal` calls the finalizer, so the typed reason and partial trail survive.
+- The surfer's backstop calls the finalizer with `pod-watchdog-timeout`; it never builds an envelope.
+  The pod's own lap budget writes `budget-timeout`; the two are distinct.
+- A stopped pod is resumable at the variant boundary.
+  `PodMemoryStore` writes `<spec_id>/<run_id>.resume.yaml`; `ExperimentLog.hydrate` rebuilds the D6 trail and the executed ledger; `init` restarts at the cursor variant.
+  A cancelled pod writes no export, so the gate holds the hunt.
+  The finalizer clears the cursor after a terminal export exists.
 
 ## 2. Domain peculiarities
 
-- The six-way termination (Q3-amended, ratified 2026-08-04; supersedes the four-way D67-06), each landing a binary end with the distinguishing evidence in the trail:
+- The domain termination (Q3-amended, ratified 2026-08-04; supersedes the four-way D67-06), each landing a binary end with the distinguishing evidence in the trail:
   1. Symptom confirmed via the verification symptom(s) -> `successful`, terminal_reason `symptom-confirmed`.
   2. Pattern/probe space exhausted without symptom AND every knowledge-base query relied on returned a real answer -> `unsuccessful`, terminal_reason `space-exhausted`. A degraded/unavailable KB result is UNAVAILABLE evidence, never absence: a `space-exhausted` claim over degraded KB coverage is downgraded to `no-symptom-evidence` with `clean=false` (#304).
   3. A strong technical infeasibility assertion (unreachable target, missing tool, everything WAF-blocked) -> `unsuccessful`, terminal_reason `technical-infeasibility`, infeasibility in the trail.
   4. A specific active defence prevented the probes (a WAF/filter soft-block) -> `unsuccessful`, terminal_reason `specific-defence-prevention`.
   5. Symptom absent but coverage partial or observations impaired (including a degraded/unavailable knowledge-base result) -> `unsuccessful`, terminal_reason `no-symptom-evidence`.
-  6. Budget/timeout reached -> `unsuccessful`, terminal_reason `budget-timeout`, partial evidence.
+- The harness-owned terminals, never triager choices:
+  - the pod's own lap budget -> `budget-timeout`;
+  - a pod node idle/run timeout -> `node-timeout`;
+  - a context-window overflow -> `context-window-exceeded`;
+  - a graph recursion limit -> `graph-limit`;
+  - a tool exec timeout -> `tool-timeout`;
+  - the surfer's last-resort backstop -> `pod-watchdog-timeout`;
+  - the surfer's builder degrade -> `surfer-dispatch-degraded`.
+  A provider quota, 5xx, or transport timeout is not a terminal; it pauses or retries the run.
   `clean` True = clean completed observations; False = blocked/unreachable or a mid-flight cut. `init_validation` present only on an INIT rejection.
   **As of #209 - presentation rule**: the triager prompt presents `verdict` and `terminal_reason` as SEPARATE
   outputs (e.g. "verdict successful, terminal_reason symptom-confirmed"), NEVER slash-joined shorthand
@@ -109,7 +191,7 @@ Langfuse is fail-open and never a gate (C12).
   the `validate_decision` binary guard, and the degradation then mis-records a confirmed symptom as
   `unsuccessful`.
 - The fixed caps (D67-09): `MAX_POD_ITERS = 3`, `EXEC_TIMEOUT_S = 300`, `HUNT_POD_MAX_TOOL_CALLS = 200`, `HUNT_POD_MAX_ITERS = 8`; all env-overridable, all pod-internal, never spec fields.
-- **SUPERSEDED by 8.4 (2026-10-18).** The testing pattern is an OPEN NL pattern inside the typed envelope (D67-07): the engine treats it as guidance over the generic loop.
+- **SUPERSEDED by 8.4 (2026-10-18).** The testing pattern is an OPEN NL pattern inside the typed envelope (D67-07): the engine treats it as guidance over the generic threat.
   The closed-enum pattern engine is deferred to [#81](https://github.com/Diekgbbtt/polyphemus/issues/81).
 - **SUPERSEDED by 8.6 (2026-10-18).** Variants (D67-08): a declined/refined attribute yields a derived variant spec instance, recorded with provenance; the exported evidence is the full experiment log (variant specs, raw observations, interpretations).
 - INIT validation is a hard gate: a spec failing the typed base schema or the environment contract is rejected and lands `unsuccessful` with the validation evidence in the trail.
@@ -152,7 +234,11 @@ Reuses:
 H1 - Confirmed: the spec's verification symptom is observed -> `{successful, symptom-confirmed}`, iterations = N, the log holds the variant spec, the raw observation, and the interpretation.
 H2 - Absent: the pattern/probe space exhausts without the symptom on an AVAILABLE knowledge base -> `{unsuccessful, space-exhausted}`, with the P3 note written. Over a degraded KB the same shape lands `{unsuccessful, no-symptom-evidence, clean=false}` (#304).
 H3 - Infeasible: unreachable target or all tools blocked -> `{unsuccessful, technical-infeasibility}` with the infeasibility in the trail.
-H4 - Capped: budget/timeout reached -> `{unsuccessful, budget-timeout}` with partial evidence.
+H4 - Capped: the pod's own lap budget is reached -> `{unsuccessful, budget-timeout}` with partial evidence.
+H4a - Node timeout: a node makes no progress past its idle window -> `{unsuccessful, node-timeout}` with the partial log.
+H4b - Context overflow: a provider context-length error -> `{unsuccessful, context-window-exceeded}`, never a domain infeasibility.
+H4c - Tool timeout: a tool exec exceeds its window -> `{unsuccessful, tool-timeout}` with the partial log.
+H4d - Resume: a stopped pod leaves no export and a resume cursor; the next dispatch continues at the cursor variant and skips executed probes.
 H5 - Variant: a variant basis yields a derived variant spec with provenance; the loop continues; the log records both variants.
 H6 - Note: on P3 exhaustion the consolidated experiment summary is written to the pod experiment-memory store and the Triager reads it.
 
@@ -160,7 +246,8 @@ H6 - Note: on P3 exhaustion the consolidated experiment summary is written to th
 
 O1 - Invalid spec at INIT: rejected, `unsuccessful` with the validation evidence; never executed.
 O2 - Non-zero exit: retried up to `MAX_POD_ITERS = 3`, then lands a binary end with the evidence.
-O3 - Exec timeout: `EXEC_TIMEOUT_S` enforced; the run lands `budget-timeout` (or the feasible alternative) with partial evidence.
+O3 - Exec timeout: `EXEC_TIMEOUT_S` enforced; the tool node lands `tool-timeout` with partial evidence.
+The pod's own lap cap still lands `budget-timeout`; the surfer's backstop lands `pod-watchdog-timeout`.
 O4 - Exec tool unavailable: the technical-infeasibility path.
 O5 - Target unreachable (DNS/connection refused): the technical-infeasibility path.
 O6 - Empty observation (empty body): interpreted as noise, preserved raw, the loop continues.
@@ -168,7 +255,7 @@ O7 - Duplicate probe: an identical variant + payload is executed once and record
 O8 - Unclassifiable output: treated as noise with the raw output preserved; the loop continues.
 O9 - Langfuse stub failure: the run completes unaffected (fail-open).
 O10 - Memory stub failure: the run completes unaffected.
-O11 - Variant count blow-up: bounded by the pod's internal caps (D67-09); the loop always lands a binary end.
+O11 - Variant count blow-up: bounded by the pod's internal caps (D67-09); the threat always lands a binary end.
 O12 - **SUPERSEDED by 8.5 (2026-10-18).** Empty payload vector: the Runner's first ReAct turn still probes once; if no probe is derivable, `space-exhausted` with the log.
 O13 - KB query failure (`query_lightrag` raising or empty): fail-open - the Runner degrades to the spec's own primitives. The empty/degraded bundle is RECORDED as a `KbObservation` (T3/#179) when a log is bound, marked `degraded=true` (#304). A degraded KB is UNAVAILABLE evidence: it can never license a clean `space-exhausted` (the graph downgrades to `no-symptom-evidence`/`clean=false`, #304) - only a real answer returning the same set as init confirms exhaustion (D84-16).
 O14 - A tool-call with wrong parameters: the tool REJECTS it with an error message + code (tool contract semantics, D84-22); the ReAct loop sees the rejection as a tool result and adjusts.
@@ -191,18 +278,21 @@ Delivery canon (merged spec section 3): all delivery is synchronous-threaded and
 ### 6.1 Contract predicates (integration tier)
 
 C1 - INIT rejection: given a spec violating the typed base schema, exercising malformed, the pod lands `unsuccessful` with the validation evidence in the trail and executes no tool call.
-C2 - Binary terminal invariant: given any spec and any tool behaviour, exercising ordering, every run terminates in exactly one of `{successful, unsuccessful}` and carries a `terminal_reason` from the Q3-amended vocabulary.
+C2 - Binary terminal invariant: given any spec and any tool behaviour, exercising ordering, every run terminates in exactly one of `{successful, unsuccessful}` and carries a `terminal_reason` from the Q3-amended vocabulary (domain or harness).
 C3 - Symptom confirmed: given a spec whose symptom a scripted tool output satisfies, exercising success, the pod lands `{successful, symptom-confirmed}` with iterations = N and the log populated.
 C4 - Space exhausted: given a spec whose symptom never appears across the whole probe space over an AVAILABLE KB (no degraded observation), exercising empty-valid, the pod lands `{unsuccessful, space-exhausted}`. Over a DEGRADED KB the same run lands `{unsuccessful, no-symptom-evidence, clean=false}` (#304).
 C5 - Infeasibility: given an unreachable target (connection refused), exercising degradation, the pod lands `{unsuccessful, technical-infeasibility}` with the infeasibility in the trail.
 C6 - Budget/timeout: given tool calls exceeding the fixed caps, exercising degradation, the pod lands `{unsuccessful, budget-timeout}` with partial evidence.
 C7 - Retry: given a tool call failing with non-zero exit twice then succeeding, exercising degradation, the retries converge at `MAX_POD_ITERS = 3` and the run lands a binary end.
-C8 - Timeout enforcement: given a tool call hanging past `EXEC_TIMEOUT_S`, exercising degradation, the exec is aborted and the run lands a binary end within the caps.
+C8 - Timeout enforcement: given a tool call hanging past `EXEC_TIMEOUT_S`, exercising degradation, the exec is aborted and the tool node lands `tool-timeout` within the caps.
+C14 - Node timeout: a hung async runner lands `{unsuccessful, node-timeout}` with the partial experiment log.
+C15 - Context overflow: a provider context-length error lands `{unsuccessful, context-window-exceeded}`, not `technical-infeasibility`.
+C16 - Durable resume: a cancelled pod leaves no export and a resume cursor; a re-dispatch starts at the cursor variant and skips an executed probe; a terminal export clears the cursor.
 C9 - Variant provenance: given a variant basis, exercising success, the experiment log contains the derived variant spec with provenance and the raw observation and interpretation entries (D6 shape).
 C10 - Duplicate probe: given the same variant + payload re-decided, exercising duplicate-idempotent, exactly one execution is recorded in the log.
 C11 - Empty payload vector: given a spec with an empty payload vector space, exercising empty-valid, the Runner still probes once (or the run lands `space-exhausted` when no probe is derivable).
 C12 - Langfuse stub failure: given the observability stub raising, exercising degradation, the run completes unaffected.
-C13 - KB tool bound: given a spec whose concretization needs a KB query, exercising tool-surface, the Runner's `create_agent` is bound with `exec` + `note` (+ the always-bound `query_lightrag` tool and the shared `graph_view` tool as of #197), and a query returns through the seam fail-open. The KB tool's fail-open + `KbObservation` recording (T3/#179) is asserted at the unit tier (`tests/attack/pod/test_tools.py`).
+C13 - Tool surface bound: given a spec whose concretization needs a KB query, exercising tool-surface, the Runner's `create_agent` is bound with `exec` + `note` + the always-bound `query_lightrag` tool + the shared `graph_view` tool + the read-only `auth_store` + `load_skill` + `record_skill_lesson`, and a query returns through the seam fail-open. The KB tool's fail-open + `KbObservation` recording (T3/#179) is asserted at the unit tier (`tests/attack/pod/test_tools.py`).
 C14 - Note written on P3: given a space-exhausted run, exercising success, the pod experiment-memory store holds ONE consolidated experiment-summary note keyed by the spec id + variant, and the Triager reads it.
 C15 - Tool-contract validation: given a tool call with a wrong parameter, exercising degradation, the call is REJECTED with an error message + code (never executed, never harness-revalidated).
 
@@ -317,7 +407,20 @@ TestImplementationSpec:
   assumptions: list[str]
   rationale: str
   parent_spec_ref: str | None
-  provenance: dict
+  provenance: SpecProvenance
+  skills: list[str]
+
+SpecProvenance:
+  run_id: str
+  threat_id: str
+  unit_id: str
+  canonical_class: str
+  web_vulnerability_class: str
+  baseline_ref: str | None
+  source_recon_refs: list[str]
+  assumption_ref: str | None
+  playbook: str | None
+  skill_procedure: SkillProcedure | None
 ```
 
 The semantics are:
@@ -333,7 +436,14 @@ The semantics are:
 - `rationale` is the vulnerability-level rationale.
   It carries no failure-mode detail and no narrowed vector.
 - `parent_spec_ref` is the variant lineage.
-- `provenance` carries `loop_id`, `unit_id`, `canonical_class`, `web_vulnerability_class`, `baseline_ref` (optional), and the bounded `skill_procedure`.
+- `provenance` carries `run_id` (bound by the store, never authored), `threat_id`, `unit_id`, `canonical_class`, `web_vulnerability_class`, `baseline_ref` (optional), `source_recon_refs`, `assumption_ref`, `playbook`, and the bounded `skill_procedure`.
+- `skills` is the optional flat pod-runner skill list.
+  Each name is a skill the runner may carry.
+  It is never a path and never a meta-skill.
+
+The hunter write adds `status`, `fault_keyword`, and `strategy_keyword`.
+`spec_id` is derived as `<fault_keyword>_<strategy_keyword>`.
+It is never authored.
 
 The `skill_procedure` is typed:
 
@@ -461,8 +571,12 @@ The minting algorithm is:
 7. Record the variant with the basis in `declined_attribute`, the parent ref, and the derived spec.
    The derived spec keeps the base `provenance`, including the typed skill procedure; the graph enforces the field (T10 H6).
 
-The triager's context carries the note, the filtered experiment log, the base spec, and the bounded skill procedure excerpt.
-The triager prompt's mining section is rewritten to the algorithm above.
+The triager is STAGED (8.11).
+The Stage A delta carries the note, the verification symptoms, the target identity, the assumptions, and the latest observation.
+The Stage B delta adds the bounded skill procedure excerpt and the executed probe trail.
+The Stage C (variant miner) delta carries the note, the filtered experiment log, the base spec, and the bounded skill procedure excerpt.
+The Stage D delta carries the note, the verification symptoms, the latest observation, the executed probe trail, the variant bases, the recent interpretations, and the KB degraded flags.
+The triager prompt's mining section is rewritten to the algorithm above (the Stage C prompt).
 The terminal decision output is unchanged.
 
 The `space-exhausted` exhaustion rule is prompt-level, not symbolically enforced (T10 H2).
@@ -516,6 +630,11 @@ Seams:
 - The duplicate guard: a basis and detail already in the log is not re-minted.
 - The storage: the variant record shape; `declined_attribute` carries the basis.
 - The prompt: the mining algorithm and the ten bases.
+- The staged order: a confirmed symptom calls only Stage A; a runner failure calls only Stage A and mints `runner-failure`; a divergence calls Stage A and B and mints `runner-divergence`; a populated procedure calls the miner; no populated procedure calls the terminal stage, never the miner.
+- The stage contexts: Stage A excludes the procedure, the variants, the probe trail, and the memory key-list; Stage B adds the typed procedure and the probes; Stage D adds the trail, the variants, and the KB flags; the miner delta stays full.
+- The stage tool surfaces: Stages A, B, and D bind no tools; Stage C keeps the full skill/KB/note/graph surface.
+- The stage prompts: the compact triage prompt is shorter and carries no variant-mining material; the divergence and terminal prompts carry their judgments; all carry the cortex.
+- The off-spec guard: a variant that changes the verification symptoms is recorded as a derived spec and the interpretation carries the off-spec marker.
 
 Prior art:
 
@@ -538,3 +657,76 @@ The workbench R8-3 and Q48 are the decision authority.
 The reduced D4 surface is shared with S3 8.6.
 The variant basis is the only new decision object.
 The pod's binary terminal invariant, six-way termination, fixed caps, and experiment-log shape stay.
+
+### 8.11 Staged triage decision tree (2026-10-23)
+
+The triager walks four decisions in this order.
+The order is structural: a confirmed or failed execution short-circuits before the later stages, and the bounded variant miner is never paid when the spec carries no populated procedure attribute.
+
+**Stage A: failure and symptom confirmation.**
+The compact turn reads the spec's verification symptoms, target identity, and assumptions, the Runner's verbatim consolidation note, and the latest observation.
+It returns `TriageDecision` (`runner_failed`, `symptom_confirmed`, `clean`, `note`).
+It binds no tools, no skill, no KB, and no procedure excerpt.
+A `runner_failed` outcome mints the `runner-failure` recovery variant (8.6 step 3).
+A `symptom_confirmed` outcome terminates `successful` / `symptom-confirmed` and the deterministic terminal writes the `PodExport`.
+Anything else walks on.
+
+**Stage B: divergence.**
+The compact turn reads the note, the spec's typed `SkillProcedure` excerpt, the executed probe trail, and the latest observation.
+It returns `DivergenceDecision` (`runner_diverged`, `note`).
+It binds no tools.
+A divergence mints the `runner-divergence` recovery variant (8.6 step 3).
+
+**Stage C: bounded variant mining.**
+The miner runs only when the spec carries at least one populated `SkillProcedure` attribute.
+It keeps the full context and tool surface of 8.6 and returns the existing `TriagerDecision`.
+The graph resolves the basis, refuses a duplicate, and mints at most one variant per decision.
+The `failure-mode` fallback of 8.6 step 5 remains available when every populated class is covered.
+
+**Stage D: terminal verdict.**
+The terminal turn runs when the spec carries no populated `SkillProcedure` attribute.
+It reads the note, the verification symptoms, the latest observation, the executed probe trail, the variant bases, the recent interpretations, and the KB degraded flags.
+It returns `TerminalDecision` (`verdict`, `terminal_reason`, `clean`, `note`).
+It binds no tools and mines no variant.
+The binary terminal vocabulary and the `clean` rule are the existing 8.6/#304 rules.
+
+**The seam.**
+`build_pod_graph(..., triager_stages=...)` / `arun_pod(..., triager_stages=...)` inject the four stage callables (`TriageStages`).
+The production defaults are the stateful turns in `pod/agents.py`; an injected `triager_fn` keeps the pre-staging single-turn critic for the contract tier.
+`pod/triage.py::make_staged_triager` owns the order.
+A stage provider failure propagates as the typed `ProviderUnavailableError`; any other stage exception degrades to a safe `no-symptom-evidence` terminal, exactly like the single-turn triager.
+
+**The off-spec guard.**
+`pod/graph.py::_resolve_variant_decision` appends an `[off-spec: ...]` marker when the derived variant's `verification_symptoms` differ from the base spec's.
+The variant is recorded as its own derived spec; its confirmation is not the base spec's confirmation.
+The variant record shape stays four fields.
+
+**The token intent.**
+Stage A removes the tool-description block, the skill index, the typed procedure, the variants, and the probe trail from the first call.
+The confirmed first-shot path is one compact call instead of the single-turn triager's 2-6 calls.
+The full miner and its tool surface are paid only on the ambiguous pods.
+The measured baseline and the estimate are recorded in the experiment report on the docs branch; the implementation does not change the terminal or variant contracts.
+### 8.12 Context dedup amendment (2026-10-23)
+
+The shared decision record is `docs/design/hunting-context-dedup-2026-10-23-adr.md`.
+The impact map is `docs/design/hunting-context-dedup-impact-map.md`.
+
+The pod changes are:
+
+- The Runner and the Triager name their full bound tool surfaces.
+  The Runner names `auth_store`.
+  The Triager names `graph_view` and `auth_store`.
+- The auth store is read-only on both roles.
+  The full write contract is not bound.
+- The request tool definitions are the full surface.
+  The prompt tool lists are complete human summaries.
+- The tool descriptions are shared constants.
+  The runner surface falls from 12,979 to 5,101 chars.
+  The triager surface falls from 12,715 to 4,837 chars.
+  The 4,649-char auth-mode cut is included in both totals.
+- The shared conciseness directive is shortened and embedded once.
+- The first human context is pinned through compaction for both roles.
+- The spec paragraph names `skills`.
+- The variant bases and the critic's five terminal reasons are pinned by tests.
+
+The full spec, variant, and terminal generation remains a follow-up.

@@ -1,0 +1,42 @@
+schema_version: 1
+trial_id: white-jotter-1-20261103T143924-1618c524
+target_id: white-jotter-1
+target_run_id: iterca-white-jotter
+instance_id: eval-server-1
+project_id: cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8
+start_phase: hunting
+terminal: stopped
+phases:
+- phase: hunting
+  status: stopped
+  run_id: c84d2ada-e05c-42ba-bb12-8386119796f8
+  stop_run_id: c84d2ada-e05c-42ba-bb12-8386119796f8
+eval_sha: f020dafd12f3f8f525fad2496c64141b6e4f8fc8
+worktree_dirty: true
+stack_fingerprint: 3d396661b0ad9bb7f96101d102feaeba216b9189cef5c57ece87b9f69b56ede5
+chain_sources:
+- cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/hunter/test-specs/RESTApi-api__threat-1
+- cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/hunter/test-specs/RESTApi-api__threat-2
+- cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/hunter/test-specs/ReverseProxy__threat-2
+- cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/hunter/test-specs/Service-article-management__threat-1
+- cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/hunter/test-specs/Service-sign-in__threat-1
+- cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/broken-function-level-authorization__authc-filter__menu-read__read/c84d2ada-e05c-42ba-bb12-8386119796f8.yaml
+- cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/broken-function-level-authorization__authc-filter__menu-read__read/experiment-log/0.yaml
+- cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/broken-function-level-authorization__authc-filter__menu-read__read/experiment-log/1.yaml
+- cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/mass-assignment__roles-array-multi__existing-sysadmin-plus-content-manager/c84d2ada-e05c-42ba-bb12-8386119796f8.yaml
+- cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/mass-assignment__roles-array-multi__existing-sysadmin-plus-content-manager/experiment-log/0.yaml
+- cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/sql-injection__union-rendered__metadata-dialect/c84d2ada-e05c-42ba-bb12-8386119796f8.yaml
+- cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/sql-injection__union-rendered__metadata-dialect/experiment-log/0.yaml
+- cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/sql-injection__union-rendered__metadata-dialect/experiment-log/1.yaml
+- cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/username-enumeration-oracle__absent-vs-wrong-credential__exact-spelling__list-walk/c84d2ada-e05c-42ba-bb12-8386119796f8.yaml
+- cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/username-enumeration-oracle__absent-vs-wrong-credential__exact-spelling__list-walk/experiment-log/0.yaml
+- cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/xss-stored__anonymous-create__srcdoc-frame/c84d2ada-e05c-42ba-bb12-8386119796f8.yaml
+- cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/xss-stored__anonymous-create__srcdoc-frame/experiment-log/0.yaml
+- cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/xss-stored__anonymous-create__srcdoc-frame/experiment-log/1.yaml
+- cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/threat_modeller/consumed/RESTApi-api/threat-1.yaml
+- cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/threat_modeller/consumed/RESTApi-api/threat-2.yaml
+- cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/threat_modeller/consumed/ReverseProxy/threat-2.yaml
+- cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/threat_modeller/consumed/Service-article-management/threat-1.yaml
+- cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/threat_modeller/consumed/Service-sign-in/threat-1.yaml
+diagnoses_present: true
+copied_at: '2026-11-03T15:43:37+00:00'

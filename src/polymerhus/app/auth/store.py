@@ -1,8 +1,10 @@
 """The per-project shared auth bucket store (#220, T2).
 
 Topology (D220-3), one bucket per project under the app-owned data root
-(`app.data_root.DATA_ROOT`, `<repo>/data/` - the same root the skills and
-hunting stores write under), lazily created at the first write:
+(`app.data_root.DATA_ROOT`, `<repo>/data/` - the data root the hunting stores
+write under; the project-specific skills live under the separate live skills
+root's `target-specific-procedure/<project_id>/` branch), lazily created at the
+first write:
 
     data/<project_id>/auth/
       credentials.yaml   ({accounts: {<name>: <account record>}})

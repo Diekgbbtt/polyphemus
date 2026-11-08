@@ -825,7 +825,8 @@ def default_triage_fn(exec_result: ExecResult, assets: list[AssetDelta], job: Jo
         from polymerhus.app.llm import compaction as C
         from polymerhus.app.auth.seams import auth_capable_binding  # noqa: PLC0415
 
-        binding = auth_capable_binding("triager")
+        binding = auth_capable_binding(
+            "triager", project_id=ctx.project_id or None)
         from polymerhus.app.config import config  # noqa: PLC0415
         from polymerhus.app.llm.browser_tools import build_browser_tool  # noqa: PLC0415
 

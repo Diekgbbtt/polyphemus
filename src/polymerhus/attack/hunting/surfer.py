@@ -1,5 +1,5 @@
 """The run-scoped inbox surfer loop and the run dispatch builders (tracker
-#173, ADR #169 Q2a/Q3/Q11/Q12/Q15/Q16, spec #169; the per-loop dispatch is
+#173, ADR #169 Q2a/Q3/Q11/Q12/Q15/Q16, spec #169; the per-threat dispatch is
 T4 #377, S2 8, S1 7.6, S3 8.7/8.9).
 
 The T2/T3 workstreams built the control plane (per-session lifecycle, the
@@ -14,25 +14,29 @@ wiring T4 owns:
   project, and exits on quiesce or cancellation. The surfer is a dumb mover: it
   only reads the produced inboxes, drives the control plane, and applies the
   moves - every decision stays in the mover's deduction and its sequencing.
+  As of the pipeline-sync extension (ADR `hunting-pipeline-sync-adr.md`,
+  2026-10-22) it ALSO hands the run's `RunSyncGate` (when the frozen mode is
+  `batched`/`serial`) to the tick as the mover's pre-filter: the gate holds an
+  item by refusing it (stays produced, at-least-once), it never schedules.
 - The run DISPATCH builders (`build_run_dispatch`): the `coro_for` seam the
-  mover's `run_delivery_tick` was designed for. A produced LOOP FILE becomes ONE
-  hunter session under the per-loop id `hunting:<run_id>:hunt:<dispatch_id>`
+  mover's `run_delivery_tick` was designed for. A produced THREAT FILE becomes ONE
+  hunter session under the per-threat id `hunting:<run_id>:hunt:<dispatch_id>`
   (S3 8.9), handed the payload materialised at dispatch time (S2 8.2) - the
-  loop dispatch path is live end to end (T6 #379). A produced dispatchable test
+  threat dispatch path is live end to end (T6 #379). A produced dispatchable test
   spec becomes ONE pod
   session (ADR Q13 pod session id, S3 8.7) riding the SAME mover. An item that
   is not dispatchable now - a
-  `low` loop behind a higher-tier loop or a live higher-tier HUNTER session
+  `low` threat behind a higher-tier threat or a live higher-tier HUNTER session
   (S2 8.3 - the sequencing reads that role only), a
   stopped role, a draft spec - yields NO coroutine (the mover's
   `None`-means-refused rule): it stays in produced and the next tick
   re-attempts it (at-least-once, never dropped).
-- The hunter session's IDLE LOOP (ADR "Agent idle state", spec `Agent idle
-  state`): after the hunt's ReAct graph ends, the session enters a simple loop
+- The hunter session's IDLE THREAT (ADR "Agent idle state", spec `Agent idle
+  state`): after the hunt's ReAct graph ends, the session enters a simple threat
   over its mailbox - REUSING the existing `run_session_agent` machinery, never
   checkpoint-resume mechanisation. The pod->hunter verdict handling is the ADR
   Q16 STUB (identity-based refactor, 2026-08-25): the DURABLE export record is
-  authored at pod completion keyed by the hunt key (the loop's dispatch id),
+  authored at pod completion keyed by the hunt key (the threat's dispatch id),
   and a delivered `PodExport` in the idle loop is a WITHIN-RUN LIVE FEED for the
   future verdict node - consumed only, no re-evaluation, no further dispatch.
   The idle loop ends on a `settle` kind message (the run-terminal path posts it:
@@ -47,17 +51,17 @@ wiring T4 owns:
   the run-terminal `settle` message (the ADR "all its component sessions have
   settled" end).
 
-Session bookkeeping (`RunDispatchState`) is run-local and single-loop: the
+Session bookkeeping (`RunDispatchState`) is run-local and single-threat: the
 bootstrap, the surfer, the hunters, and the pods all execute on the ONE shared
 worker loop, so no lock is needed. `hunters_in_graph` is the mid-graph vs
 idle-loop distinction the quiesce predicate needs (a hunter whose graph is
 still running may yet author a produced spec; an idling one cannot), and
-`loop_likelihoods` is the live-loop half of the low-loop sequencing (S2 8.3).
+`threat_bands` is the live-threat half of the low-threat sequencing (S2 8.3).
 
 T4b (#387) retired the config family from this module: there is no
 `HuntConfigItem` branch, no ratified-config predicate and no hunt-store read.
-The loop file is the dispatch record (S2 8.2: no `HuntConfig`); a hunter is
-dispatched per produced loop file and handed the materialised payload.
+The threat file is the dispatch record (S2 8.2: no `HuntConfig`); a hunter is
+dispatched per produced threat file and handed the materialised payload.
 
 This module performs no I/O at import (CODING_STANDARD section 6): the session
 seams (`run_session_agent`, `HuntSession`, the checkpointer) resolve lazily on
@@ -68,22 +72,29 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
+import os
+import time
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable
+from typing import AbstractSet, Any, Awaitable, Callable
 
 from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
 from polymerhus.attack.hunting.hunter_payload import materialise_hunter_payload
+from polymerhus.attack.hunting.pod_export_memory import PodExportStore
+from polymerhus.attack.hunting.pod.finalize import PodTerminal, finalize_pod
+from polymerhus.attack.hunting.pod.types import POD_WATCHDOG_TIMEOUT
 from polymerhus.attack.hunting.mover import (
     MODELLER_SESSION_SEGMENT,
     SPEC_DISPATCH_STATUS,
     d4_spec_body,
-    loop_refusal_detail,
+    threat_refusal_detail,
     produced_spec_body,
     ProducedItem,
     TestSpecItem,
-    ThreatLoopItem,
+    ThreatItem,
     TickReport,
+    hunter_session_id,
     pod_session_id,
     log_refusal_once,
     read_produced_inbox,
@@ -188,7 +199,7 @@ def is_modeller_session_id(session_id: str, run_id: str) -> bool:
 
 def is_hunter_session_id(session_id: str) -> bool:
     """True for a hunter session
-    (`hunting:<run_id>:hunt:<dispatch_id>`, the loop dispatch id)."""
+    (`hunting:<run_id>:hunt:<dispatch_id>`, the threat dispatch id)."""
     return ":hunt:" in session_id
 
 
@@ -197,40 +208,206 @@ def is_pod_session_id(session_id: str) -> bool:
     return ":pod:" in session_id
 
 
+# F-026 (B): a single transient child provider failure is NOT a run failure.
+# The failed item is requeued after a backoff while every sibling stays live.
+# Three consecutive transient failures of the SAME child are fatal, as is any
+# quota exhaustion; the #331 stop/flush/stamp handler then pauses the run.
+MAX_CONSECUTIVE_CHILD_FAILURES = 3
+DEFAULT_CHILD_RETRY_BACKOFF_S = 30.0
+
+# The per-dispatched-session watchdogs. These are last-resort backstops above
+# the pod graph's own node timeouts. A hunter and a pod have different budgets:
+# the pod's control plane owns its idle/run bounds and writes the typed terminal
+# first; the surfer only bounds a genuinely wedged session.
+DEFAULT_HUNTER_SESSION_TIMEOUT_S = 2700.0
+DEFAULT_POD_SESSION_TIMEOUT_S = 3600.0
+POD_SESSION_TIMEOUT_ENV = "HUNT_POD_SESSION_TIMEOUT_S"
+
+
+def resolve_pod_session_timeout_s(
+    environ: Mapping[str, str] | None = None,
+) -> float:
+    """The pod watchdog ceiling, from `HUNT_POD_SESSION_TIMEOUT_S`.
+
+    Unset or empty is the one-hour backstop. A malformed value fails fast at
+    run start: a typo in the operator's `.env` must not silently restore the
+    default (or disable the watchdog). The value is seconds, finite and
+    positive; the pod graph's own run timeout stays below it, so the pod control
+    plane still writes the typed terminal first."""
+    raw = (os.environ if environ is None else environ).get(
+        POD_SESSION_TIMEOUT_ENV)
+    if raw is None or str(raw).strip() == "":
+        return DEFAULT_POD_SESSION_TIMEOUT_S
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{POD_SESSION_TIMEOUT_ENV} must be a positive number of seconds; "
+            f"got {raw!r}") from exc
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(
+            f"{POD_SESSION_TIMEOUT_ENV} must be a finite positive number of "
+            f"seconds; got {raw!r}")
+    return value
+
+
+@dataclass
+class ChildFailure:
+    """One child session's consecutive transient provider failures.
+
+    `attempts` counts failures since the last success of THIS session id;
+    `retry_after` is a monotonic deadline; `error` is the last typed cause
+    (kept for operators and diagnostics). A different child failing never
+    advances this counter - the threshold is per item, so one bad threat cannot
+    stop a fleet of healthy siblings on its first failure."""
+
+    attempts: int
+    retry_after: float
+    error: ProviderUnavailableError
+
+    def deferred(self, now: float) -> bool:
+        return now < self.retry_after
+
+
 @dataclass
 class RunDispatchState:
     """The run-local wire state the surfer and the bootstrap share (single
     worker loop - no lock). `hunter_inboxes` maps the dispatched item's memory
-    key (the loop dispatch id) to the AgentInbox its pod exports are delivered
+    key (the threat dispatch id) to the AgentInbox its pod exports are delivered
     into (built at hunter dispatch, before any of its specs can exist);
     `hunters_in_graph` is the set
     of those keys whose hunter is still running its ReAct graph - the
     mid-graph vs idle-loop distinction the quiesce predicate needs (a mid-graph
-    hunter may still author produced specs). `loop_likelihoods` is the subset
-    that came from a LOOP file: the dispatch id -> likelihood map the low-loop
-    sequencing reads (S2 8.3 - only an ACTIVE higher-tier hunter holds a low
-    loop; an idle one authors nothing more and settles with the run terminal, so
-    counting it would deadlock the quiesce). `provider_failure` is the run-local
-    typed provider error a dispatched HUNTER or POD session recorded
-    (#312/#329): a provider failure is infrastructure, so the surfer surfaces it
-    and the run pauses (`interrupted`) instead of quiescing `complete` with zero
-    specs and no typed reason."""
+    hunter may still author produced specs). `threat_bands` is the subset
+    that came from a THREAT file: the dispatch id -> severity band map the
+    low-band sequencing reads (S2 8.3 - only an ACTIVE higher-band hunter holds
+    a low threat; an idle one authors nothing more and settles with the run
+    terminal, so counting it would deadlock the quiesce).
+
+    F-026 (B): `child_failures` is the per-child retry ledger. A transient
+    provider failure defers only that child's item until `retry_after`; its
+    siblings keep running. `provider_failure` is the run-local FATAL cause
+    (#312/#329) - set on quota exhaustion or the third consecutive transient
+    failure of one child, so the surfer surfaces it and the run pauses
+    (`interrupted`) instead of quiescing with lost work. The #331 handler then
+    stops every component session; a single transient failure never does."""
 
     hunter_inboxes: dict[str, AgentInbox] = field(default_factory=dict)
     hunters_in_graph: set[str] = field(default_factory=set)
-    loop_likelihoods: dict[str, str] = field(default_factory=dict)
+    threat_bands: dict[str, str] = field(default_factory=dict)
+    child_failures: dict[str, ChildFailure] = field(default_factory=dict)
     provider_failure: ProviderUnavailableError | None = None
+    # The watchdog ceilings for one dispatched hunter or pod session. A session
+    # that exceeds its ceiling is classed degraded and the queue moves on; the
+    # run state carries the values so a trial can tighten them without a code
+    # change (the pod ceiling is read from HUNT_POD_SESSION_TIMEOUT_S at run
+    # start). The pod ceiling sits above the pod graph's own run timeout, so the
+    # pod control plane writes the terminal first.
+    hunter_session_timeout_s: float = DEFAULT_HUNTER_SESSION_TIMEOUT_S
+    pod_session_timeout_s: float = DEFAULT_POD_SESSION_TIMEOUT_S
+    # The run's pipeline sync gate (`hunting_pipeline_sync`, ADR 2026-10-22):
+    # None in `parallel` (the historical behaviour), a `RunSyncGate` in
+    # `batched`/`serial`. Consulted once per surfer tick; held items stay
+    # produced (the mover's at-least-once rule).
+    sync_gate: Any = None
+    # The parallel-mode demotion reader (2026-10-26). `sync_gate` is None in
+    # `parallel`, but a demoted hunt's leftover spec is still evidence, not
+    # work. This gate is used only for its `demoted_hunts()` read.
+    promotion_gate: Any = None
+    # The frozen per-threat promotion floor (2026-10-26; float since the CVSS
+    # 4.0 score): a produced threat below it is evidence, not work. `None` means
+    # no filter.
+    promotion_risk_threshold: float | None = None
+
+    def record_child_failure(
+        self,
+        session_id: str,
+        error: ProviderUnavailableError,
+        *,
+        now: float | None = None,
+    ) -> bool:
+        """Record one child session's transient provider failure.
+
+        Returns True when the failure is FATAL: quota exhaustion is immediate;
+        otherwise the third consecutive failure of THIS session id. A fatal
+        failure also lands on `provider_failure` for the surfer to surface. A
+        non-fatal failure schedules the item's retry after the provider's
+        `retry_after_s` when it supplied one, else the default backoff."""
+        current = time.monotonic() if now is None else now
+        previous = self.child_failures.get(session_id)
+        attempts = (previous.attempts if previous is not None else 0) + 1
+        delay = error.retry_after_s
+        if not isinstance(delay, (int, float)) or delay <= 0:
+            delay = DEFAULT_CHILD_RETRY_BACKOFF_S
+        fatal = bool(error.quota_exhausted) or (
+            attempts >= MAX_CONSECUTIVE_CHILD_FAILURES)
+        self.child_failures[session_id] = ChildFailure(
+            attempts=attempts,
+            retry_after=current + float(delay),
+            error=error,
+        )
+        if fatal:
+            self.provider_failure = self.provider_failure or error
+        return fatal
+
+    def record_child_success(self, session_id: str) -> None:
+        """A completed child attempt resets its consecutive-failure count."""
+        self.child_failures.pop(session_id, None)
+
+    def deferred_session_ids(self, *, now: float | None = None) -> frozenset[str]:
+        """The child session ids whose retry deadline has not arrived yet."""
+        current = time.monotonic() if now is None else now
+        return frozenset(
+            session_id for session_id, failure in self.child_failures.items()
+            if failure.deferred(current)
+        )
 
 
 @dataclass(frozen=True)
 class SurferReport:
     """The surfer loop's terminal report: how many delivery laps ran, the last
-    `TickReport`, and why the loop ended. `quiesced` True = the run's work is
-    exhausted (the natural terminal); False = the loop was cancelled."""
+    `TickReport`, and why the threat ended. `quiesced` True = the run's work is
+    exhausted (the natural terminal); False = the threat was cancelled."""
 
     ticks: int
     last_tick: "TickReport | None" = None
     quiesced: bool = False
+
+
+def tier_sequencing_enabled(sync_gate: Any) -> bool:
+    """Whether the S2 8.3 low-band ordering applies to this run.
+
+    It orders `parallel` dispatches. A `batched` run works the GLOBAL threat
+    queue in risk order, so the band ordering is subsumed and must never hold a
+    threat behind another unit's produced higher-band threat; `serial` keeps it
+    (the queue order and the band order agree, and the filter is the historical
+    contract). `sync_gate` is None for `parallel`."""
+    if sync_gate is None:
+        return True
+    from polymerhus.attack.hunting.pipeline_sync import SyncMode  # noqa: PLC0415
+
+    # A fake gate in a test carries no mode; without evidence of a batch, keep
+    # the historical ordering (fail-safe).
+    return getattr(sync_gate, "mode", None) is not SyncMode.BATCHED
+
+
+def demoted_hunts_for(state: Any) -> AbstractSet[str]:
+    """The demoted hunt set of the run's sync gate, or its parallel-mode
+    promotion gate, or empty when neither has the promotion surface. Fail-open:
+    a gate read failure never stops the tick."""
+    gates = (
+        getattr(state, "sync_gate", None),
+        getattr(state, "promotion_gate", None),
+    )
+    for gate in gates:
+        reader = getattr(gate, "demoted_hunts", None)
+        if reader is None:
+            continue
+        try:
+            return reader()
+        except Exception:  # noqa: BLE001 - a gate read failure is not work
+            return frozenset()
+    return frozenset()
 
 
 def run_work_remaining(
@@ -240,7 +417,10 @@ def run_work_remaining(
     threat_store: Any = None,
     hunter_store: HunterMemoryStore,
     pod_store: Any = None,
-    live_loop_likelihoods: Mapping[str, str] | Iterable[str] = (),
+    live_threat_bands: Mapping[str, str] | Iterable[str] = (),
+    sequence_tiers: bool = True,
+    promotion_risk_threshold: float | None = None,
+    demoted_hunts: AbstractSet[str] = frozenset(),
 ) -> bool:
     """True when a DISPATCHABLE-NOW produced item remains for this run.
 
@@ -248,30 +428,36 @@ def run_work_remaining(
     sequencing filter, so the quiesce predicate and the dispatch decision can
     never disagree - they are the same two functions:
 
-    - a produced LOOP file of this run that is dispatchable now (a
-      critical/high/medium loop; a `low` loop only when no higher-tier loop file
+    - a produced THREAT file of this run that is dispatchable now (a
+      critical/high/medium threat; a `low` threat only when no higher-tier threat file
       is produced and no higher-tier hunter session is live, S2 8.3);
-    - a produced COMPLETED valid model with no loop file (the mover consumes it
-      on its next tick, S2 8.4) - the model document move IS work;
+    - a produced COMPLETED valid model whose promoted threats are gone (the mover
+      consumes it on its next tick, S2 8.4) - the model document move IS work;
     - a produced spec carrying the pod family's dispatch status.
 
     The config family retired in T4b (#387): there is no produced-config clause
     here - a hunt config is not dispatch input at all, so it is not work.
 
-    A malformed or foreign loop file contributes NOTHING (the validity
+    A malformed or foreign threat file contributes NOTHING (the validity
     predicate refuses it in the read), so it can never wedge the run's quiesce;
-    neither can a loop waiting on a live higher-tier session, because that
-    session's own loop file is already consumed and its hunter is mid-graph -
-    `is_run_quiesced` holds on the mid-graph clause in that window."""
+    neither can a threat below the frozen promotion floor, because the same
+    promotion filter runs in this read. A threat waiting on a live higher-tier
+    session is covered by the mid-graph clause in `is_run_quiesced`."""
     inbox = read_produced_inbox(
         project_id, run_id, threat_store=threat_store,
         hunter_store=hunter_store, pod_store=pod_store,
+        promotion_risk_threshold=promotion_risk_threshold,
+        demoted_hunts=demoted_hunts,
     )
     if inbox.models_to_consume:
-        # a produced COMPLETED valid model with no dispatchable loop left: the
+        # a produced COMPLETED valid model with no dispatchable threat left: the
         # mover consumes it on its next tick (S2 8.4), so the move itself is work
         return True
-    return bool(sequence_dispatch(inbox.items, live_loop_likelihoods))
+    if not sequence_tiers:
+        # A `batched` run works the GLOBAL threat queue: the S2 8.3 band
+        # ordering does not order it, so every produced threat is work.
+        return bool(inbox.items)
+    return bool(sequence_dispatch(inbox.items, live_threat_bands))
 
 
 async def is_run_quiesced(
@@ -287,17 +473,18 @@ async def is_run_quiesced(
     """The quiesce predicate: the run's work is exhausted. ALL must hold:
 
     - the modeller pass session is settled (its registry entry gone - a live
-      pass may still write a model and produce loop files);
+      pass may still write a model and produce threat files);
     - no hunter is still mid-graph (`state.hunters_in_graph`) - a running graph
       may yet write a produced spec after quiesce;
     - no pod session is live - an in-flight pod may still deliver an export;
     - no dispatchable-now produced item remains (the mover's own produced read
-      plus the sequencing filter).
+      plus the sequencing filter). A `batched` run reads every produced threat as
+      work: the tier ordering does not order a batch.
 
     Idle hunters deliberately do NOT block this predicate: their graphs have
     ended, they author nothing more, and they settle on the run-terminal
-    `settle` message once the surfer proves quiesce. The low-loop pause is
-    therefore consistent with the predicate: a `low` loop held behind an ACTIVE
+    `settle` message once the surfer proves quiesce. The low-threat pause is
+    therefore consistent with the predicate: a `low` threat held behind an ACTIVE
     higher hunter is covered by the mid-graph clause above, and it is released
     (or dispatched) as soon as that hunter leaves its graph - so the work can
     never leak past quiesce."""
@@ -310,11 +497,40 @@ async def is_run_quiesced(
         return False
     if state.hunters_in_graph:
         return False
-    return not run_work_remaining(
+    demoted = demoted_hunts_for(state)
+    if run_work_remaining(
         project_id, run_id, threat_store=threat_store,
         hunter_store=hunter_store, pod_store=pod_store,
-        live_loop_likelihoods=state.loop_likelihoods,
+        live_threat_bands=state.threat_bands,
+        # A batched run's lows are real work even while another unit's higher
+        # threat is produced: the band ordering does not order the queue.
+        sequence_tiers=tier_sequencing_enabled(state.sync_gate),
+        promotion_risk_threshold=state.promotion_risk_threshold,
+        demoted_hunts=demoted,
+    ):
+        return False
+    # Hard completion fail-safe: a malformed or stale artifact that the mover
+    # cannot turn into a dispatchable item still blocks quiesce. The surfer is
+    # a passive consumer; it must not complete a run whose artifacts are not
+    # terminal just because it has nothing left to dispatch.
+    from polymerhus.attack.hunting.pipeline_sync import (  # noqa: PLC0415
+        hunting_artifacts_terminal,
     )
+
+    complete, reasons = hunting_artifacts_terminal(
+        project_id, run_id,
+        hunter_store=hunter_store, pod_store=pod_store,
+        threat_store=threat_store,
+        promotion_risk_threshold=state.promotion_risk_threshold,
+    )
+    if not complete:
+        log_refusal_once(
+            project_id, run_id, "lifecycle-incomplete",
+            "surfer: run %s not quiesced - %s",
+            run_id, "; ".join(reasons[:3]),
+        )
+        return False
+    return True
 
 
 def post_settle(state: RunDispatchState) -> int:
@@ -340,6 +556,7 @@ def build_run_dispatch(
     threat_store: Any = None,
     hunter_store: HunterMemoryStore,
     pod_store: Any,
+    pod_export_store: PodExportStore | None = None,
     state: RunDispatchState,
     gate: Any,
     hunter_builder: Callable[..., tuple[Callable[[Any], Awaitable[Any]], Any]],
@@ -350,14 +567,15 @@ def build_run_dispatch(
     #169 "The inbox surfer semantics"): the produced family member -> the
     dispatch coroutine the control plane schedules under its Q13 session id.
 
-    - `ThreatLoopItem` -> ONE hunter session for the produced loop file
-      (S2 8.4: the loop file is the dispatch grain). The payload is materialised
+    - `ThreatItem` -> ONE hunter session for the produced threat file
+      (S2 8.4: the threat file is the dispatch grain). The payload is materialised
       HERE, at dispatch time (S2 8.2), from the unit's model document (read
       produced-first: a model the mover already consumed is still a valid
-      context source) plus the loop record the mover read. The hunter's inbox is
-      minted under the loop's dispatch id so a spec the hunt authors is
-      addressable, and the loop's likelihood is registered on the run state for
-      the duration of its graph so a later `low` loop waits behind it (S2 8.3).
+      context source) plus the threat record the mover read. The hunter's inbox is
+      minted under the threat's dispatch id so a spec the hunt authors is
+      addressable, and the threat's severity band is registered on the run
+      state for the duration of its graph so a later `low` threat waits behind
+      it (S2 8.3).
       A model that vanished, or a stopped hunter role, yields `None` (the
       mover's refused rule - stays produced, retried next tick, never dropped).
     - `TestSpecItem` -> ONE pod session for the produced spec, ONLY when its
@@ -366,7 +584,7 @@ def build_run_dispatch(
       spec's OWN persisted status - NEVER by a chain-adjacent parent's liveness
       (identity-based refactor, 2026-08-25): a produced spec whose hunt key's
       parent was consumed by an earlier run (no live parent inbox this run)
-      still dispatches. The parent key IS the spec's folder (the loop dispatch
+      still dispatches. The parent key IS the spec's folder (the threat dispatch
       id, S3 8.9), the completed export is RECORDED DURABLY at pod completion
       keyed by it (Q16 amendment), and a within-run co-running parent MAY also
       receive a live inbox notification (optional, best-effort - never the only
@@ -375,7 +593,7 @@ def build_run_dispatch(
 
     The session coroutines are gate-bounded (Q15): the hunting dispatch gate is
     acquired around each session's active stretch, so the shared width caps
-    concurrent hunting work no matter how many loops fan out.
+    concurrent hunting work no matter how many threats fan out.
 
     #317 role enforcement: the builder consults the target role's agent
     sub-module state via `control.role_running(run_id, role)` - a role that is
@@ -416,8 +634,8 @@ def build_run_dispatch(
             return None
 
     def coro_for(item: ProducedItem) -> Any:
-        if isinstance(item, ThreatLoopItem):
-            return _loop_dispatch(item)
+        if isinstance(item, ThreatItem):
+            return _threat_dispatch(item)
         if isinstance(item, TestSpecItem):
             return _spec_dispatch(item)
         logger.warning(
@@ -426,13 +644,35 @@ def build_run_dispatch(
         )
         return None
 
-    def _loop_dispatch(item: ThreatLoopItem) -> Any:
-        """ONE hunter session for ONE produced loop file (S2 8.4): the payload is
+    _target_url_cache: list[str | None] = [None]
+
+    def _target_url() -> str:
+        """The run's canonical target origin, resolved once at the first hunter
+        dispatch. The symbolic layer binds the spec's target identity from it,
+        so the hunter never authors a URL. Fail-open: an unreadable settings row
+        leaves it empty and the hunter keeps the degraded override."""
+        if _target_url_cache[0] is None:
+            try:
+                from polymerhus.app.clients import pg  # noqa: PLC0415
+                from polymerhus.recon.control.scope import (  # noqa: PLC0415
+                    target_origin,
+                )
+                _target_url_cache[0] = target_origin(
+                    pg.load_settings(project_id)) or ""
+            except Exception as exc:  # noqa: BLE001 - fail-open identity
+                logger.warning(
+                    "surfer: target origin read for %s failed (%s); the hunter "
+                    "keeps the target-identity override", project_id, exc)
+                _target_url_cache[0] = ""
+        return _target_url_cache[0]
+
+    def _threat_dispatch(item: ThreatItem) -> Any:
+        """ONE hunter session for ONE produced threat file (S2 8.4): the payload is
         materialised at dispatch time from the unit's model document and the
-        session is keyed by the loop's dispatch id. The run-local registration
-        (the inbox, the mid-graph key, the loop's likelihood) lands INSIDE the
-        session coroutine, so a coroutine the control plane refuses - which is
-        closed without ever running - mutates nothing (T4a review I1)."""
+        session is keyed by the threat's dispatch id. The run-local registration
+        (the inbox, the mid-graph key, the threat's severity band) lands INSIDE
+        the session coroutine, so a coroutine the control plane refuses - which
+        is closed without ever running - mutates nothing (T4a review I1)."""
         model = item.model
         if model is None and threat_store is not None:
             # A directly constructed item (or a store that does not carry the
@@ -440,15 +680,15 @@ def build_run_dispatch(
             # readable model, so this is the belt-and-braces path.
             model = threat_store.read_model(project_id, item.unit_id)
         if model is None:
-            # The model is the payload's context (S2 8.1: the loop file does not
-            # duplicate it): without it there is nothing to dispatch. The loop
+            # The model is the payload's context (S2 8.1: the threat file does not
+            # duplicate it): without it there is nothing to dispatch. The threat
             # file stays produced, is NOT counted as work (the read refuses it
             # too - T4a review F2: an unreadable model must not wedge the run),
             # and the refusal is logged ONCE, never per tick.
             log_refusal_once(
-                project_id, run_id, loop_refusal_detail(
-                    "loop-model", item.unit_name, item.loop_id),
-                "surfer: produced loop %s refused - no readable model for %s; "
+                project_id, run_id, threat_refusal_detail(
+                    "threat-model", item.unit_name, item.threat_id),
+                "surfer: produced threat %s refused - no readable model for %s; "
                 "never dispatched and not counted as work",
                 item.message_id, item.unit_id,
             )
@@ -458,17 +698,21 @@ def build_run_dispatch(
             return None
         payload = materialise_hunter_payload(
             model, item.record, dispatch_id=item.dispatch_id)
+        target_context = payload.get("target_context")
+        if isinstance(target_context, dict):
+            target_context["target_url"] = _target_url()
         return run_hunter_session(
             payload=payload,
             project_id=project_id,
             run_id=run_id,
             hunt_key=item.dispatch_id,
-            likelihood=item.likelihood,
+            band=item.band,
             hunter_store=hunter_store,
             state=state,
             gate=gate,
             role_gate=_role_gate("hunter"),
             hunter_builder=hunter_builder,
+            session_timeout_s=state.hunter_session_timeout_s,
         )
 
     def _spec_dispatch(item: TestSpecItem) -> Any:
@@ -477,7 +721,25 @@ def build_run_dispatch(
         # for a directly constructed item.
         body = item.spec if item.spec is not None else produced_spec_body(
             hunter_store, project_id, item.hunt_key, item.spec_file)
-        if not body or body.get("status") != SPEC_DISPATCH_STATUS:
+        if item.malformed or not body:
+            # The malformed fail-safe: dispatch a degraded pod with what the
+            # symbolic layer knows (the bound target identity), so the pod
+            # renders what it can and writes a PodExport. Never leave the file
+            # produced to halt every later unit.
+            body = {
+                "target_identity": {
+                    "url": _target_url(), "unit_id": "",
+                },
+                "verification_symptoms": [],
+                "assumptions": [],
+                "rationale": "the spec body is malformed; dispatched fail-safe "
+                             "so the pod can record a PodExport",
+                "provenance": {
+                    "_malformed": True,
+                    "_parse_error": item.parse_error,
+                },
+            }
+        elif body.get("status") != SPEC_DISPATCH_STATUS:
             return None
         # #317: a stopped pod role refuses new pod dispatch (at-least-once).
         if not _role_running("pod"):
@@ -488,7 +750,7 @@ def build_run_dispatch(
         # consumed by an earlier run (no live parent inbox in THIS run) still
         # dispatches, so the never-disagree contract holds - run_work_remaining
         # and build_run_dispatch gate on the same own-status and a produced
-        # spec can never wedge the quiesce. The parent key IS the loop dispatch
+        # spec can never wedge the quiesce. The parent key IS the threat dispatch
         # id the spec lives under (S3 8.9); no config key is derived.
         inbox = state.hunter_inboxes.get(item.hunt_key)
         return run_pod_session(
@@ -498,12 +760,13 @@ def build_run_dispatch(
             hunt_key=item.hunt_key,
             spec_id=item.spec_file,
             inbox=inbox,
-            hunter_store=hunter_store,
+            pod_export_store=pod_export_store,
             gate=gate,
             role_gate=_role_gate("pod"),
             pod_builder=pod_builder,
             pod_store=pod_store,
             state=state,
+            session_timeout_s=state.pod_session_timeout_s,
         )
 
     return coro_for
@@ -515,28 +778,30 @@ async def run_hunter_session(
     project_id: str,
     run_id: str,
     hunt_key: str,
-    likelihood: str,
+    band: str,
     hunter_store: HunterMemoryStore,
     state: RunDispatchState,
     gate: Any,
     hunter_builder: Callable[..., tuple[Callable[[Any], Awaitable[Any]], Any]],
     role_gate: Any = None,
+    session_timeout_s: float = DEFAULT_HUNTER_SESSION_TIMEOUT_S,
 ) -> None:
     """ONE hunter session (ADR Q13 hunter id `hunting:<run_id>:hunt:<hunt_key>`,
     S3 8.9): the build-to-END ReAct graph on the hunt's own thread - handed
-    the loop PAYLOAD materialised at dispatch time (S2 8.2) and the loop's
-    likelihood, never a config - gate-bounded (Q15), then the IDLE LOOP over
-    the run's inbox (ADR "Agent idle state", verdict handling stubbed - Q16).
-    The dispatch coroutine the mover schedules when a loop file is admitted.
+    the threat PAYLOAD materialised at dispatch time (S2 8.2) and the threat's
+    severity band, never a config - gate-bounded (Q15), then the IDLE THREAT
+    over the run's inbox (ADR "Agent idle state", verdict handling stubbed -
+    Q16).
+    The dispatch coroutine the mover schedules when a threat file is admitted.
 
     The payload is the ONLY input: the config bridge retired in T4b (#387).
-    T6 (#379) made the production harness consume the loop payload end to end
+    T6 (#379) made the production harness consume the threat payload end to end
     (`_default_hunter_builder` hands it straight to `build_hunting_agent`), so
-    the per-loop dispatch path is live - never a fabricated config.
+    the per-threat dispatch path is live - never a fabricated config.
 
-    The run state carries the session's loop for the duration of its GRAPH
+    The run state carries the session's threat for the duration of its GRAPH
     stretch: `hunters_in_graph` holds quiesce while the hunt may still author
-    specs, and `loop_likelihoods` is what a later `low` loop waits behind
+    specs, and `threat_bands` is what a later `low` threat waits behind
     (S2 8.3). Both are released when the graph ends - an idle hunter authors
     nothing more, so it must not hold the sequencing (or the run terminal's
     settle could never land).
@@ -545,18 +810,19 @@ async def run_hunter_session(
     mover builds this coroutine and the control plane may REFUSE to schedule it
     (gate full, module paused), in which case the coroutine is closed and never
     runs - so the dispatch seam itself must not mutate run state, or the leaked
-    key would hold the quiesce and every later low loop for ever."
+    key would hold the quiesce and every later low threat for ever."
 
     #317: the session acquires the MODULE gate (Q15 width bound) AND its OWN
     hunter role gate around the active stretch, so a stopped hunter role holds
     its in-flight threads at the next unit boundary (the module gate dominates
     via the role gate's parent)."""
+    session_id = hunter_session_id(run_id, hunt_key)
     state.hunter_inboxes[hunt_key] = AgentInbox()
     state.hunters_in_graph.add(hunt_key)
-    # every hunter session now comes from a loop file, so it always carries the
-    # loop's tier: a later lower loop waits behind it for the graph stretch
+    # every hunter session now comes from a threat file, so it always carries the
+    # threat's tier: a later lower threat waits behind it for the graph stretch
     # (S2 8.3)
-    state.loop_likelihoods[hunt_key] = likelihood
+    state.threat_bands[hunt_key] = band
     registry: Any = None
     try:
         dispatch_fn, registry = hunter_builder(
@@ -570,35 +836,65 @@ async def run_hunter_session(
         # mid-graph key would hold the quiesce (M-c, T4a review round 2).
         state.hunter_inboxes.pop(hunt_key, None)
         state.hunters_in_graph.discard(hunt_key)
-        state.loop_likelihoods.pop(hunt_key, None)
+        state.threat_bands.pop(hunt_key, None)
         return
     paused_on_provider_failure = False
+    graph_completed = False
     try:
         async with _gate_or_null(gate):
             async with _gate_or_null(role_gate):
-                await dispatch_fn(payload)
+                await asyncio.wait_for(
+                    dispatch_fn(payload), timeout=session_timeout_s)
+        graph_completed = True
     except asyncio.CancelledError:
         raise
     except ProviderUnavailableError as exc:
-        # #312/#329: a provider failure in the hunt graph is infrastructure, not
-        # a hunt degrade - record it on the run-local state so the surfer
-        # surfaces it and the run pauses (`interrupted`), rather than idling
-        # into a silent `complete` with zero specs and no typed reason (the
-        # trial-2 outcome). The registry is still reaped below.
+        # #312/#329 + F-026: a child provider failure is infrastructure, not a
+        # hunt degrade. A transient failure defers THIS item (the surfer's
+        # ledger) while its siblings keep running; only quota exhaustion or the
+        # third consecutive failure of this child becomes the run-local fatal
+        # cause the surfer surfaces. The registry is still reaped below.
+        fatal = state.record_child_failure(session_id, exc)
         logger.warning(
-            "surfer: hunt %s paused on a provider failure (%s)", hunt_key, exc)
-        state.provider_failure = state.provider_failure or exc
+            "surfer: hunt %s hit a provider failure (%s); %s", hunt_key, exc,
+            "FATAL - the run pauses" if fatal
+            else "requeued after backoff, siblings stay live",
+        )
         paused_on_provider_failure = True
+    except asyncio.TimeoutError:
+        # The per-session watchdog: a wedged graph is degraded, not waited on.
+        # The registration is released below and `settle_hypothesised` closes
+        # the spec set, so the serial/batched cursor moves to the next entity.
+        logger.warning(
+            "surfer: hunt %s exceeded the %.0fs session window; degraded and "
+            "settled", hunt_key, session_timeout_s)
     except Exception as exc:  # noqa: BLE001 - the harness is fail-open; degrade and idle anyway
         logger.warning("surfer: hunt graph degraded for %s (%s)", hunt_key, exc)
     finally:
         # The graph stretch is over: the hunt authors no more specs, so the
-        # quiesce predicate no longer needs to wait on it and a later low loop is
+        # quiesce predicate no longer needs to wait on it and a later low threat is
         # no longer held behind it.
         state.hunters_in_graph.discard(hunt_key)
-        state.loop_likelihoods.pop(hunt_key, None)
+        state.threat_bands.pop(hunt_key, None)
 
+    if graph_completed:
+        state.record_child_success(session_id)
     if not paused_on_provider_failure:
+        # The graph stretch is over and this item will not be requeued: no
+        # further draft decision can arrive, whether the graph completed or
+        # degraded. Declass any leftover `hypothesised` spec to `dropped` and
+        # write the terminal marker BEFORE idling. This is the hard fail-safe
+        # that stops a completed-but-empty hunt from wedging the cursor: the
+        # consumed-threat recovery (F-022) re-offers a consumed threat for ever
+        # while its hunt has no current-run terminal set.
+        try:
+            hunter_store.settle_hypothesised(
+                project_id, hunt_key, run_id=run_id)
+        except Exception as exc:  # noqa: BLE001 - degrade; the gate blocks
+            logger.warning(
+                "surfer: hunt %s terminal spec settlement degraded (%s)",
+                hunt_key, exc,
+            )
         await _run_hunter_idle(
             project_id=project_id, run_id=run_id, hunt_key=hunt_key,
             hunter_store=hunter_store, state=state,
@@ -618,13 +914,13 @@ async def _run_hunter_idle(
     hunter_store: HunterMemoryStore,
     state: RunDispatchState,
 ) -> None:
-    """The hunt's idle stretch (ADR "Agent idle state"): the mailbox loop
+    """The hunt's idle stretch (ADR "Agent idle state"): the mailbox threat
     machinery (`run_session_agent`) iteratively reading the hunt's inbox on the
     hunt's own `HuntSession` thread, NOT checkpoint-resume mechanisation. The
     verdict handling is the ADR Q16 STUB (identity-based refactor, 2026-08-25):
     a delivered pod export is a WITHIN-RUN LIVE FEED for the future verdict
     node, consumed only - the DURABLE parent-keyed record was authored at pod
-    completion. The loop ends on the `settle` kind message the run-terminal
+    completion. The threat ends on the `settle` kind message the run-terminal
     path posts once quiesce is proven, or on session cancellation (stop)."""
     inbox = state.hunter_inboxes[hunt_key]
     from polymerhus.app.llm.actor import run_session_agent  # noqa: PLC0415
@@ -641,9 +937,10 @@ async def _run_hunter_idle(
 
             # The idle-loop turns are hunter turns of the SAME hunt. The unit
             # threat model retires the orchestrator's HuntConfig declaration;
-            # the hunter's suite pair carries the loop's class skill, and the
+            # the hunter's suite pair carries the threat's class skill, and the
             # idle turn keeps the same role binding as the graph-phase turns.
-            binding = auth_capable_binding(hunt_session.role_id)
+            binding = auth_capable_binding(
+                hunt_session.role_id, project_id=project_id or None)
             await run_session_agent(
                 hunt_session.role_id, hunt_session.thread_id, None,
                 checkpointer=get_session_checkpointer(),
@@ -668,7 +965,7 @@ def _verdict_stub_handler(*, hunt_key):
     The DURABLE parent-keyed export record was already authored at pod
     completion (`run_pod_session` -> `_record_durable_pod_export`), so the
     idle loop never double-records: it acknowledges the feed and keeps
-    listening. `settle` ends the loop; every other kind is consumed silently."""
+    listening. `settle` ends the threat; every other kind is consumed silently."""
 
     async def _stub(message, last_turn):
         if message.kind == "settle":
@@ -684,48 +981,40 @@ def _verdict_stub_handler(*, hunt_key):
     return _stub
 
 
-def _record_durable_pod_export(*, hunter_store, project_id, run_id, hunt_key,
+def _record_durable_pod_export(*, pod_export_store, project_id, run_id, hunt_key,
                                spec_id, source, export) -> None:
     """The DURABLE parent-keyed export record (identity-based refactor,
     2026-08-25 / ADR Q16 amendment, note key pinned by #199): authored
-    deterministically at pod completion, keyed by the parent's loop dispatch id
+    deterministically at pod completion, keyed by the parent's threat dispatch id
     (`hunt_key`, S3 8.9) - independent of any live parent session, crash-safe,
-    never lost to a live-mailbox-only path. The export envelope is recorded as
-    a freeform note on the hunter memory (the verdict-stub marker), keyed
-    `<hunt_key>:pod-export:<spec_id>` (the parent's loop key + the
-    `pod-export:` marker + the derived `<fault>_<strategy>` spec id), with
-    ONE current record per (hunt, spec): a re-export UPDATES the same key
-    (one TestImplementationSpec yields at most one PodExport), and the first
-    export APPENDS (the store's update-on-missing is a denoted miss, never a
-    silent drop). The pod session id lives ONLY in `provenance["source"]`,
-    never in the key. Fail-open (O3): a write failure warns - the export is
-    never re-fabricated or dropped, and the run must never wedge on the
+    never lost to a live-mailbox-only path.
+
+    The record lives in the pod-export store (`hunting/pod-export/notes.yaml`),
+    NOT in the hunter's episodic notes file. The two files have separate
+    writers and separate bounds. The pod-export key is
+    `<hunt_key>:pod-export:<spec_id>` with ONE current record per (hunt, spec):
+    a re-export UPDATEs the same key, and the pod session id lives ONLY in
+    `provenance["source"]`. Fail-open (O3): a write failure warns - the export
+    is never re-fabricated or dropped, and the run must never wedge on the
     record."""
-    note_name = f"pod-export:{spec_id}"
-    key = hunter_store.note_key(hunt_key, note_name)
+    if pod_export_store is None:
+        logger.warning(
+            "surfer: no pod-export store bound; durable export for %s/%s not "
+            "recorded", hunt_key, spec_id)
+        return
     try:
-        existing = [
-            r for r in hunter_store.read_notes(project_id, parent_key=hunt_key)
-            if r.get("key") == key
-        ]
-        hunter_store.write_note(
+        pod_export_store.write_export(
             project_id,
-            action="update" if existing else "append",
             hunt_key=hunt_key,
-            note_name=note_name,
-            kind="freeform",
-            body=json.dumps(export or {}, sort_keys=True),
-            evidence="durable pod-completion export record (ADR Q16): no re-evaluation",
-            provenance={
-                "run_id": run_id,
-                "source": source,
-                "verdict_stub": True,
-            },
+            spec_id=spec_id,
+            run_id=run_id,
+            source=source,
+            export=export,
         )
     except Exception as exc:  # noqa: BLE001 - O3: warn and keep serving
         logger.warning(
             "surfer: durable pod-export record failed for %s/%s (%s)",
-            hunt_key, note_name, exc,
+            hunt_key, spec_id, exc,
         )
 
 
@@ -737,16 +1026,17 @@ async def run_pod_session(
     hunt_key: str,
     spec_id: str,
     inbox: AgentInbox | None,
-    hunter_store: HunterMemoryStore,
+    pod_export_store: PodExportStore | None,
     gate: Any,
     pod_builder: Callable[..., Awaitable[dict]],
     pod_store: Any,
     state: RunDispatchState | None = None,
     role_gate: Any = None,
-) -> dict:
+    session_timeout_s: float = DEFAULT_POD_SESSION_TIMEOUT_S,
+) -> dict | None:
     """ONE pod session (ADR Q13 pod id): run the spec through the pod (the
     injected builder; `arun_pod` in production), then record the completed
-    export DURABLY at pod completion keyed by the parent's loop dispatch id
+    export DURABLY at pod completion keyed by the parent's threat dispatch id
     (`hunt_key`, S3 8.9) (identity-based refactor, 2026-08-25 / Q16 amendment -
     crash-safe, independent of any live parent session, never lost to a crash
     between dispatch and an in-memory inbox consumption), and finally deliver
@@ -765,7 +1055,15 @@ async def run_pod_session(
     two identity keywords; S3 8.6) beside the D4. The dispatch boundary projects
     it onto the reduced D4 (`d4_spec_body`), so the pod's INIT gate sees the
     spec contract and never the store's bookkeeping; a retired field still
-    reaches the gate and rejects (S5 8.4/8.8)."""
+    reaches the gate and rejects (S5 8.4/8.8).
+
+    F-026: a transient provider failure returns None WITHOUT a durable export,
+    so the spec stays consumed with no export and F-017 recovers it after the
+    per-child backoff. A fatal failure (quota or the third consecutive failure)
+    lands on `state.provider_failure`; the surfer raises it after the tick and
+    the #331 handler pauses the run. A direct call without a state re-raises."""
+    source = pod_session_id(run_id, hunt_key, spec_id)
+
     from polymerhus.app.config import config  # noqa: PLC0415
     from polymerhus.app.llm.browser_tools import build_browser_tool  # noqa: PLC0415
     from polymerhus.attack.hunting.pod.llm import (  # noqa: PLC0415
@@ -837,45 +1135,80 @@ async def run_pod_session(
         record_fn=record_browser,
     )
 
-    async def _run() -> dict:
+    async def _run() -> dict | None:
         try:
+            from polymerhus.attack.hunting.pod.agents import (  # noqa: PLC0415
+                runner_compaction_middleware,
+                triager_compaction_middleware,
+            )
+
             return await pod_builder(
                 d4_spec_body(spec), run_id=run_id, project_id=project_id,
                 memory_store=pod_store, spec_id=spec_id,
+                runner_middleware=(runner_compaction_middleware(),),
+                triager_middleware=(triager_compaction_middleware(),),
             )
         except ProviderUnavailableError as exc:
-            # #329/#312: a provider failure is infrastructure, not a pod verdict.
-            # Do not fabricate a domain export and do not persist one - record it
-            # on the run-local state so the surfer surfaces it and the run pauses
-            # (`interrupted`) rather than quiescing `complete`.
-            if state is not None:
-                state.provider_failure = state.provider_failure or exc
-            raise
+            # #329/#312 + F-026: a provider failure is infrastructure, not a pod
+            # verdict. Do not fabricate a domain export and do not persist one.
+            # A transient failure defers THIS pod; its siblings stay live.
+            if state is None:
+                raise
+            fatal = state.record_child_failure(source, exc)
+            logger.warning(
+                "surfer: pod %s hit a provider failure (%s); %s", spec_id, exc,
+                "FATAL - the run pauses" if fatal
+                else "requeued after backoff, siblings stay live",
+            )
+            # A fatal cause is already on `state.provider_failure`; the surfer
+            # raises it after this tick and the #331 handler pauses the run. The
+            # task itself ends cleanly, so no exception is left unretrieved.
+            return None
         except Exception as exc:  # noqa: BLE001 - fail-open: the pod never raises into the run
             logger.warning("surfer: pod %s degraded (%s)", spec_id, exc)
-            return {
-                "verdict": "unsuccessful",
-                "terminal_reason": "surfer-dispatch-degraded",
-                "error": str(exc),
-            }
+            return finalize_pod(
+                store=pod_store, spec_id=spec_id, run_id=run_id,
+                terminal=PodTerminal.infrastructure(
+                    reason="surfer-dispatch-degraded", error=str(exc)),
+            )
 
     try:
         async with _gate_or_null(gate):
             async with _gate_or_null(role_gate):
                 with bind_pod_browser_tool(browser_tool):
-                    export = await _run()
+                    try:
+                        export = await asyncio.wait_for(
+                            _run(), timeout=session_timeout_s)
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            "surfer: pod %s exceeded the %.0fs session window; "
+                            "finalizing it from its durable trail",
+                            spec_id, session_timeout_s)
+                        export = finalize_pod(
+                            store=pod_store, spec_id=spec_id, run_id=run_id,
+                            terminal=PodTerminal.infrastructure(
+                                reason=POD_WATCHDOG_TIMEOUT,
+                                error="the pod session exceeded its watchdog window"),
+                        )
     finally:
         try:
             browser_tool.close()
         except Exception:  # noqa: BLE001 - the lease TTL is the backstop
             pass
 
-    source = pod_session_id(run_id, hunt_key, spec_id)
+    if export is None:
+        return None
+    # The ADR's completion signal is the durable PodExport. The ONE finalizer
+    # owns the write; a normal `arun_pod` return is only ensured durable here.
+    export = finalize_pod(
+        store=pod_store, spec_id=spec_id, run_id=run_id, envelope=export)
+    if state is not None:
+        state.record_child_success(source)
     # The DURABLE parent-keyed record: authored at pod completion, keyed by the
-    # parent's loop dispatch id + the pod-export:<spec_id> marker (#199) - the
+    # parent's threat dispatch id + the pod-export:<spec_id> marker (#199) - the
     # single crash-safe record, independent of any live parent inbox.
     _record_durable_pod_export(
-        hunter_store=hunter_store, project_id=project_id, run_id=run_id,
+        pod_export_store=pod_export_store, project_id=project_id, run_id=run_id,
         hunt_key=hunt_key, spec_id=spec_id, source=source, export=export,
     )
     # The WITHIN-RUN live feed (optional): only when a co-running parent's inbox
@@ -904,11 +1237,11 @@ async def run_surfer_loop(
     """The run-scoped inbox surfer loop (ADR Q2a): one delivery lap per tick,
     quiesce check, sleep, repeat - until quiesce or cancellation. The surfer
     owns NO scheduling and NEVER gates admission (Q11/Q15: the control plane
-    and the shared gate do); it is the mover's loop runner, nothing more.
+    and the shared gate do); it is the mover's threat runner, nothing more.
 
     The quiesce check is deferred for a tick that MOVED anything (a produced
     record to consumed/, or a model document): an admitted dispatch lands a
-    produced->consumed move, and its session task registers on the loop
+    produced->consumed move, and its session task registers on the threat
     asynchronously - the next lap re-reads the registry fresh, so a
     just-dispatched session can never slip past a premature quiesce while its
     item's move is still seen. A REFUSED lap (dispatched but nothing moved - a
@@ -916,19 +1249,45 @@ async def run_surfer_loop(
     NOT delay the check: the refusal already left the item produced, and
     `run_work_remaining` is what decides whether it is real work.
 
-    The loop is a session on the shared runtime manager (per-session cancel
+    The threat is a session on the shared runtime manager (per-session cancel
     works on it, Q12); cancellation (stop) propagates out of the sleep, and the
-    session's registry entry drains with the task."""
+    session's registry entry drains with the task.
+
+    F-026 (B): a transient child provider failure does NOT raise. Its item is
+    deferred by `state.child_failures` and the threat keeps ticking while the
+    healthy siblings finish. Only a fatal failure (quota exhaustion or the third
+    consecutive failure of one child) sets `state.provider_failure` and raises
+    to the #331 stop/flush/stamp handler."""
     ticks = 0
     last_tick = None
+
+    def _pre_filter(items, live_session_ids):
+        return state.sync_gate.filter(
+            items,
+            live_session_ids=live_session_ids,
+            hunts_in_graph=frozenset(state.hunters_in_graph),
+        )
+
     while True:
+        # F-026: a fatal child failure recorded during the previous tick's
+        # child sessions must stop the NEXT dispatch before it happens.
+        if state.provider_failure is not None:
+            raise state.provider_failure
         last_tick = run_delivery_tick(
             project_id, run_id,
             threat_store=threat_store,
             hunter_store=hunter_store,
             pod_store=pod_store,
             control=control, coro_for=coro_for,
-            live_loop_likelihoods=state.loop_likelihoods,
+            live_threat_bands=state.threat_bands,
+            deferred_session_ids=state.deferred_session_ids(),
+            promotion_risk_threshold=state.promotion_risk_threshold,
+            demoted_hunts=demoted_hunts_for(state),
+            pre_filter=_pre_filter if state.sync_gate is not None else None,
+            # A batched run admits the unit's WHOLE threat set: the low-tier
+            # sequencing must not hold a threat behind another unit's produced
+            # high threat (the pipeline-sync ADR, section 2, `batched`).
+            sequence_tiers=tier_sequencing_enabled(state.sync_gate),
         )
         ticks += 1
         if state.provider_failure is not None:
@@ -959,6 +1318,7 @@ __all__ = [
     "SurferReport",
     "SURFER_SESSION_SEGMENT",
     "build_run_dispatch",
+    "demoted_hunts_for",
     "THREAT_MODELLER_ROLE",
     "derive_thread_role",
     "is_hunter_session_id",

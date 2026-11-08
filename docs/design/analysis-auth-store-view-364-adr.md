@@ -45,3 +45,21 @@ Resolves #364 (found by the arm-J re-pass measurement; related #224, #243, #239)
 - Neither role's PROMPT names the view (the tool's own description carries the contract, like every other bound tool); whether the model reaches for it is what the arm-K trial measures. A one-line nudge would belong in `analysis/prompts/technical-system.md` (assigner: `analysis/prompts/assigner.md`) if the trial shows it is not found.
 - `overview.notes` and `technical_conditions[].check` are free text written by an operator or a prior agent; a secret pasted there would be visible. The record contract gives them no secret slot, so this is accepted, not defended.
 - The read-only mode is honoured on the exempt-arming path; the flag is also threaded into a bound role's tool build so the mode stays total if a roster change ever un-exempts the analysis roles.
+
+## Amendment 2026-10-23 - the modeller arming is read-only
+
+The threat modeller uses the shared auth-capability seam's `arm_exempt_surface` path.
+That path previously bound the full read/write `auth_store` contract.
+It now binds `build_auth_store_tool(..., read_only=True)`.
+
+This is distinct from D364-4:
+
+- `with_readonly_auth_store=True` on a skill-exempt role binds the store-only read view, with no `authn` skill and no `load_skill`.
+- `arm_exempt_surface=True` binds the project `authn` skill, `load_skill`, and the read-only `auth_store`.
+  It is the modeller's shape, not the analysis proposer's shape.
+
+The read-only contract is the same one the analysis roles use.
+The full write contract remains for the recon gateway and the operator seed path.
+The change is pinned by `tests/app/test_auth_seams.py::test_the_modeller_arming_binds_the_read_only_auth_contract`.
+
+See `docs/design/hunting-context-dedup-2026-10-23-adr.md` D7.

@@ -3,16 +3,16 @@
 Source of truth: ticket #237's acceptance shape, read through the operator's
 own eyes: an external bootstrapper (the subagent this harness dispatches)
 follows `skills/meta/authn-skill-writing/SKILL.md` against a live target and
-leaves two artifacts: the auth store bucket on the app-owned data root
-(`data/<project_id>/auth/`) and the per-project authn skill in the live
-skills root (`skills/target-specific-procedure/<project_id>/authn/SKILL.md`).
+leaves two artifacts on the app-owned data root - the auth store bucket
+(`data/<project_id>/auth/`) and the per-project authn skill
+(`skills/target-specific-procedure/<project_id>/authn/SKILL.md`).
 
 These are WALKTHROUGH predicates, not unit tests: they read the terminal
 quantities back out of the real datastore the run wrote (the YAML bucket and
 the skill bundle on disk, plus the live read face `GET /projects/{id}/auth`),
-and the one live edge is the target itself (moodique.com). They are gated:
-with no run artifacts they skip, so the tier is inert until the operator
-green-lights the live run.
+and the one live edge is the target itself (moodique.com) and its Steel
+profile. They are gated: with no run artifacts they skip, so the tier is inert
+until the operator green-lights the live run.
 
 The catalogue (see the ticket report for the full predicate list):
   E1  the project authn skill exists at the designed path with valid frontmatter
@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 import os
 import re
+
 from pathlib import Path
 
 import httpx
@@ -46,9 +47,11 @@ CREDENTIALS_PATH = DATA / "auth" / "credentials.yaml"
 META_SKILL = REPO / "skills" / "meta" / "authn-skill-writing" / "SKILL.md"
 
 AGENT_URL = os.environ.get("AUTHN_E2E_AGENT_URL", "http://localhost:8083")
+LANDING_URL = os.environ.get(
+    "AUTHN_E2E_LANDING_URL", "https://moodique.com/it/area-cliente"
+)
 
 _VALID_TOKEN_LOCATIONS = {"cookie", "header", "storage"}
-_STATE_FIELDS = {"cookies", "localStorage", "sessionStorage", "indexedDB"}
 
 
 def _require_run() -> None:
@@ -238,7 +241,7 @@ def test_e6_signup_is_a_separate_verified_flow_when_expected():
     )
 
 
-# --- E5: a persisted state reference backs an owner-only field file ----------
+# --- E5: the browser-context reference is a safe pool key --------------------
 
 def test_e5_browser_context_reference_is_a_safe_pool_key():
     accounts = _accounts()

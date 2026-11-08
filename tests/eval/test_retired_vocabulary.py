@@ -5,7 +5,7 @@ places where a stale name would silently re-enter a live path:
 
 - the assessor and diagnoser prompts (a fresh subagent reads them as contract);
 - the e2e fixture specs and the in-container driver (the reduced D4);
-- the eval orchestrator modules (the loop and spec-set vocabulary).
+- the eval orchestrator modules (the threat and spec-set vocabulary).
 
 Historical design docs and the explicit retirement notes are out of scope
 here; a line that NAMES a retired term to refuse it is a guard, not a live
@@ -37,21 +37,21 @@ RETIRED_IN_D4 = (
 )
 
 
-def test_the_assessment_prompt_uses_the_loop_and_spec_set_vocabulary() -> None:
+def test_the_assessment_prompt_uses_the_threat_and_spec_set_vocabulary() -> None:
     text = (EVAL / "prompts" / "assessment.md").read_text(encoding="utf-8")
     for term in RETIRED_IN_PROMPTS:
         assert term not in text, term
     assert "threat_modeller" in text
     assert "web_vulnerability_class" in text
-    assert "loop:" in text
+    assert "threat:" in text
 
 
-def test_the_diagnoser_prompt_uses_the_loop_and_spec_set_vocabulary() -> None:
+def test_the_diagnoser_prompt_uses_the_threat_and_spec_set_vocabulary() -> None:
     text = (EVAL / "prompts" / "diagnoser.md").read_text(encoding="utf-8")
     for term in RETIRED_IN_PROMPTS:
         assert term not in text, term
     assert "threat_modeller" in text
-    assert "loop" in text
+    assert "threat" in text
 
 
 def test_the_e2e_fixtures_carry_only_the_reduced_d4() -> None:
@@ -195,7 +195,7 @@ def test_the_eval_engine_carries_no_live_hunting_cap_claim() -> None:
 
 
 def test_the_eval_engine_has_no_fault_key_parameter() -> None:
-    # The hunter store key is the loop dispatch id; the retired `fault_key`
+    # The hunter store key is the threat dispatch id; the retired `fault_key`
     # folder is never a live eval path.
     offenders = []
     for path in sorted(EVAL.rglob("*.py")):

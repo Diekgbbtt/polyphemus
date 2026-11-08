@@ -23,7 +23,8 @@ def _notes_file(tmp_path):
 
 def test_the_note_kind_vocabulary_is_the_phase_1_closed_set():
     assert ProjectMemoryStore.NOTE_KINDS == (
-        "hypothesis_refusal", "implicit_test_primitive", "freeform",
+        "hypothesis_refusal", "implicit_test_primitive", "wellformedness",
+        "freeform",
     )
 
 
