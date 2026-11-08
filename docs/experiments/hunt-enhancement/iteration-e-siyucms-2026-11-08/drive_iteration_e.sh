@@ -49,6 +49,39 @@ if [ ! -f "$INSTANCE_DIR/.env" ]; then
   echo "== copied the instance .env from eval-server-1"
 fi
 
+# The C.a thinking baseline: the two analysis proposers and the two hunting
+# design roles at `max`; the pod runner and triager stay `high`. This is a
+# local experiment patch in the instance worktree, never a dev change.
+python3 - "$INSTANCE_DIR/src/polymerhus/app/llm/providers.py" <<'PY'
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+patterns = [
+    (r'(Role\("assigner",\s+"LLM_ANALYSER",\s+"session",\s+)"medium"',
+     r'\1"max"'),
+    (r'(Role\("mechanism_typist",\s+"LLM_ANALYSER",\s+"session",\s+)"medium"',
+     r'\1"max"'),
+    (r'(Role\("hunting_threat_modeller",\s+"LLM_HUNTING_THREAT_MODELLER",\s+"session",\s+)"xhigh"',
+     r'\1"max"'),
+    (r'(Role\("hunting_hunter",\s+"LLM_HUNTING_HUNTER",\s+"session",\s+)"xhigh"',
+     r'\1"max"'),
+]
+changed = []
+for pattern, replacement in patterns:
+    new, count = re.subn(pattern, replacement, text)
+    if count:
+        changed.append(count)
+    text = new
+if changed:
+    path.write_text(text, encoding="utf-8")
+    print(f"== thinking patch applied ({sum(changed)} role rows)")
+else:
+    print("== thinking patch already present or role table changed")
+PY
+
 set -a
 . "$INSTANCE_DIR/.env"
 set +a
