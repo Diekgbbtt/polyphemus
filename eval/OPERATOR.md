@@ -1153,6 +1153,57 @@ target images, the live volumes, or the polymerhus stack images.
 The worker volumes hold browser state that is not reproducible from the
 repository.
 
+### 2.15. Host exposure policy
+
+Only the SSH daemon is reachable from the internet.
+Every plain stack service binds `127.0.0.1` in `docker-compose.yml`:
+Postgres, Neo4j, the agent API, Kali, and LightRAG.
+The eval front and the target app ports are the internal exception.
+Kali and the Steel workers reach the front through the Docker host gateway,
+and the front reaches the target app ports the same way.
+Those ports therefore stay published on the host and are fenced by a
+default-deny firewall rather than a narrower bind.
+
+The firewall lives in `eval/host_firewall.py`.
+It installs two chains and jumps them at the head of `INPUT` and
+`DOCKER-USER`:
+
+- `POLYMERHUS-INPUT`: allow established traffic, loopback, SSH, the DHCP
+  client lease, and `172.16.0.0/12`; drop everything else.
+- `POLYMERHUS-DOCKER-USER`: allow established traffic, loopback, and
+  `172.16.0.0/12`; drop everything else.
+
+The `172.16.0.0/12` allow is the Docker internal plane.
+It keeps the eval front and the target ports reachable from Kali, the Steel
+workers, and the front container.
+A public source address never matches it.
+
+Install and verify:
+
+```
+python3 eval/host_firewall.py --dry-run
+sudo install -m 0644 eval/deploy/polymerhus-firewall.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now polymerhus-firewall.service
+ss -tlnp
+sudo iptables -S POLYMERHUS-INPUT
+sudo iptables -S POLYMERHUS-DOCKER-USER
+```
+
+`ss -tlnp` must show SSH on `0.0.0.0:22` and `[::]:22`, and every other
+service on `127.0.0.1` or a Docker bridge address.
+The front and target ports may still show `0.0.0.0`; the firewall, not the
+bind, is their boundary.
+
+Rollback:
+
+```
+sudo python3 eval/host_firewall.py --remove
+```
+
+Re-run `--apply` after a Docker daemon upgrade or a firewall flush.
+The unit runs after `docker.service`, so `DOCKER-USER` exists when it starts.
+
 ## 3. KB authoring
 
 # Operator-KB authoring prompt (the effective prompt, implementation-reverse-engineering revision)

@@ -1,0 +1,13 @@
+[Unit]
+Description=Fence the polymerhus eval host to loopback and SSH
+Documentation=file:///opt/polymerhus-dev/eval/host_firewall.py
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/polymerhus-dev/eval/host_firewall.py --apply
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

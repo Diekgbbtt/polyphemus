@@ -296,6 +296,16 @@ The background threat that monitors instance state and prompts the orchestrator 
 Each acted-on trigger is recorded by its deterministic identity in the eval state, so the threat acts once per distinct trigger and skips one it already handled.
 _Avoid_: monitor, watchdog
 
+**Host exposure policy**:
+The eval host rule that only SSH is reachable from the internet.
+The plain stack services bind `127.0.0.1`.
+The eval front and the target app ports stay published because Kali, the
+Steel workers, and the front reach them through the Docker host gateway.
+A default-deny host firewall fences those ports to loopback and
+`172.16.0.0/12`.
+`eval/host_firewall.py` owns the rules.
+_Avoid_: port map, firewall list.
+
 **Delivery plane**:
 The GitHub Actions CD controller's responsibility: fast-forwarding the eval server's canonical `dev` checkout from `origin/dev` on every push to `dev`.
 It first converges the checkout's `origin` onto the configured origin, repointing a checkout that was cloned from another URL (a leftover bundle, a moved mirror) rather than fetching that other `dev` and reporting a no-op fast-forward as a successful delivery.
