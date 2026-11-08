@@ -43,7 +43,7 @@ services:
       POSTGRES_DSN: ${POSTGRES_DSN:?POSTGRES_DSN is required - run eval/env_preflight.py, then set it in the instance .env}
       KALI_MCP_URL: ${KALI_MCP_URL:?KALI_MCP_URL is required - run eval/env_preflight.py, then set it in the instance .env}
       # Browser MCP (#359, W10): the baseline stack includes the pool, so the
-      # agent binds the three browser tools. The thin overlay clears this.
+      # agent binds the one `browser` tool. The thin overlay clears this.
       KALI_BROWSER_MCP_URL: http://kali:8003/mcp
       LLM_CONFIGURATOR: ${LLM_CONFIGURATOR:?LLM_CONFIGURATOR is required - '<provider>:<model>' in the instance .env}
       LLM_TRIAGER: ${LLM_TRIAGER:?LLM_TRIAGER is required - '<provider>:<model>' in the instance .env}
@@ -64,5 +64,9 @@ services:
     env_file:
       - path: .env
         required: true
+    environment:
+      # The in-network live tier binds the same one `browser` tool the agent
+      # binds, so the browser-tool e2e drives the production pool path.
+      KALI_BROWSER_MCP_URL: http://kali:8003/mcp
 
 
