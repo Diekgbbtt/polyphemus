@@ -1188,11 +1188,13 @@ def test_recon_crawl_only_with_katana_depth(tmp_path, monkeypatch):
     status, payload = _api("POST", f"/projects/{v6_project}/recon", {"jobs": CRAWL_SUBSET, "with_analysis": False})
     assert status == 400 and "IPv6" in json.dumps(payload), (status, payload)
 
-    # Unknown job, and a structurally incoherent subset (katana alone consumes a
-    # BaseURL nobody produces) - both 400, both before any run row exists.
+    # Unknown job, and a structurally incoherent subset - both 400, both before
+    # any run row exists. The incoherent case is `arjun` alone: it consumes an
+    # Endpoint nobody produces. `katana` alone is now VALID (the target-scoped
+    # crawl subset pre-seeds its BaseURL), so it is not the probe any more.
     status, payload = _api("POST", f"/projects/{project_id}/recon", {"jobs": ["httpx", "nope"], "with_analysis": False})
     assert status == 400 and "unknown job" in json.dumps(payload), (status, payload)
-    status, payload = _api("POST", f"/projects/{project_id}/recon", {"jobs": ["katana"], "with_analysis": False})
+    status, payload = _api("POST", f"/projects/{project_id}/recon", {"jobs": ["arjun"], "with_analysis": False})
     assert status == 400, (status, payload)
 
     # --- C. The crawl-only run ---------------------------------------------

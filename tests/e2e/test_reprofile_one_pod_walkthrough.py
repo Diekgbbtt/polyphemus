@@ -85,9 +85,15 @@ def _bridge_env_to_localhost() -> None:
     already carries the service-DNS targets (neo4j/postgres/kali) and the
     co-located gateway."""
     key = os.environ.get("API_KEY_OPENROUTER") or os.environ.get("OPENAI_API_KEY")
-    os.environ["API_KEY_OPENROUTER"] = key
-    os.environ["LLM_TRIAGER"] = os.environ.get(
-        "SB_REPROFILE_MODEL", "openrouter:deepseek/deepseek-v4-flash")
+    if key:
+        os.environ["API_KEY_OPENROUTER"] = key
+        os.environ["LLM_TRIAGER"] = os.environ.get(
+            "SB_REPROFILE_MODEL", "openrouter:deepseek/deepseek-v4-flash")
+    else:
+        # The deployment routes through its in-container gateway, which the
+        # host cannot reach (ADR D1). Run the configured role against its
+        # direct provider endpoint instead of inventing an OpenRouter key.
+        os.environ.pop("LLM_GATEWAY_URL", None)
     os.environ["NEO4J_URI"] = "bolt://localhost:7687"
     os.environ["NEO4J_USER"] = "neo4j"
     os.environ["NEO4J_PASSWORD"] = os.environ.get("SB_NEO4J_PASSWORD", "polymerhus")

@@ -180,7 +180,7 @@ def test_eval_probe_stops_the_run_on_token_overflow_concurrently(server):
     spend = None
     deadline = time.monotonic() + 30
     while spend is None and time.monotonic() < deadline:
-        spend = trial._check_spend(PROJECT, "recon", "r0")
+        spend = trial._check_spend(PROJECT)
         if spend is None:
             time.sleep(0.05)
 
@@ -204,5 +204,5 @@ def test_eval_probe_does_not_stop_below_budget(server):
         clock=time.monotonic,
         sleep=lambda _s: None,
     )
-    assert trial._check_spend(PROJECT, "recon", "r0") is None
+    assert trial._check_spend(PROJECT) is None
     assert fake.cancelled == []
