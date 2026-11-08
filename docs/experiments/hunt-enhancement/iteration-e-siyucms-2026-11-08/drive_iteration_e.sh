@@ -36,16 +36,25 @@ echo "== data root $EVAL_DATA_ROOT"
 echo "== setup $SETUP"
 echo "== runs root $EVAL_RUNS_ROOT"
 
-if ! git -C "$EVAL_REPO" rev-parse --verify "$EVAL_BRANCH" >/dev/null 2>&1; then
-  git -C "$EVAL_REPO" branch "$EVAL_BRANCH" "$EVAL_REPO/HEAD"
+if ! git -C "$EVAL_REPO" rev-parse --verify "refs/heads/$EVAL_BRANCH" >/dev/null 2>&1; then
+  git -C "$EVAL_REPO" branch "$EVAL_BRANCH" HEAD || {
+    echo "== cannot create $EVAL_BRANCH; stopping"
+    exit 1
+  }
   echo "== created $EVAL_BRANCH at $(git -C "$EVAL_REPO" rev-parse "$EVAL_BRANCH")"
 fi
 
 if [ ! -e "$INSTANCE_DIR/.git" ]; then
-  git -C "$EVAL_REPO" worktree add --detach "$INSTANCE_DIR" "$EVAL_BRANCH"
+  git -C "$EVAL_REPO" worktree add --detach "$INSTANCE_DIR" "$EVAL_BRANCH" || {
+    echo "== cannot create the instance worktree; stopping"
+    exit 1
+  }
 fi
 if [ ! -f "$INSTANCE_DIR/.env" ]; then
-  cp "$EVAL_INSTANCES_ROOT/eval-server-1/.env" "$INSTANCE_DIR/.env"
+  cp "$EVAL_INSTANCES_ROOT/eval-server-1/.env" "$INSTANCE_DIR/.env" || {
+    echo "== cannot copy the instance .env; stopping"
+    exit 1
+  }
   echo "== copied the instance .env from eval-server-1"
 fi
 
@@ -81,6 +90,10 @@ if changed:
 else:
     print("== thinking patch already present or role table changed")
 PY
+if [ "$?" -ne 0 ]; then
+  echo "== thinking patch failed; stopping"
+  exit 1
+fi
 
 set -a
 . "$INSTANCE_DIR/.env"
