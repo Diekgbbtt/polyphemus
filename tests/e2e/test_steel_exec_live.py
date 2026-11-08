@@ -27,6 +27,15 @@ MCP_URL = "http://localhost:8000/mcp"
 STEEL_VERSION_PIN = "0.5.0-preview.6"
 
 ENVELOPE_KEYS = {"stdout", "stderr", "returncode", "duration_ms"}
+# The binary guard appends its per-invocation trace when it observed a
+# Steel call, and preserves the composition rc when the guard fails.
+GUARD_KEYS = {"steel_events", "shell_returncode"}
+
+
+def _assert_envelope(out: dict) -> None:
+    """The legacy four keys stay present; the guard may add its trace."""
+    assert ENVELOPE_KEYS <= set(out), out
+    assert set(out) <= ENVELOPE_KEYS | GUARD_KEYS, out
 
 
 async def _steel(**kwargs):
@@ -54,7 +63,7 @@ def test_live_steel_version_names_the_pin():
                              session_id="steel-live"))
     assert out["returncode"] == 0, out
     assert STEEL_VERSION_PIN in out["stdout"]
-    assert set(out) == ENVELOPE_KEYS
+    _assert_envelope(out)
 
 
 def test_live_non_steel_command_refused():
@@ -62,7 +71,7 @@ def test_live_non_steel_command_refused():
     out = asyncio.run(_steel(command="echo hi", session_id="steel-live"))
     assert out["returncode"] != 0
     assert out["stderr"].startswith("refused:not-steel-command")
-    assert set(out) == ENVELOPE_KEYS
+    _assert_envelope(out)
 
 
 def test_live_ambiguous_inputs_refused():
@@ -99,7 +108,7 @@ def test_live_keyless_script_returns_envelope():
                              session_id="steel-live"))
     assert out["returncode"] == 0, out
     assert "live-ok" in out["stdout"]
-    assert set(out) == ENVELOPE_KEYS
+    _assert_envelope(out)
 
 
 def test_live_run_uses_no_cloud_key():

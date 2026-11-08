@@ -18,6 +18,14 @@ The agentic crawl path and its six Steel tools:
 - the `crawler` role in `src/polymerhus/app/llm/providers.py`
 - the `LLM_CRAWLER` deployment requirement
 - the legacy tests and the `eval/steel-e2e-395` harness
+- the two direct-runtime live guards: `tests/e2e/test_steel_interactive_local.py`
+  (the CLI daemon against a directly addressed API) and
+  `tests/e2e/test_steel_internal_reachability.py` (the Steel SDK plus Playwright
+  against a directly created session). The pool MCP owns session creation and
+  rewrites the CDP endpoint; a direct CLI/SDK session cannot reach a pool
+  worker. `tests/e2e/test_browser_tool_live.py` is the replacement guard: the
+  worker renders the target through the production tool, and an explicit
+  persist restores the decoupled context.
 - every comment, test, and document wire that named the six-tool path
 
 The six tools were `steel_crawl_start`, `steel_navigate`, `steel_frontier`,

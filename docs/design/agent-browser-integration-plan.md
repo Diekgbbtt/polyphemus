@@ -77,6 +77,9 @@ Out: `assigner`, `skill_evolver`, one-shot roles, `configurator`, `crawler` (rem
 - The data-dependency validator refuses the retired `steel` key and accepts
   `browser_context.ref`; the project scaffold no longer creates the dead
   `steel-state/` bucket.
+- Retire the direct-runtime live guards (`test_steel_interactive_local.py`,
+  `test_steel_internal_reachability.py`); the pool owns session creation and
+  the CDP endpoint, so a direct CLI/SDK session cannot reach a worker.
 - Add the EOL record with date 2026-11-07 and the rationale.
 - Gate: the full targeted tier is green and no `crawler` reference remains outside the EOL record.
 
