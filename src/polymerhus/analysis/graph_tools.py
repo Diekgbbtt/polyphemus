@@ -18,12 +18,12 @@ The Assigner turn binds ONLY the HTTP-history pair: its `graph_view`
 binding is rolled back (the concentration failure it licensed), and the
 recorded-transaction read is its whole widening seam, kept central.
 
-The mechanism-typist turn binds the same three plus a bounded `exec`
+The mechanism-typist turn binds the same three plus an `exec`
 (`build_analysis_exec_tool`), so its ORIENT / VERIFY phases can witness a
 mechanism in the target's real response. The exec tool wraps the hunting `exec`
 tool (the SAME `execute_command` execution seam, args schema and tool name);
-only its model-facing description and its per-call budget are analysis-local,
-so no second tooling stack is built.
+only its model-facing description is analysis-local, so no second tooling
+stack is built.
 
 `graph_view` is a light analysis-side binding: the write-shape guard and the
 read seam live here so the analysis module does not import `attack.hunting` for
@@ -34,14 +34,12 @@ Import performs no I/O (CODING_STANDARD section 6); the read seam resolves on ca
 """
 from __future__ import annotations
 
-import json
 import logging
-import os
 import re
 from collections.abc import Mapping
 from typing import Any, Callable
 
-from langchain_core.tools import BaseTool, tool
+from langchain_core.tools import tool
 
 from polymerhus.analysis.graph_scope import bind_project_scope
 
@@ -242,10 +240,10 @@ def build_http_history_tools(project_id: str):
 # partition guard, the spec's replay lineage), and the typist never holds a
 # spec. What is shared is the EXECUTION seam - the SAME `exec_fn` the hunter
 # binds (in production the pod's `default_exec_fn`, which runs `execute_command`
-# through the kali MCP). Only the model-facing contract and the call budget are
-# analysis-local; the tooling stack is not rebuilt.
+# through the kali MCP). Only the model-facing contract is analysis-local; the
+# tooling stack is not rebuilt.
 ANALYSIS_EXEC_CONTRACT = (
-    "Run a bounded, READ-ONLY command against the target through the SAME kali "
+    "Run a READ-ONLY command against the target through the SAME kali "
     "`execute_command` surface the hunting agents use. Reach for it when a "
     "mechanism hypothesis hinges on what a page RESPONSE actually contains and "
     "the mapped surface does not carry it: fetch one known endpoint's rendered "
@@ -253,76 +251,44 @@ ANALYSIS_EXEC_CONTRACT = (
     "response header the recon pass did not record. One endpoint often embeds "
     "several features, and a rendered body is a witness a path noun cannot give. "
     "READ-ONLY means read-only: a `curl` of a known endpoint, never a scan, a "
-    "mutation, or an exploitation step. A handful of probes per call is the "
-    "budget (the tool refuses past it); the mapped graph is the substrate you "
-    "reason over and the probe is the exception."
+    "mutation, or an exploitation step. A handful of probes is the working "
+    "discipline; the execution-wide token budget and the per-call timeout are "
+    "the bounds. The mapped graph is the substrate you reason over and the "
+    "probe is the exception."
 )
 
-# The per-call probe budget (env-overridable, fail-open). A typist turn that
-# burns its budget degrades to a denoted error, never a raise and never a hang
-# on the analysis critical path.
-_DEFAULT_EXEC_BUDGET = 6
 
+def build_analysis_exec_tool(*, exec_fn=None):
+    """Build the mechanism-typist's `exec` tool.
 
-class _BoundedAnalysisExec(BaseTool):
-    """The bounded, typist-scoped `exec` term (module level, defined once).
+    A THIN composition over the hunting `ExecTool`: the same
+    `exec_fn(command, timeout_s)` seam, the same `ExecArgs` schema, and the same
+    fail-open result shaping; only the model-facing description is
+    analysis-local.
 
-    A THIN composition over the hunting `exec` tool: it holds an
-    `hunter_tools.ExecTool` and delegates each call to it, so the execution
-    seam, the `ExecArgs` schema and the fail-open result shaping are the hunting
-    tool's, unchanged. It adds exactly two analysis-side things:
-
-    * the typist-scoped when+how description (`ANALYSIS_EXEC_CONTRACT`) - the
-      hunter's description is written for a spec-holding probe agent;
-    * a per-call call budget - the typist is a bounded read phase, not a hunting
-      agent, so an unbounded exec loop must not sit on the analysis path.
-
-    The hunting base is resolved lazily (the analysis module never imports
-    `attack.hunting` at import time). Past the budget the tool returns a denoted
-    error, never a raise."""
-
-    name: str = "exec"
-    description: str = ANALYSIS_EXEC_CONTRACT
-
-    def __init__(self, *, exec_fn=None, budget: int = _DEFAULT_EXEC_BUDGET, **kwargs):
-        from polymerhus.attack.hunting.hunter_tools import ExecArgs, ExecTool
-
-        if exec_fn is None:
-            from polymerhus.attack.hunting.pod.tools import default_exec_fn
-
-            exec_fn = default_exec_fn
-        super().__init__(args_schema=ExecArgs, **kwargs)
-        self._inner = ExecTool(exec_fn=exec_fn)
-        self._remaining = budget
-
-    def _run(self, **kwargs):
-        if self._remaining <= 0:
-            return json.dumps({
-                "ok": False, "error": "exec_budget_exhausted", "degraded": True,
-                "detail": "this call's probe budget is spent; continue with "
-                          "graph_view and the mapped surface",
-            })
-        self._remaining -= 1
-        return self._inner._run(**kwargs)
-
-
-def build_analysis_exec_tool(*, exec_fn=None, budget: int | None = None):
-    """Build the mechanism-typist's bounded `exec` tool.
+    The call count is UNBOUNDED at the role level. The execution-wide token
+    budget, the analysis pass semaphore, and the per-call `EXEC_TIMEOUT_S` are
+    the bounds. The old per-call call budget is removed as an anti-pattern: it
+    reset on every model turn (the surface tools are rebuilt per turn), so it
+    did not bound the chunk, and it returned a false `exec_budget_exhausted`
+    failure the model could not act on.
 
     `exec_fn` defaults to the pod's `default_exec_fn` (`execute_command` through
-    the kali MCP); `budget` defaults to `ANALYSIS_TYPIST_EXEC_BUDGET` (fail-open
-    to `_DEFAULT_EXEC_BUDGET`). Fail-open: an unbuildable tool is the caller's
+    the kali MCP). Fail-open: an unbuildable tool is the caller's
     `build_surface_tools` to drop, never a raise into the turn."""
-    cap = budget if budget is not None else int(
-        os.environ.get("ANALYSIS_TYPIST_EXEC_BUDGET", _DEFAULT_EXEC_BUDGET)
-    )
-    return _BoundedAnalysisExec(exec_fn=exec_fn, budget=cap)
+    from polymerhus.attack.hunting.hunter_tools import ExecTool
+
+    if exec_fn is None:
+        from polymerhus.attack.hunting.pod.tools import default_exec_fn
+
+        exec_fn = default_exec_fn
+    return ExecTool(exec_fn=exec_fn, description=ANALYSIS_EXEC_CONTRACT)
 
 
 def build_surface_tools(role_id: str, *, project_id: str | None = None,
                         with_http: bool = False, with_exec: bool = False) -> tuple:
     """The L0-grounding tools bound on a mechanism-typist turn: `graph_view`
-    always, the HTTP-history pair when `with_http`, and the bounded `exec`
+    always, the HTTP-history pair when `with_http`, and the `exec`
     term when `with_exec`. (The assigner no longer builds through this seam -
     its turn binds the HTTP-history pair alone, direct from
     `build_http_history_tools`.) Fail-open at every seam: an unbuildable

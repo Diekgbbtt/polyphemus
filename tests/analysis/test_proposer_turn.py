@@ -962,7 +962,7 @@ def test_the_constant_shape_covers_the_whole_mechanism_typist_chain(monkeypatch)
 
 def test_the_typist_surface_tools_keep_the_request_shape_byte_identical(monkeypatch):
     """The cache-shape guarantee END TO END with the new D-A2 binding: with the
-    surface tools bound (graph_view + HTTP pair + bounded exec), the tool set the
+    surface tools bound (graph_view + HTTP pair + exec), the tool set the
     provider sees is byte-identical across the typist's prose reflection turn and
     its two structured turns - the reflection turn carries the structured tool via
     `tools=`, the structured turns supply the same one via `response_format`, and

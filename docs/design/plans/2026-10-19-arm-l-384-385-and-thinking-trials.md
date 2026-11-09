@@ -19,7 +19,7 @@ Facts from the diagnosis (`docs/experiments/2026-10-18-arm-k-384-385-diagnosis-a
 - The only *placed* artifact that ever carried a deployment origin is `auth/credentials.yaml`.
   `auth/overview.yaml` uses paths; the authn skill scripts take `BASE` as a parameter; the
   operator KB carries no URL. The other environment-interacting agents (mechanism typist's
-  bounded exec, hunt-orchestrator, hunter, pod runner/triager) build URLs from run-time sources
+  exec, hunt-orchestrator, hunter, pod runner/triager) build URLs from run-time sources
   (L0 anchors, the graph view, the HTTP history, authored specs whose `target_identity.url` is
   authored from the projected surface).
 - Tracked, non-placed review artifacts also cite the stale origin: `l1-surface.yaml` (`base_url:`),

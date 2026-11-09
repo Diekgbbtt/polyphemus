@@ -9,7 +9,7 @@ Two surfaces are pinned here, both from the proposer-tool-workflows rework:
   reaches past disambiguation-only to an adjacently promising endpoint's
   fuller response, while the judgment stays chunk-scoped.
 - **The mechanism-typist's tool-use specs.** The when+how for `graph_view`, the
-  HTTP-history pair, and the bounded `exec` term are stated in both the skill
+  HTTP-history pair, and the `exec` term are stated in both the skill
   (`prompts/technical-system.md`) and the reflection scaffold, and the 2nd/3rd
   chain calls rely on the seam's default role prompt instead of re-passing it.
 """

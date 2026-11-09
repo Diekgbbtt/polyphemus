@@ -239,7 +239,7 @@ The typist's multiple candidate hypotheses, read-only probes, and duplicate-edge
    The relative comparison held, but the absolute values are not comparable across the two tools.
 4. **`get_http_artifact` never returns the body.**
    Its contract says so, but the typist prompt invites a transaction read when a hypothesis depends on what the page renders.
-   The typist correctly fell back to one bounded `exec` fetch.
+   The typist correctly fell back to one `exec` fetch.
    The Assigner has no `exec`, so it cannot read a body at all.
    This is a prompt-versus-tool contract gap, not a data loss.
 
@@ -364,14 +364,23 @@ The crawl ran after jsluice, and its manifest was discarded, so jsluice never sc
 The manifest fix will bring the 21 JS endpoints into L0.
 The next jsluice run should either run after the crawl or accept the crawl's JS endpoints as bundles, and should reject bare-extension and image literals.
 
-### Exec budget provenance
+### Exec budget provenance and removal
 
 `exec_budget_exhausted` was introduced with the D-A2 typist tool surface (`ad0fc90b`, `docs/design/typist-tool-workflows.md`).
-The rationale is architectural: the typist is a bounded read phase, so an unbounded exec loop must not sit on the analysis critical path.
-The design doc cites no measurement for the default 6; it is a design choice, not an empirically tuned cap.
-The implementation builds the exec tool inside `_surface_tools` on every `session_invoke_fn` turn, so the six-call budget resets each model turn, not once per chunk.
-The round-4 session made eight successful probes across its turns and hit the cap on the next one, which is consistent with that per-turn reset.
-If a per-chunk cap is the intent, hold the budget on the per-chunk tool instance; if a per-turn cap is intended, document it.
+
+It was removed on 2026-11-09 by operator ruling because it is an anti-pattern:
+
+- it reset on every model turn because the surface tools are rebuilt per turn, so it did not bound the chunk;
+- it returned a false tool failure the model could not act on;
+- it duplicated the execution-wide token budget and the analysis pass semaphore.
+
+`build_analysis_exec_tool` now returns the hunting `ExecTool` with the analysis-local description.
+The call count is unbounded at the role level.
+The bounds are the execution-wide token budget, the analysis pass semaphore, and the per-call `EXEC_TIMEOUT_S`.
+`ANALYSIS_TYPIST_EXEC_BUDGET` and the `exec_budget_exhausted` result are removed from the code and the environment.
+
+The regression test was migrated to the desired behaviour: `test_analysis_exec_tool_reuses_the_injected_exec_seam_without_a_call_cap` invokes the tool ten times and asserts every call reaches the seam.
+The formal design amendment is in `docs/design/typist-tool-workflows.md`.
 
 ## Terminal state
 
@@ -399,6 +408,7 @@ Capped spend was 708,946 over 122 calls: `mechanism_typist` 438,413, `job_orches
 - An authenticated entry known to the gateway is not a public link. Seed the crawl with the auth probe instead of expecting the public navigation to discover it.
 - A local-state action costs one page restore, so the crawl budget must cover the reload cost, not only the page count.
 - A container image built before a dependency lands is a deployment defect that presents as a model hang.
+- A role-level tool quota that resets per turn is not a bound; it is a false failure surface. The execution budget and the per-call timeout are the real bounds.
 
 ## Recommendation
 

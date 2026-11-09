@@ -158,7 +158,7 @@ records the decisions and their rationale.
   its interface executor (a separate concern); `auth_capable_binding` and
   `build_auth_store_tool` are bound only by the recon orchestrator, the recon pod
   triager, and the attack hunting roles. The typist turn binds the read-only
-  `graph_view`, the HTTP-history pair, and a bounded `exec` (`graph_tools.py`).
+  `graph_view`, the HTTP-history pair, and an `exec` (`graph_tools.py`).
   No new tool was implemented.
 
 ## Consequences

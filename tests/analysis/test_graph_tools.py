@@ -121,25 +121,30 @@ def test_surface_tools_bind_nothing_without_a_project():
     assert build_surface_tools("assigner", project_id=None, with_http=True) == ()
 
 
-def test_analysis_exec_tool_reuses_the_injected_exec_seam_and_bounds_calls():
+def test_analysis_exec_tool_reuses_the_injected_exec_seam_without_a_call_cap():
     """The analysis exec tool is a THIN wrapper over the hunting exec contract:
     it delegates to the SAME `exec_fn(command, timeout_s)` seam (`default_exec_fn`
-    in production) and only adds the per-turn call budget that makes it bounded.
-    Past the budget it degrades to a denoted error, never a raise."""
+    in production) and adds only the analysis-local description.
+
+    The call count is UNBOUNDED at the role level. The old per-call budget was
+    an anti-pattern: it reset on every model turn (the surface tools are rebuilt
+    per turn), so it did not bound the chunk, and it produced a false
+    `exec_budget_exhausted` the model could not act on. The execution-wide token
+    budget, the analysis pass semaphore, and the per-call timeout are the bounds.
+    """
     seen: list[str] = []
 
     def exec_fn(command, timeout_s):
         seen.append(command)
         return ExecResult(stdout="ok", stderr="", returncode=0, duration_ms=1)
 
-    tool = build_analysis_exec_tool(exec_fn=exec_fn, budget=2)
+    tool = build_analysis_exec_tool(exec_fn=exec_fn)
     assert tool.name == "exec"
-    first = json.loads(tool.invoke({"command": "curl -s http://t/a"}))
-    assert first["returncode"] == 0 and first["stdout"] == "ok"
-    tool.invoke({"command": "curl -s http://t/b"})
-    third = json.loads(tool.invoke({"command": "curl -s http://t/c"}))
-    assert third.get("error") == "exec_budget_exhausted"
-    assert seen == ["curl -s http://t/a", "curl -s http://t/b"], "the seam is not re-hit past budget"
+    for index in range(10):
+        out = json.loads(tool.invoke({"command": f"curl -s http://t/{index}"}))
+        assert out["returncode"] == 0 and out["stdout"] == "ok"
+        assert "exec_budget_exhausted" not in json.dumps(out)
+    assert seen == [f"curl -s http://t/{index}" for index in range(10)]
 
 
 def test_the_exec_tool_build_degrades_fail_open_keeping_the_read_tools(monkeypatch):

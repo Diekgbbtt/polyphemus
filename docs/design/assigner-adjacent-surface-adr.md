@@ -57,7 +57,7 @@ budget; the firehose stays shut.
 
 **AMENDED 2026-10-15** (proposer-tool-workflows rework): item 3's remit widened
 from disambiguation/confirmation only to the two modes above, and the read tools
-plus a bounded `exec` are now also bound on the mechanism-typist's turn. See
+plus an `exec` are now also bound on the mechanism-typist's turn (the per-call exec budget was removed as an anti-pattern on 2026-11-09). See
 `docs/design/typist-tool-workflows.md` for the trace evidence, the state model,
 and the binding decisions.
 

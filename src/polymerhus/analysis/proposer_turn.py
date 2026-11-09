@@ -190,7 +190,7 @@ def _surface_tools(
     """The adjacent-surface read/probe tools bound on a proposer turn.
 
     The mechanism-typist's turn binds the read-only `graph_view`, the
-    HTTP-history pair, the bounded `exec` term, and the one `browser` tool, so
+    HTTP-history pair, the `exec` term, and the one `browser` tool, so
     its ORIENT / VERIFY phases can witness a mechanism in the target's real
     response and render a client-side surface when the recorded transaction
     cannot settle it. The
@@ -311,7 +311,7 @@ def session_invoke_fn(role_id: str, run_id: str, checkpointer, project_id: str |
       via `tools=`, so the tool set never toggles between a role's reflection and
       extraction turns (the shape that defeated the provider prefix cache). The
       mechanism-typist turns additionally bind their surface read/probe tools
-      (D-A2) on EVERY turn, the bounded `exec` included; the assigner binds the
+      (D-A2) on EVERY turn, the `exec` included; the assigner binds the
       HTTP-history pair on its (always structured) turn. Both roles also bind the
       read-only auth-store view (#364) on every turn. The typist's reflection
       turn carries the same surface set as its structured turns, so neither set
