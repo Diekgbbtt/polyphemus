@@ -42,7 +42,9 @@ logger = logging.getLogger(__name__)
 # and the redirect flag classify the outcome.
 BODY_CAP = 200
 
-Classification = Literal["authenticated", "unauthenticated", "indeterminate"]
+Classification = Literal[
+    "authenticated", "unauthenticated", "indeterminate", "anonymous"
+]
 
 PROBE_SOURCE = "overview.auth_probe.url"
 LEGACY_PROBE_SOURCE = "legacy_surface_gate"

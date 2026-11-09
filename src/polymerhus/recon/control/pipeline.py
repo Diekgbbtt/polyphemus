@@ -45,7 +45,9 @@ from polymerhus.recon.control.auth_feed import (
     project_browser_auth,
     project_browser_context,
     project_request_auth,
+    project_sessions,
     resolve_account,
+    resolve_accounts,
     resolve_overview,
 )
 from polymerhus.recon.domain.curator import ALLOWED_LABELS, curate
@@ -587,6 +589,21 @@ async def run_pipeline(
                             input_assets = _services_to_probe_targets(input_assets)
 
                     extra = {"project_id": project_id}
+                    if job.use_auth and job.configurator_mode == "agent":
+                        # The crawl gets every valid account independently of
+                        # the gateway's single request account. The selected
+                        # account still drives the request jobs below.
+                        accounts = await asyncio.to_thread(
+                            resolve_accounts,
+                            project_id,
+                            store=auth_store,
+                        )
+                        extra["auth_sessions"] = project_sessions(
+                            project_id,
+                            accounts,
+                            origin=target_origin(settings),
+                        )
+                        extra["auth_accounts_present"] = bool(accounts)
                     if auth_account is not None and job.use_auth:
                         # D223-19, the lazy feed (#243): the gateway-selected
                         # account's IDENTIFIER rides the pipeline state (never

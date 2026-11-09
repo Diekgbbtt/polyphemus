@@ -19,7 +19,7 @@ To establish or refresh the context:
 1. `browser(command="start", account=<account>)` mounts the stored context.
 2. Run the sign-in procedure below through `browser(command="exec", ...)` when
    the oracle fails.
-3. Validate `overview.auth_probe.url` (`/index.php/admin/Index/index.html`) in
+3. Validate the selected account's `auth_probe` (or its `root_url` when the probe is empty) in
    the mounted browser. A 2xx with `redirected: false` passes; a 401, 403, or
    any 3xx fails.
 4. `browser(command="end", persist_context=true)` captures, saves, stops, and
@@ -57,6 +57,23 @@ Two rules bind every target: facts live in the store, steps live in the skill; s
 - `anti-bot: null`, `http-client-replayability: true` (overview).
 - Forcing evidence, from the bootstrap probes: every response carries only `Server: Apache/2.4.52 (Debian)` and `X-Powered-By: PHP/7.3.33` - no CDN header, no block-page fingerprint, no JS-challenge script and no bot-management cookie. A rejected admin sign-in is HTTP 200 with the JSON body `{"error":"1","msg":"帐号或密码错误"}`, and a sign-in POST without `__token__` (or with a foreign token) is HTTP 200 with `{"error":"2","msg":"验证有误"}`; an unauthenticated backend request is HTTP 302 to the login page. None of those is a 401, a 403 block page or a 429, so no `waf_protected`, `waf_detection` or `rate_limited` signal fired. Ten rapid unauthenticated backend GETs and five rapid wrong-password POSTs produced identical application responses with no retry header and no challenge.
 - Consequence: every sign-in procedure below runs on the request path. The gateway oracle validation and context persistence use the one browser tool; the sign-in itself needs no browser.
+
+## Roles and featured roots
+
+The auth store is the session catalogue: one account is one browser session.
+The crawl runs one lifecycle per valid account, in parallel up to the pool
+size, and each lifecycle starts at that session's `root_url`.
+
+- `super_administrator` (account `admin-first_authn_bootstrap`): the backend
+  console. The featured root and the oracle are
+  `/index.php/admin/Index/index.html`. Procedure: `sign-in-admin-backend`.
+- `member` (account `siyuprobe2026-first_authn_bootstrap`): the front-end
+  member centre. The featured root and the oracle are
+  `/index.php/index/user/index.html`. Procedures: `sign-in-member` and
+  `sign-up-member`.
+- An account with no `role` starts at `/`. An account with no `auth_probe`
+  uses its root URL as the oracle; the preflight accepts any non-4xx, non-3xx
+  response there.
 
 ## Procedure: sign-in-admin-backend (verified)
 

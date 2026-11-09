@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+from dataclasses import dataclass
 import hashlib
 import http.cookiejar
 import json
@@ -113,6 +114,111 @@ def browser_context_ref(project_id: str, account: str) -> str:
     )
 
 
+def _absolute_url(host: str, value: str) -> str:
+    """Resolve a root-relative session URL against the synthetic target host."""
+    parsed = urllib.parse.urlsplit(value)
+    if parsed.scheme or parsed.netloc:
+        return value
+    return f"http://{host.rstrip('/')}/{value.lstrip('/')}"
+
+
+@dataclass(frozen=True)
+class SessionSpec:
+    """One scaffolded account's mint input and its absolute pool record."""
+
+    account: str
+    role: str | None
+    root_url: str
+    auth_probe: str
+    root_path: str
+    auth_probe_path: str
+    login_page: str
+    username: str
+    password: str
+    procedure: str
+    ref: str
+
+
+def plan_sessions(
+    accounts: dict,
+    *,
+    host: str,
+    project_id: str,
+) -> list[SessionSpec]:
+    """One mint plan per credential-bearing account.
+
+    The account is the session: its role/root/auth_probe describe the
+    privilege surface. An absent root is `/`; an absent probe is the root.
+    A stale `not_valid` account is included because this preflight is what
+    refreshes it.
+    """
+    specs: list[SessionSpec] = []
+    for account, row in accounts.items():
+        if not isinstance(account, str) or not isinstance(row, dict):
+            continue
+        credentials = row.get("credentials")
+        if not isinstance(credentials, dict):
+            continue
+        username = credentials.get("username")
+        password = credentials.get("password")
+        if not isinstance(username, str) or not username:
+            continue
+        if not isinstance(password, str) or not password:
+            continue
+        root_path = row.get("root_url")
+        if not isinstance(root_path, str) or not root_path:
+            root_path = "/"
+        probe_path = row.get("auth_probe")
+        if not isinstance(probe_path, str) or not probe_path:
+            probe_path = root_path
+        role = row.get("role") or row.get("default_role")
+        if not isinstance(role, str) or not role:
+            role = None
+        login_page = credentials.get("login_url")
+        if not isinstance(login_page, str) or not login_page:
+            login_page = "/"
+        procedure = row.get("procedure")
+        if not isinstance(procedure, str):
+            procedure = ""
+        specs.append(
+            SessionSpec(
+                account=account,
+                role=role,
+                root_url=_absolute_url(host, root_path),
+                auth_probe=_absolute_url(host, probe_path),
+                root_path=root_path,
+                auth_probe_path=probe_path,
+                login_page=login_page,
+                username=username,
+                password=password,
+                procedure=procedure,
+                ref=browser_context_ref(project_id, account),
+            )
+        )
+    return specs
+
+
+def mint_planned_sessions(
+    specs: list[SessionSpec],
+    *,
+    mint,
+    write,
+) -> list[tuple[SessionSpec, bool, str | None]]:
+    """Mint and persist every session; one failure never stops the others."""
+    results: list[tuple[SessionSpec, bool, str | None]] = []
+    for spec in specs:
+        try:
+            value = mint(spec)
+            write(spec, value)
+        except Exception as exc:  # noqa: BLE001 - one session failure is contained
+            log(f"session {spec.account} mint failed: {exc}")
+            results.append((spec, False, str(exc)))
+        else:
+            log(f"session {spec.account} minted; oracle passed")
+            results.append((spec, True, None))
+    return results
+
+
 def _request(url: str, host: str, *, data: bytes | None = None, headers=None):
     merged = {"Host": host, "User-Agent": "polymerhus-eval-preflight/1"}
     if headers:
@@ -182,11 +288,96 @@ def mint_admin_session(
     return value
 
 
-def write_context(compose_project: str, ref: str, account: str, host: str, value: str) -> None:
+def mint_member_session(
+    base_url: str,
+    host: str,
+    login_page: str,
+    username: str,
+    password: str,
+    probe_path: str,
+) -> str:
+    """Mint one front-end member PHPSESSID and prove its landing."""
+    jar = http.cookiejar.CookieJar()
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+    payload = urllib.parse.urlencode(
+        {"username": username, "password": password}
+    ).encode("utf-8")
+    response = opener.open(
+        _request(
+            f"{base_url}{login_page}",
+            host,
+            data=payload,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        ),
+        timeout=30,
+    )
+    response.read()
+    value = None
+    for cookie in jar:
+        if cookie.name == "PHPSESSID":
+            value = cookie.value
+    if not value:
+        raise SystemExit("member sign-in returned no PHPSESSID")
+    oracle = opener.open(
+        _request(f"{base_url}{probe_path}", host), timeout=30
+    )
+    oracle.read()
+    if (
+        oracle.status < 200
+        or oracle.status >= 300
+        or oracle.geturl() != f"{base_url}{probe_path}"
+    ):
+        raise SystemExit(
+            f"member oracle did not pass: status={oracle.status} "
+            f"final={oracle.geturl()}"
+        )
+    return value
+
+
+def mint_session(spec: SessionSpec, *, base_url: str, host: str) -> str:
+    """Dispatch one session to its target procedure."""
+    probe_path = urllib.parse.urlsplit(spec.auth_probe).path or "/"
+    if spec.procedure == "sign-in-admin-backend" or "/admin/" in spec.login_page:
+        return mint_admin_session(
+            base_url,
+            host,
+            spec.login_page,
+            spec.username,
+            spec.password,
+            probe_path,
+        )
+    if spec.procedure == "sign-in-member" or "/index/user/" in spec.login_page:
+        return mint_member_session(
+            base_url,
+            host,
+            spec.login_page,
+            spec.username,
+            spec.password,
+            probe_path,
+        )
+    raise SystemExit(
+        f"no mint procedure for account {spec.account!r}: {spec.procedure!r}"
+    )
+
+
+def write_context(
+    compose_project: str,
+    ref: str,
+    account: str,
+    host: str,
+    value: str,
+    *,
+    role: str | None = None,
+    root_url: str | None = None,
+    auth_probe: str | None = None,
+) -> None:
     now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()
     record = {
         "name": ref,
         "account": account,
+        "role": role,
+        "root_url": root_url,
+        "auth_probe": auth_probe,
         "cookies": [
             {
                 "name": "PHPSESSID",
@@ -234,7 +425,11 @@ def main() -> int:
     parser.add_argument("--compose-project", required=True)
     parser.add_argument("--instance", default="eval-server-2")
     parser.add_argument("--target", default="siyucms-web")
-    parser.add_argument("--account", default="admin-first_authn_bootstrap")
+    parser.add_argument(
+        "--account",
+        default=None,
+        help="mint only this account; the default mints every scaffolded account",
+    )
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
@@ -250,21 +445,19 @@ def main() -> int:
     if not credentials_path.is_file() or not overview_path.is_file():
         raise SystemExit(f"missing auth data dependencies under {data_dir}")
 
-    accounts = yaml.safe_load(credentials_path.read_text(encoding="utf-8"))["accounts"]
-    account = args.account if args.account in accounts else next(
-        name for name, row in accounts.items() if isinstance(row, dict) and row.get("browser_context")
-    )
-    account_row = accounts[account]
-    credentials = account_row.get("credentials") or {}
-    username = credentials.get("username")
-    password = credentials.get("password")
-    login_page = credentials.get("login_url") or "/index.php/admin/Login/index.html"
-    overview = yaml.safe_load(overview_path.read_text(encoding="utf-8")) or {}
-    oracle = (overview.get("auth_probe") or {}).get("url") or ORACLE_FALLBACK
-    if not username or not password:
-        raise SystemExit(f"account {account} carries no credential pair")
+    credentials_doc = yaml.safe_load(
+        credentials_path.read_text(encoding="utf-8")
+    ) or {}
+    accounts = credentials_doc.get("accounts")
+    if not isinstance(accounts, dict):
+        raise SystemExit(f"{credentials_path} carries no accounts mapping")
+    if args.account is not None and args.account not in accounts:
+        raise SystemExit(f"account {args.account!r} is not in {credentials_path}")
 
-    log(f"host={host} project={project_name} account={account}")
+    log(
+        f"host={host} project={project_name} "
+        f"accounts={args.account or 'all'}"
+    )
     if args.dry_run:
         print(project_name)
         return 0
@@ -278,11 +471,45 @@ def main() -> int:
     put_settings(args.api, project_id, settings)
     put_hunting(args.api, project_id, run.hunting.payload())
 
-    value = mint_admin_session(
-        "http://127.0.0.1:80", host, login_page, username, password, oracle
+    specs = plan_sessions(accounts, host=host, project_id=project_id)
+    if args.account is not None:
+        specs = [spec for spec in specs if spec.account == args.account]
+    results = mint_planned_sessions(
+        specs,
+        mint=lambda spec: mint_session(
+            spec, base_url="http://127.0.0.1:80", host=host
+        ),
+        write=lambda spec, value: write_context(
+            args.compose_project,
+            spec.ref,
+            spec.account,
+            host,
+            value,
+            role=spec.role,
+            root_url=spec.root_url,
+            auth_probe=spec.auth_probe,
+        ),
     )
-    ref = browser_context_ref(project_id, account)
-    write_context(args.compose_project, ref, account, host, value)
+    for spec, minted, _error in results:
+        row = accounts[spec.account]
+        if minted:
+            row["status"] = "valid"
+            row["browser_context"] = {"ref": spec.ref}
+            if spec.role:
+                row["role"] = spec.role
+            row["root_url"] = spec.root_path
+            row["auth_probe"] = spec.auth_probe_path
+        else:
+            row["status"] = "not_valid"
+    credentials_doc["accounts"] = accounts
+    temporary = credentials_path.with_suffix(".yaml.tmp")
+    temporary.write_text(
+        yaml.safe_dump(credentials_doc, sort_keys=False, allow_unicode=True),
+        encoding="utf-8",
+    )
+    temporary.replace(credentials_path)
+    minted = sum(1 for _spec, ok, _error in results if ok)
+    log(f"minted {minted}/{len(results)} sessions")
     print(project_id)
     return 0
 

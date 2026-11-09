@@ -135,7 +135,7 @@ The AuthContext shape is the one the app's T1 validator (`app/auth/records.py`) 
 The data-dependency staging and the validator use that same seam, so a committed artifact cannot disagree with what the placement endpoint accepts.
 
 - `overview.auth_probe` is `{url: <root-relative path>}`.
-  It is mandatory whenever the target declares an auth surface or stores accounts.
+  It is the legacy fallback oracle; the account-level probe or root is the primary oracle for a stored account.
   The path is deployment-neutral; the app resolves it against the project's canonical origin.
   The oracle passes only a 2xx with `redirected: false`; `401`, `403`, any 3xx, or a followed redirect fails; anything else is indeterminate and fails closed.
   A no-auth target may omit it; the crawl then logs the missing probe and uses the legacy surface gate.
@@ -158,3 +158,20 @@ The data-dependency staging and the validator use that same seam, so a committed
 - The eval harness places all three data dependencies through one uniform, non-idempotent request shape.
 - The deterministic scaffold is now a platform capability, so app and eval cannot diverge.
 - The auth and skill stores gained a wholesale-replace entry point; their existing merge/seed paths are unchanged.
+
+## Amendment 2026-11-09 - the per-account session contract
+
+One account is one browser session.
+The account record gains optional `role`, `root_url`, and `auth_probe` fields.
+`root_url` and `auth_probe` are deployment-neutral paths in committed data.
+The external preflight resolves them against the target origin and writes the absolute values into the pool record.
+The auth store keeps the relative paths; the pool record is the loaded session object.
+An absent `root_url` defaults to `/`; an absent `auth_probe` defaults to the root URL; a non-4xx, non-3xx response at the root passes.
+The overview carries one `technical_conditions` entry per role with the authenticated-request shape.
+The authn skill prose covers the sign-in and sign-up procedure for each role.
+The validator checks the account shapes and refuses absolute session URLs; it does not heuristically score the prose.
+The preflight mints and verifies every credential-bearing account, not only the admin.
+The stale-account skip is `status: not_valid`; the crawl never adds an anonymous session when accounts exist.
+The zero-account store is the only anonymous fallback.
+This supersedes the "no change to the auth record shapes" non-goal for the three session fields.
+The full decision record is `docs/design/crawl-session-fanout-adr.md`.

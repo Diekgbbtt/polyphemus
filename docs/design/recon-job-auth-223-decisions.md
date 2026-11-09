@@ -232,6 +232,17 @@ This yields a specific new wiring step in the current systematic tool-configurat
 Role selection (`roles` / `default_role` are already account-record keys) resolves over the account record at use time, replacing `select_auth_context` over the retired settings blob (D223-4).
 The crawler's auth path becomes profile-mount only: the interactive `steel_await_auth` human-in-the-loop path retires together with its `notify_awaiting_auth` operator prompt - post-gateway, auth is already established and a mid-run prompt is strictly worse.
 
+### D223-19 amendment (2026-11-09) - the crawl receives the session set
+
+The gateway still selects one account for the request-based jobs.
+The pipeline now also hands `steel_crawl` every valid account as a session set.
+Each session carries its account identifier, `role`, absolute `root_url`, absolute `auth_probe`, `login_url`, and `browser_context_ref`.
+The crawl runs one lifecycle per session, bounded by the browser-pool size, and each lifecycle uses its own oracle and root.
+The account identifier still rides the state; the material still resolves lazily from the store.
+The anonymous outcome remains the zero-account fallback; no anonymous session runs when accounts exist.
+The external preflight mints and verifies every credential-bearing account before the trial.
+The full decision record is `docs/design/crawl-session-fanout-adr.md`.
+
 ## Open queue (dependency-ordered)
 
 None - the sequential walk is complete.

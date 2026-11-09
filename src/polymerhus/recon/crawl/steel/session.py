@@ -200,6 +200,9 @@ class StartResult:
     cdp_host: str = ""
     warnings: tuple[str, ...] = ()
     remaining_ms: int | None = None
+    role: str | None = None
+    root_url: str | None = None
+    auth_probe: str | None = None
 
 
 @dataclass(frozen=True)
@@ -337,6 +340,11 @@ class SteelSessionClient:
     def attached(self) -> SteelSession | None:
         """The session this client owns, or `None` before start / after end."""
         return self._attached
+
+    @property
+    def start_report(self) -> StartResult | None:
+        """The mounted session's start report, including its loaded model."""
+        return self._start
 
     @property
     def registry(self) -> SteelSessionRegistry:

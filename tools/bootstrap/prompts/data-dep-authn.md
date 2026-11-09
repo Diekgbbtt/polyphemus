@@ -36,13 +36,18 @@ Write to (`<staging>` is the staging root from the Substitutions block, `<projec
 ### File shapes (from `docs/design/auth-store-220-decisions.md` D220-3)
 
 `overview.yaml` - the operator-owned login-mechanism header:
-`{login_endpoint?, required_headers? (list of "Name: value"), mechanism?, defences?, fingerprinting?, technical_conditions? (list of {name, check}), anti-bot? (a vendor/challenge name or null), http-client-replayability? (true|false; unset = UNKNOWN), auth_probe? ({url: <path>} - the authenticated-context oracle), notes?}`.
+`{login_endpoint?, required_headers? (list of "Name: value"), mechanism?, defences?, fingerprinting?, technical_conditions? (list of {name, check, role?}), anti-bot? (a vendor/challenge name or null), http-client-replayability? (true|false; unset = UNKNOWN), auth_probe? ({url: <path>} - the legacy fallback oracle), notes?}`.
 `auth_probe.url` is a deployment-neutral path such as `/api/authentication`, never a host.
+Add one `technical_conditions` entry per role with the authenticated-request shape for that role; the `role` label names the account role.
+The primary oracle lives on each account, not on the overview.
 Prove that it answers 2xx only with an authenticated context: 401, 403, or 3xx without one.
 The recon gateway uses it as the only authentication oracle; a target with a declared surface and no oracle is an incomplete bootstrap.
 
-`credentials.yaml` - accounts keyed by name:
-`{accounts: {<username>-<minting_context>: {origin, procedure?, credentials? (username, password, login_url, domain?, selectors?), tokens? ({<name>: {value, location: cookie|header|storage, target?, expiry?}}), steel? ({state}), snapshot? ({headers, cookies, params, captured_at}), roles?, default_role?, notes?}}}`.
+`credentials.yaml` - accounts keyed by name, one account per session:
+`{accounts: {<username>-<minting_context>: {origin, procedure?, role?, root_url?, auth_probe?, credentials? (username, password, login_url, domain?, selectors?), tokens? ({<name>: {value, location: cookie|header|storage, target?, expiry?}}), browser_context? ({ref}), snapshot? ({headers, cookies, params, captured_at}), roles?, default_role?, notes?}}}`.
+`role` names the privilege surface; `root_url` is the featured entry (default `/`); `auth_probe` is that session's oracle (default the root URL); `browser_context.ref` is the durable pool reference.
+Scaffold one account per role, including the least-privileged baseline; an account with no role starts at `/`.
+The authn skill prose covers the sign-in and sign-up procedure for every role.
 Name every account `<username>-<minting_context>` with the credential username (email suffix stripped), a hyphen, then `first_authn_bootstrap`.
 Never put `origin` in the store payload normally, but the file MAY carry `origin: operator` for the operator-seeded record; leave it out if unsure.
 Secret values live in `credentials.yaml` and NEVER in the skill.

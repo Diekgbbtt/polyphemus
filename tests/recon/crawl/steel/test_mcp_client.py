@@ -6,8 +6,6 @@ Docker socket are needed.
 """
 from __future__ import annotations
 
-import asyncio
-import json
 import socket
 import threading
 import time
@@ -112,6 +110,41 @@ def test_start_maps_the_restore_and_cdp_contract():
     ]
     assert fake.entered is True
     assert fake.exited is True
+
+
+def test_start_maps_the_session_model_fields():
+    result = dict(
+        START_RESULT,
+        role="member",
+        root_url="http://app.test/index/user/index.html",
+        auth_probe="http://app.test/index/user/index.html",
+    )
+    client, _ = _client({"browser_start": [FakeToolResult(result)]})
+
+    start = client.start("hunt")
+    client.close()
+
+    assert start.role == "member"
+    assert start.root_url == "http://app.test/index/user/index.html"
+    assert start.auth_probe == "http://app.test/index/user/index.html"
+
+
+def test_backend_start_result_carries_the_session_model_fields():
+    result = dict(
+        START_RESULT,
+        role="member",
+        root_url="http://app.test/index/user/index.html",
+        auth_probe="http://app.test/index/user/index.html",
+    )
+    client, _ = _client({"browser_start": [FakeToolResult(result)]})
+    backend = McpBackend(client)
+
+    start = backend.start("hunt")
+    backend.close()
+
+    assert start.role == "member"
+    assert start.root_url == "http://app.test/index/user/index.html"
+    assert start.auth_probe == "http://app.test/index/user/index.html"
 
 
 def test_start_reports_the_mounted_context_not_the_requested_one():

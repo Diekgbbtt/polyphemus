@@ -103,6 +103,37 @@ def test_full_account_validates_clean():
     assert validate_account(_full_account()) == _full_account()
 
 
+def test_account_carries_the_session_role_root_and_oracle():
+    record = {
+        "origin": "operator",
+        "role": "super_administrator",
+        "root_url": "/index.php/admin/Index/index.html",
+        "auth_probe": "/index.php/admin/Index/index.html",
+    }
+    assert validate_account(record) == record
+
+
+def test_session_fields_are_optional_and_empty_means_default():
+    assert validate_account({"origin": "operator"}) == {"origin": "operator"}
+    record = {"origin": "operator", "role": "", "root_url": "", "auth_probe": ""}
+    assert validate_account(record) == record
+
+
+def test_session_urls_are_safe_probe_urls():
+    for field in ("root_url", "auth_probe"):
+        for bad in ("http://user:pass@host/", "/x#frag", "relative", 5):
+            with pytest.raises(AuthInvalidError) as exc:
+                validate_account({"origin": "operator", field: bad})
+            assert field in str(exc.value)
+
+
+def test_session_role_is_a_string_when_present():
+    for bad in (5, ["member"], {"name": "member"}):
+        with pytest.raises(AuthInvalidError) as exc:
+            validate_account({"origin": "operator", "role": bad})
+        assert "account.role" in str(exc.value)
+
+
 def test_agent_origin_account_validates_clean():
     record = {"origin": "agent", "procedure": "self-registration"}
     assert validate_account(record) == record

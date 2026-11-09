@@ -334,6 +334,9 @@ class BrowserService:
             "cdp_host": view.cdp_host,
             "remaining_ms": view.remaining_ms,
             "context_ref": view.context_ref,
+            "role": view.role,
+            "root_url": view.root_url,
+            "auth_probe": view.auth_probe,
         }
 
     def exec(self, mcp_session_id: str, command: object) -> dict:

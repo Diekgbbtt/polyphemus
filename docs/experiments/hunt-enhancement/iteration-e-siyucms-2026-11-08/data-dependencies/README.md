@@ -33,9 +33,16 @@ admin-first_authn_bootstrap:
 The admin account is asserted `valid` because the operator preflight mints a
 fresh session after the single target bring-up; the auth gateway re-validates
 the oracle in the one browser tool.
-The member account is `not_valid` for the browser candidate because it holds
-no decoupled browser context; its request material remains.
-This keeps the gateway on the admin account, whose context is the seeded one.
+Each account is one session.
+The admin account carries `role: super_administrator`,
+`root_url: /index.php/admin/Index/index.html`, and the same `auth_probe`.
+The member account carries `role: member`,
+`root_url: /index.php/index/user/index.html`, and the same `auth_probe`.
+The member account starts `not_valid` until the preflight mints its decoupled
+browser context; the preflight writes the reference and sets it `valid`.
+An account with no `role` starts at `/`; an account with no `auth_probe` uses
+its root URL as the oracle.
+The preflight mints every credential-bearing account, not only the admin.
 
 The admin snapshot was cleaned to the siyucms `PHPSESSID` only.
 The C.a target substitution had left `cf_clearance`, `PrestaShop-*`, and

@@ -11,9 +11,10 @@ The live gate is the pool E2E harness (`eval/steel-crawl-e2e/`) on the eval serv
 
 ## 1. Scope
 
-`steel_crawl` is one authenticated crawl of one web application.
+`steel_crawl` is one authenticated crawl per scaffolded account, over one web application.
 
-It attaches to a pre-authenticated Steel browser session.
+The job runs one lifecycle per valid account, bounded by the browser-pool size.
+Each lifecycle attaches to that account's pre-authenticated Steel browser session.
 It drives the browser only through the Steel CLI.
 It captures the network only through a passive CDP sidecar.
 It traverses the application with one depth-first search.
@@ -32,20 +33,29 @@ The Steel session is the bound.
 
 | ID | Requirement | Acceptance |
 | - | - | - |
-| A1 | Mount exactly one browser session per execution unit. | `browser(command="start", account=<account>)` returns the runtime id, `restored`, and the CDP endpoint. |
+| A1 | Mount exactly one browser session per lifecycle. One pod runs one lifecycle per valid account. | `browser(command="start", account=<account>)` returns the runtime id, `restored`, the loaded role/root/probe, and the CDP endpoint. |
 | A2 | Never start a twin. A session mounted by the same execution unit is `session_in_use`. | The crawl has no session-name parameter; the browser tool derives the key and the browser MCP owns the lease. |
-| A3 | Run the authenticated-context oracle once before traversal. | The oracle outcome is `authenticated`. |
-| A4 | The oracle is a browser fetch to `overview.auth_probe.url`. | `2xx` with `redirected: false` passes. |
+| A3 | Run the session's authenticated-context oracle once before traversal. | The oracle outcome is `authenticated`, or `anonymous` only for the zero-account fallback. |
+| A4 | The oracle is a browser fetch to the account's `auth_probe`, or its `root_url` when the probe is empty. | `2xx` with `redirected: false` passes; the root fallback rejects 3xx and 4xx. |
 | A5 | `401`, `403`, any `3xx`, or `redirected: true` fails. | The run returns `auth_precondition_failed`. |
 | A6 | Anything else is indeterminate and fails closed. | The run returns `auth_precondition_failed`. |
-| A7 | A missing oracle is loud. | The run logs the missing probe and uses the legacy surface gate. |
+| A7 | A missing account probe falls back to the account root; a zero-account anonymous session skips the oracle. | The manifest records the selected probe or `anonymous`. |
 | A8 | The legacy gate rejects login redirects, `401`, `403`, and any `3xx`. | No anonymous continuation. |
 | A9 | On failure, return a typed failure and let the orchestrator resurrect. | One bounded retry through the authn skill and the auth store. |
 | A10 | A known loss is `session_missing` or `no_session`, not a typo. | The next stable-key start restores the saved state. |
 | A11 | The pool store is the only browser-state store. | The decoupled auth-context object lives there; cookies and localStorage restore; all four fields are captured. |
-| A12 | The gateway records the context reference in `accounts.<account>.browser_context.ref`. | The crawl mounts the same context reference. |
-| A13 | The crawl budget is 600 seconds; time is the only bound. | No action cap exists. |
+| A12 | The preflight records each account's context reference; the gateway may refresh the selected one. | The crawl mounts each account's reference. |
+| A13 | The crawl budget is 1800 seconds per session lifecycle; time is the only bound. | No action cap exists. |
 | A14 | An incomplete stop carries `manifest.run.partial`. | A partial manifest routes to reduced coverage. |
+| A15 | One pod runs one lifecycle per valid account, bounded by `STEEL_CRAWL_MAX_WORKERS`. | The pod joins every thread before finalizing. |
+| A16 | A failed session never discards the other manifests. | The successful manifests are parsed; the failed session adds a reduced-coverage observation. |
+| A17 | Duplicate assets across sessions are deduplicated downstream. | The curator deduplicates by asset identity. |
+| A18 | No anonymous session runs when accounts exist. | The anonymous fallback is only for a zero-account auth store. |
+
+The session model and the fan-out are recorded in `docs/design/crawl-session-fanout-adr.md`.
+The auth-store account is the session: `role`, `root_url`, `auth_probe`, and `browser_context.ref`.
+The preflight writes the absolute root and probe into the pool record; the crawl reads the loaded record.
+The pod parses one manifest per session; duplicates are deduplicated by the curator.
 
 The oracle is never a navigation envelope.
 `navigate` follows a `302` and reports success with the final `200` URL.
@@ -59,7 +69,7 @@ agent never passes it.
 
 | ID | Requirement | Acceptance |
 | - | - | - |
-| T1 | Seed the frontier with the target root. | The first page visit is `/`. |
+| T1 | Seed the frontier with the session's `root_url`. | The first page visit is the account's featured root; an account with no role uses `/`. |
 | T2 | Scope is the base host plus its subdomains. | External links are ignored. |
 | T3 | Traverse with one unified DFS. | The page stack and the consumed sets drive the order. |
 | T4 | Jev owns the next choice. | The policy sees the candidates and the decision tree. |

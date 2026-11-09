@@ -166,6 +166,9 @@ class LeaseView:
     cdp_host: str = ""
     remaining_ms: int | None = None
     context_ref: str | None = None
+    role: str | None = None
+    root_url: str | None = None
+    auth_probe: str | None = None
 
 
 @dataclass(frozen=True)
@@ -218,6 +221,9 @@ class Lease:
             cdp_host=f"localhost:{self.worker.api_port}",
             remaining_ms=self.cli_session.remaining_ms,
             context_ref=self.context_ref,
+            role=self.previous.role if self.previous else None,
+            root_url=self.previous.root_url if self.previous else None,
+            auth_probe=self.previous.auth_probe if self.previous else None,
         )
 
 
@@ -814,6 +820,9 @@ class LeaseManager:
                 "indexedDB": indexed_db or {},
             },
             account=lease.account,
+            role=lease.previous.role if lease.previous else None,
+            root_url=lease.previous.root_url if lease.previous else None,
+            auth_probe=lease.previous.auth_probe if lease.previous else None,
             **kwargs,
         )
 

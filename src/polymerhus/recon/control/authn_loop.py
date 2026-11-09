@@ -108,12 +108,14 @@ GROUNDED_HINT = (
 RETRIEVED_HINT = (
     "Account selected. Mount the web browser with "
     "`browser(command=\"start\", account=<account>)` and validate it with "
-    "the authenticated-context oracle at `overview.auth_probe.url`: a browser "
-    "request in the mounted session. A mount while the same execution unit "
-    "holds it answers `session_in_use`; reuse it, never twin it. A 2xx passes; 401, 403, or any 3xx fails; anything else is indeterminate "
-    "and does not pass. The in-process auth-store view is redacted: never "
-    "read or paste token, cookie, or credential values. Conclude by asserting "
-    "the account status valid or not_valid in the store before any sign-in."
+    "the selected account's authenticated-context oracle: its `auth_probe`, "
+    "or its `root_url` when the probe is absent or empty. A browser request "
+    "in the mounted session is the oracle. A mount while the same execution "
+    "unit holds it answers `session_in_use`; reuse it, never twin it. A 2xx "
+    "passes; 401, 403, or any 3xx fails; anything else is indeterminate and "
+    "does not pass. The in-process auth-store view is redacted: never read or "
+    "paste token, cookie, or credential values. Conclude by asserting the "
+    "account status valid or not_valid in the store before any sign-in."
 )
 """Injected on RETRIEVED: validate the selected account with the oracle."""
 
