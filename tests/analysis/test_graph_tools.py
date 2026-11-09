@@ -140,6 +140,8 @@ def test_analysis_exec_tool_reuses_the_injected_exec_seam_without_a_call_cap():
 
     tool = build_analysis_exec_tool(exec_fn=exec_fn)
     assert tool.name == "exec"
+    assert "exec_budget_exhausted" not in tool.description
+    assert "handful of probes" not in tool.description
     for index in range(10):
         out = json.loads(tool.invoke({"command": f"curl -s http://t/{index}"}))
         assert out["returncode"] == 0 and out["stdout"] == "ok"
