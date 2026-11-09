@@ -294,6 +294,63 @@ The `login_url` is not a seed because it renders the signed-out form; the probe 
 The analysis's L1 coverage will stay thin until the crawl delivers the admin surface: the current run saw 15 endpoints, while the crawl captured 111.
 The next run should use the rebuilt image, the updated analysis code, and the populated L0 graph.
 
+### L1 coverage baseline and next-run delta
+
+`measure_l1_coverage.py` reads the project graph and the latest crawl manifest.
+The baseline is `l1-coverage-baseline.json`.
+
+| Metric | Baseline | Next-run field |
+|---|---:|---|
+| Crawl manifest endpoints | 111 | `manifest_endpoints` |
+| Manifest endpoints present in L1 | 6 (5.4%) | `manifest_endpoints_present` |
+| L0 endpoints | 15 | `endpoints` |
+| AGGREGATES | 8 | `aggregates` |
+| Unique aggregated endpoints | 6 (40% of 15) | `aggregate_coverage` |
+| Services with AGGREGATES | 5 of 33 (15.2%) | `service_aggregate_coverage` |
+| Service->System edges | 14 | `service_system_edges` |
+| Services with System edges | 5 of 33 (15.2%) | `service_system_edge_coverage` |
+| Systems with EVIDENCED_BY | 6 of 36 | `systems_with_evidence` |
+| Manifest JS endpoints | 21 | `manifest_js` |
+
+Run the same tool after the next analysis drains:
+
+```bash
+python3 measure_l1_coverage.py \
+  --project-id <project_id> \
+  --data-root <data_root> \
+  --neo4j-password polymerhus \
+  --baseline l1-coverage-baseline.json
+```
+
+The target is the measured delta, not a hand-set count.
+`manifest_endpoints_present` should rise from 6 toward 111 when the partial-manifest fix lands.
+The aggregate and edge coverage should then be read on that larger surface.
+
+The six present endpoints are duplicates from httpx and katana, not crawl ingestions.
+The crawl contributed zero new L0 endpoints in this run.
+
+### jsluice false positives and JS coverage
+
+The jsluice job scanned six bundles and produced seven assets.
+Two were 404 noise: `/hqdefault.jpg` and `/template/default/index/js/.json`.
+The first is a YouTube thumbnail literal; the second is a bare `.json` extension resolved against the bundle directory.
+The scanner's static-asset filter applies to sourcemap paths and chaining, not to raw jsluice URL records, so both reached L0.
+The Assigner correctly left both unassigned.
+
+The `steel_crawl` manifest carries 21 JS endpoints, including the full `/template/default/index/js/` UI set.
+The crawl ran after jsluice, and its manifest was discarded, so jsluice never scanned those bundles.
+The manifest fix will bring the 21 JS endpoints into L0.
+The next jsluice run should either run after the crawl or accept the crawl's JS endpoints as bundles, and should reject bare-extension and image literals.
+
+### Exec budget provenance
+
+`exec_budget_exhausted` was introduced with the D-A2 typist tool surface (`ad0fc90b`, `docs/design/typist-tool-workflows.md`).
+The rationale is architectural: the typist is a bounded read phase, so an unbounded exec loop must not sit on the analysis critical path.
+The design doc cites no measurement for the default 6; it is a design choice, not an empirically tuned cap.
+The implementation builds the exec tool inside `_surface_tools` on every `session_invoke_fn` turn, so the six-call budget resets each model turn, not once per chunk.
+The round-4 session made eight successful probes across its turns and hit the cap on the next one, which is consistent with that per-turn reset.
+If a per-chunk cap is the intent, hold the budget on the per-chunk tool instance; if a per-turn cap is intended, document it.
+
 ## Terminal state
 
 Recon and analysis completed.

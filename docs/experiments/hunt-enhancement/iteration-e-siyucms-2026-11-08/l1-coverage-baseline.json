@@ -1,0 +1,29 @@
+{
+  "aggregate_coverage": 0.4,
+  "aggregates": 8,
+  "base_urls": 1,
+  "endpoints": 15,
+  "manifest_endpoint_coverage": 0.05405405405405406,
+  "manifest_endpoints": 111,
+  "manifest_endpoints_present": 6,
+  "manifest_js": 21,
+  "manifest_path": "/data/5e7a1ea0-aef7-4894-8231-902e5ab37909/steel-crawl/6996f7d6-6e0f-4e9f-82f8-30cc0818bb02/manifest.json",
+  "observations": 18,
+  "project_id": "5e7a1ea0-aef7-4894-8231-902e5ab37909",
+  "service_aggregate_coverage": 0.15151515151515152,
+  "service_system_edge_coverage": 0.15151515151515152,
+  "service_system_edges": 14,
+  "service_system_edges_by_rel": {
+    "EXPOSED_VIA": 4,
+    "IDENTIFIED_BY": 5,
+    "ROUTED_BY": 5
+  },
+  "services": 33,
+  "services_with_aggregates": 5,
+  "services_with_system_edges": 5,
+  "services_without_aggregates": 28,
+  "services_without_system_edges": 28,
+  "systems": 36,
+  "systems_with_evidence": 6,
+  "unique_aggregated_endpoints": 6
+}

@@ -156,3 +156,49 @@ def test_real_write_keywords_still_refused_after_stripping():
 
 def test_contract_teaches_literal_safety():
     assert "always quote your literals" in GRAPH_VIEW_CONTRACT
+
+
+def test_read_only_view_binds_the_project_scope_symbolically():
+    """The view owns the run's project scope. A caller-supplied `project_id`
+    (the observed domain-slug mistake) is dropped, never merged; every other
+    query parameter survives."""
+    from polymerhus.attack.hunting.read_only_graph import ReadOnlyGraphView
+
+    seen = {}
+
+    def read_fn(cypher, params):
+        seen.update(params)
+        return [{"ok": True}]
+
+    view = ReadOnlyGraphView("project-uuid", read_fn=read_fn)
+    rows = view.read(
+        "MATCH (n {project_id: $project_id}) RETURN n LIMIT $limit",
+        {"project_id": "siyucms", "limit": 5},
+    )
+    assert rows == [{"ok": True}]
+    assert seen == {"project_id": "project-uuid", "limit": 5}
+
+
+def test_graph_view_over_the_read_only_view_needs_no_caller_project_id():
+    """The tool contract is driven by the symbolic layer: the model supplies
+    only its query and query values, and the view binds the scope."""
+    from polymerhus.attack.hunting.read_only_graph import ReadOnlyGraphView
+
+    seen = {}
+
+    def read_fn(cypher, params):
+        seen.update(params)
+        return [{"ok": True}]
+
+    tool = build_graph_view_tool(ReadOnlyGraphView("project-uuid", read_fn=read_fn).read)
+    out = tool.invoke({
+        "cypher": "MATCH (n {project_id: $project_id}) RETURN n LIMIT $limit",
+        "params": {"limit": 5},
+    })
+    assert out == {"rows": [{"ok": True}]}
+    assert seen == {"project_id": "project-uuid", "limit": 5}
+
+
+def test_contract_does_not_teach_a_caller_project_id():
+    assert "Every identity is scoped to the run's project" in GRAPH_VIEW_CONTRACT
+    assert "Scope every query with" not in GRAPH_VIEW_CONTRACT

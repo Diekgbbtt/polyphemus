@@ -43,6 +43,14 @@ def test_read_path_returns_rows_through_the_injected_seam():
     assert seen["project_id"] == "p1"
 
 
+def test_the_contract_does_not_ask_the_model_to_supply_the_project_scope():
+    """The scope is a tool-layer invariant. The model-facing contract must not
+    teach a `project_id` caller field or a scope-supplying params shape."""
+    assert "Scope every query with" not in GRAPH_VIEW_CONTRACT
+    assert "Every identity also carries project_id" not in GRAPH_VIEW_CONTRACT
+    assert "the tool binds that scope" in GRAPH_VIEW_CONTRACT
+
+
 def test_caller_project_id_cannot_override_the_bound_scope():
     """A proposer sees the domain slug in the overview and naturally passes
     `params={"project_id": "siyucms"}`. The bound project scope is

@@ -341,7 +341,12 @@ async def search_http_history(
 async def get_http_artifact(
     project_id: str, artifact_id: str, include_body: bool = False
 ) -> dict:
-    """Fetch one recorded artifact, sanitized. include_body is refused here."""
+    """Fetch one recorded artifact, sanitized, with its bounded body view.
+
+    The body view renders captured textual bodies up to `BODY_TEXT_MAX`,
+    redacted and marked `truncated`; binary/uncaptured bodies carry a note.
+    `include_body` is a compatibility no-op - the body view is always included.
+    """
     try:
         return await _offload(
             _get_service().get, project_id, artifact_id, include_body=include_body

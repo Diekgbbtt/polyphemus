@@ -76,6 +76,33 @@ def test_iter_sourcemap_sources_index_maps_content_and_nulls():
     assert got == [("src/a.js", "A"), ("src/b.js", None), ("src/c.js", None)]
 
 
+def test_jsluice_url_literals_drop_bare_extension_and_media_assets():
+    """A literal that is only an extension (`.json`) or a media asset
+    (`hqdefault.jpg`) is not request surface. The observed iteration E 404s
+    were exactly these two shapes; a normal JSON API path and a JS bundle stay."""
+    emitted = []
+    urls = [
+        "https://h/template/default/index/js/.json",
+        "https://h/hqdefault.jpg",
+        "https://h/api/data.json",
+        "https://h/template/default/index/js/main.js",
+    ]
+
+    def run(mode, text, base):
+        if mode == "urls":
+            return "\n".join(json.dumps({"url": url}) for url in urls)
+        return ""
+
+    js._emit_jsluice(
+        "x", "https://h/static/app.js", "https://h/static/app.js",
+        "https://h", run, emitted.append)
+    got = [json.loads(line)["url"] for line in emitted]
+    assert got == [
+        "https://h/api/data.json",
+        "https://h/template/default/index/js/main.js",
+    ]
+
+
 # ---------------------- end-to-end scan_bundles --------------------------- #
 def _fake_run_jsluice_factory():
     """A jsluice stand-in: `urls` mode reports the base as a discovered URL,

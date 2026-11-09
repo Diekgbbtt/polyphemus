@@ -275,12 +275,14 @@ def test_pod_replay_lineage_end_to_end(live_kali):
     assert headers["cookie"] == "[redacted]"
     _assert_no_secret(view, "baseline sanitized artifact")
 
-    # include_body must be refused on the model-facing surface.
-    refused = call(
+    # The body view is part of the model-facing record; `include_body` is a
+    # compatibility no-op, never a refusal.
+    with_body = call(
         "get_http_artifact",
         {"project_id": project_id, "artifact_id": baseline_ref, "include_body": True},
     )
-    assert refused.get("error") == "invalid_filter"
+    assert with_body.get("error") is None
+    assert "body" in with_body["response"]
 
     # 4) Author the reduced D4 (S5 8.5): the baseline pointer lives in
     #    provenance.baseline_ref and there is no payload vector space.

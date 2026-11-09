@@ -13,12 +13,36 @@ on. The full view (`sanitize_artifact`) keeps redacting.
 """
 from __future__ import annotations
 
+import gzip
 import re
+import zlib
 from urllib.parse import parse_qsl, urlsplit, urlunsplit
 
 from kali.http_history.models import HttpArtifact
 
 REDACTED = "[redacted]"
+
+# The model-facing body cap. A body view is a reading aid, not the artifact:
+# 16 KiB covers the head, menu and first sections of a rendered page while
+# keeping one tool result bounded. `truncated` marks the cut.
+BODY_TEXT_MAX = 16 * 1024
+
+# Best-effort redaction for rendered body text. The artifact boundary already
+# redacts headers, cookies, query and form values; the body is free text and
+# needs its own pass for the common secret carriers. A named secret is
+# redacted wherever it appears as a key/value or a bearer token; the pass is
+# deliberately conservative because an over-redacted body is still readable.
+_BODY_AUTH_LINE_RE = re.compile(
+    r"(?i)(\b(?:authorization|proxy-authorization|cookie|set-cookie)\b\s*:\s*)"
+    r"([^\r\n]+)"
+)
+_BODY_SECRET_PAIR_RE = re.compile(
+    r"(?i)(\b(?:password|passwd|pwd|secret|token|api[-_]?key|apikey|"
+    r"authorization|cookie|session|sessionid|phpsessid|jsessionid|csrf|jwt|"
+    r"credential|signature|otp)\b\s*[:=]\s*[\"']?)"
+    r"([^\"'&\s,;}]+)"
+)
+_BODY_BEARER_RE = re.compile(r"(?i)(\bbearer\s+)([A-Za-z0-9._~+/-]+=*)")
 
 _SENSITIVE_KEY_RE = re.compile(
     r"(auth|token|secret|passw|api[-_]?key|apikey|session|sid|cookie|csrf|jwt|"
@@ -83,23 +107,97 @@ def sanitize_url(url: str) -> str:
     return urlunsplit((parts.scheme, netloc, parts.path, query, parts.fragment))
 
 
-def _body_view(message) -> dict:
+def _header_value(headers, name: str) -> str:
+    for key, value in headers or []:
+        if str(key).strip().lower() == name:
+            return str(value)
+    return ""
+
+
+def _decode_body_text(raw: bytes, headers, fallback_encoding: str | None) -> tuple[str | None, str | None]:
+    """Decode a stored body to text, or return the reason it is not textual."""
+    content_encoding = _header_value(headers, "content-encoding").lower()
+    try:
+        if "gzip" in content_encoding:
+            raw = gzip.decompress(raw)
+        elif "deflate" in content_encoding:
+            raw = zlib.decompress(raw)
+        elif "br" in content_encoding:
+            try:
+                import brotli  # type: ignore[import-not-found]
+            except ImportError:
+                return None, "compressed body not rendered: brotli decoder unavailable"
+            raw = brotli.decompress(raw)
+    except Exception:  # noqa: BLE001 - a corrupt/unsupported encoding is not text
+        return None, "compressed body not rendered: decode failed"
+
+    content_type = _header_value(headers, "content-type")
+    match = re.search(r"charset=([\w.-]+)", content_type, re.IGNORECASE)
+    charset = match.group(1) if match else None
+    if not charset and fallback_encoding and fallback_encoding != "binary":
+        charset = fallback_encoding
+    charset = charset or "utf-8"
+    try:
+        text = raw.decode(charset, "replace")
+    except LookupError:
+        text = raw.decode("utf-8", "replace")
+    if "\x00" in text:
+        return None, "binary body not rendered"
+    return text, None
+
+
+def _redact_body_text(text: str) -> str:
+    text = _BODY_AUTH_LINE_RE.sub(lambda m: m.group(1) + REDACTED, text)
+    text = _BODY_SECRET_PAIR_RE.sub(lambda m: m.group(1) + REDACTED, text)
+    text = _BODY_BEARER_RE.sub(lambda m: m.group(1) + REDACTED, text)
+    return text
+
+
+def _body_view(message, body_loader=None) -> dict:
     if message is None:
         return {}
-    return {
+    view = {
         "size": message.body_size,
         "encoding": message.body_encoding,
         "capture_state": message.capture_state,
         "capture_reason": message.capture_reason,
+        "text": None,
+        "truncated": False,
     }
+    if message.capture_state != "captured":
+        view["note"] = f"body not rendered: capture_state={message.capture_state}"
+        return view
+    if not message.body_ref:
+        view["note"] = "body not rendered: no stored bytes"
+        return view
+    if body_loader is None:
+        view["note"] = "body not rendered: no body loader"
+        return view
+    try:
+        raw = body_loader(message.body_ref)
+    except Exception:  # noqa: BLE001 - an unreadable blob is not a crash
+        raw = None
+    if raw is None:
+        view["note"] = "body not rendered: stored bytes unavailable"
+        return view
+    text, note = _decode_body_text(raw, message.headers, message.body_encoding)
+    if text is None:
+        view["note"] = note or "body not rendered"
+        return view
+    text = _redact_body_text(text)
+    if len(text) > BODY_TEXT_MAX:
+        text = text[:BODY_TEXT_MAX]
+        view["truncated"] = True
+    view["text"] = text
+    return view
 
 
-def _message_view(message, *, request: bool) -> dict:
+def _message_view(message, *, request: bool, body_loader=None) -> dict:
     view: dict = {
         "http_version": message.http_version,
         "headers": [[n, _redact_if_sensitive(n, v)] for n, v in message.headers],
         "cookies": [{"name": c.name, "value": REDACTED} for c in message.cookies],
-        "body": _body_view(message),
+        "body": _body_view(message, body_loader),
         "timestamp_start": message.timestamp_start,
         "timestamp_end": message.timestamp_end,
     }
@@ -135,17 +233,25 @@ def _context_view(artifact: HttpArtifact) -> dict:
             for name in _EXPOSED_CONTEXT_FIELDS}
 
 
-def sanitize_artifact(artifact: HttpArtifact) -> dict:
-    """A full sanitized record (no body content, no body reference)."""
+def sanitize_artifact(artifact: HttpArtifact, *, body_loader=None) -> dict:
+    """A full sanitized record with a bounded, redacted body view.
+
+    `body_loader(body_ref) -> bytes | None` is the store's body reader. Without
+    it the body metadata is still returned; with it, a captured textual body is
+    decoded, redacted and capped at `BODY_TEXT_MAX`. The raw body reference and
+    raw bytes never cross this boundary.
+    """
     return {
         "schema_version": artifact.schema_version,
         "artifact_id": artifact.artifact_id,
         "project_id": artifact.project_id,
         "capture_context": _context_view(artifact),
-        "request": _message_view(artifact.request, request=True),
+        "request": _message_view(
+            artifact.request, request=True, body_loader=body_loader),
         "response": None
         if artifact.response is None
-        else _message_view(artifact.response, request=False),
+        else _message_view(
+            artifact.response, request=False, body_loader=body_loader),
         "connection": artifact.connection.model_dump(),
         "timings": artifact.timings.model_dump(),
         "error": None if artifact.error is None else artifact.error.model_dump(),

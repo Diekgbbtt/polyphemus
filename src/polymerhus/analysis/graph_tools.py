@@ -43,6 +43,8 @@ from typing import Any, Callable
 
 from langchain_core.tools import BaseTool, tool
 
+from polymerhus.analysis.graph_scope import bind_project_scope
+
 logger = logging.getLogger(__name__)
 
 # The write-shaped tokens the read-only view refuses. The same set the hunting
@@ -76,7 +78,8 @@ _SCHEMA = (
     "labels are graph metadata, so test `labels(n)` or put the label in the "
     "MATCH pattern. `key` is not an identity property either: use "
     "business_function_slug, kind + discriminator, or Observation id. Every "
-    "identity also carries project_id.\n"
+    "identity is scoped to the run's project; the tool binds that scope as "
+    "`$project_id`.\n"
     "relationship types:\n"
     "- cross-layer: AGGREGATES ((:L1Service)-[:AGGREGATES]->(:L0)), EVIDENCED_BY "
     "((:L1System)-[:EVIDENCED_BY]->(:L0))\n"
@@ -97,10 +100,7 @@ _SCHEMA = (
 _QUERY_PRIMITIVES = (
     "QUERY LANGUAGE (read-only Cypher) - use MATCH, OPTIONAL MATCH, WHERE, "
     "RETURN, ORDER BY, LIMIT, DISTINCT, count(), collect(), labels(), type(). "
-    "Scope every query with {project_id: $project_id}. The tool injects the "
-    "bound project scope for you: never guess it from the domain name (the "
-    "domain slug is not the project id), and any project_id you pass is replaced "
-    "by the bound scope. Write-shaped tokens "
+    "Write-shaped tokens "
     "(MERGE / CREATE / DELETE / SET / REMOVE / FOREACH / LOAD CSV) are refused. "
     "Text inside a string literal is DATA, not Cypher: a path filter that "
     "happens to contain a write word is legal and always allowed "
@@ -188,18 +188,15 @@ def build_analysis_graph_view_tool(project_id: str, *, read_fn: GraphReadFn | No
                 "the graph view is read-only: refusing write-shaped cypher "
                 f"{cypher[:120]!r}"
             )
-        # The bound project scope is AUTHORITATIVE: a caller-supplied
-        # `project_id` must never override it. The proposers see the domain slug
-        # in the overview, so `params={"project_id": "siyucms"}` is a natural
-        # mistake; letting it through silently returns zero rows and makes the
-        # model reason over a false-empty graph. Keep every other caller param.
+        # The scope is a tool-layer invariant, not a caller field. Drop a stray
+        # `project_id` (the proposers see the domain slug and sometimes pass it)
+        # and bind the run's project scope; every other query param survives.
         caller_params = dict(params or {})
-        supplied = caller_params.get("project_id")
-        if supplied is not None and supplied != project_id:
+        if "project_id" in caller_params:
             logger.warning(
-                "graph_view: caller project_id %r overridden by the bound "
-                "scope %r", supplied, project_id)
-        merged = {**caller_params, "project_id": project_id}
+                "graph_view: dropping caller-supplied project_id; the tool "
+                "owns the project scope")
+        merged = bind_project_scope(project_id, caller_params)
         try:
             rows = read(cypher, merged)
             if not isinstance(rows, list):

@@ -96,11 +96,20 @@ def test_get_returns_a_sanitized_record(tmp_path):
     assert "supersecret" not in str(view)
 
 
-def test_get_rejects_include_body_on_the_model_facing_surface(tmp_path):
+def test_get_renders_the_captured_response_body(tmp_path):
     _seed(tmp_path)
     service = _service(tmp_path)
-    with pytest.raises(ValueError):
-        service.get("proj-1", "http_01J0000000000000000000000A", include_body=True)
+    view = service.get("proj-1", "http_01J0000000000000000000000A")
+    assert view["response"]["body"]["text"] == "welcome"
+    assert view["response"]["body"]["capture_state"] == "captured"
+
+
+def test_get_include_body_is_a_compatibility_no_op(tmp_path):
+    _seed(tmp_path)
+    service = _service(tmp_path)
+    view = service.get(
+        "proj-1", "http_01J0000000000000000000000A", include_body=True)
+    assert view["response"]["body"]["text"] == "welcome"
 
 
 def test_cross_project_get_is_not_found(tmp_path):
