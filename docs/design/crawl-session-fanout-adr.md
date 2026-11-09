@@ -138,7 +138,8 @@ The TDD seams are the five agreed boundaries:
 
 ## Evidence
 
-The unit and contract suites pass: 1,592 passed, 23 skipped across the crawl, Kali, app, auth-feed, pipeline-gateway, authn-loop, bootstrap-validator, and preflight-planner suites.
+The crawl, Kali, app, auth-feed, pipeline-gateway, authn-loop, bootstrap-validator, preflight-planner, and project-management suites pass.
+The full suite collects 8,099 tests; it did not finish inside the 20-minute command window.
 The earlier 300-second live smoke proved the auth context and the partial/budget/settle fixes.
 It used the removed admin-probe seed, so it is not evidence for this fan-out.
 The next live run validates one lifecycle per valid account.
