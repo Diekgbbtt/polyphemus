@@ -63,6 +63,17 @@ _SOURCEMAP_RE = re.compile(r"//[#@]\s*sourceMappingURL=(.+?\.map)")
 # themselves, and (below) bundler internals / third-party modules.
 _NOISE_EXT_RE = re.compile(r"\.(css|scss|png|jpg|jpeg|gif|svg|map)$", re.IGNORECASE)
 
+# A literal that is only an extension (`.json`, `.jpg`) is a string fragment,
+# not a request path. Resolving it against the bundle directory minted the
+# observed `/template/default/index/js/.json` 404 in iteration E. A media
+# literal (`hqdefault.jpg`) is a static asset, not an endpoint; the JS bundles
+# themselves stay, because the crawl and the sourcemap pass consume them.
+_BARE_EXTENSION_RE = re.compile(r"^\.[A-Za-z0-9]+$")
+_STATIC_MEDIA_EXT_RE = re.compile(
+    r"\.(?:css|scss|png|jpe?g|gif|svg|ico|webp|avif|woff2?|ttf|eot|mp4|webm|map)$",
+    re.IGNORECASE,
+)
+
 # Runtime request-path prefixes a first-party bundle assembles its URLs from -
 # the base split across a config statement and a later literal, invisible to
 # any single extraction. white-jotter: `defaults.baseURL="/api"` in the app
@@ -393,6 +404,13 @@ def _emit_jsluice(
                 rec_origin = bundle_origin(obj["url"])
                 if rec_origin and rec_origin != origin:
                     obj["origin_scope"] = "external"
+                parsed = urlparse(obj["url"])
+                last_segment = (parsed.path or "").rsplit("/", 1)[-1]
+                if (_BARE_EXTENSION_RE.match(last_segment)
+                        or _STATIC_MEDIA_EXT_RE.search(parsed.path)):
+                    # A static-asset/string-fragment literal is not request
+                    # surface; drop it before it reaches L0 or the chain pass.
+                    continue
                 url_records.append(obj)
             emit(json.dumps(obj))
     return url_records
