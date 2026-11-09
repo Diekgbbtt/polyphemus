@@ -36,7 +36,6 @@ from urllib.parse import urlsplit
 from polymerhus.recon.crawl.steel.auth import (
     AuthOracle,
     AuthVerdict,
-    resolve_probe_url,
     session_fetch_fn,
 )
 from polymerhus.recon.crawl.steel.capture.history import (
@@ -366,6 +365,9 @@ class LiveRunContext:
     auth_probe: str | None = None
     login_url: str | None = None
     account: str | None = None
+    role: str | None = None
+    root_url: str | None = None
+    anonymous: bool = False
     edge_url: str | None = None
     edge_token: str | None = None
     browser_mcp_url: str = ""
@@ -627,25 +629,23 @@ def run_live_crawl(ctx: LiveRunContext) -> LiveRunResult:
     def run_fn(root: PageInstance) -> FrontierResult:
         crawl = build_crawl()
         holder["crawl"] = crawl
-        # The public root does not link the authenticated backend: the admin
-        # console is a known entry from the scaffolded auth overview, not a
-        # discoverable link. The oracle already proves that entry in this
-        # session, so explore it as a seed before the public surface. The
-        # login URL alone is not a useful seed: it renders the signed-out form.
-        root_url = root.final_url or root.url
-        seeds: list[PageInstance] = []
-        for url in crawl_seed_urls(root_url, ctx.auth_probe):
-            if normalize_url(url) == normalize_url(root_url):
-                seeds.append(root)
-            else:
-                seeds.append(page_factory(url, None, 0, "auth_probe", ()))
-        return crawl.run_many(seeds).frontier
+        return crawl.run(root).frontier
 
     def auth_fn(root: PageInstance) -> AuthVerdict:
+        loaded = session.start_report
+        if ctx.anonymous:
+            verdict = AuthVerdict(
+                classification="anonymous",
+                probe_url="",
+                probe_source="anonymous",
+                final_url=root.final_url or root.url,
+            )
+            holder["verdict"] = verdict
+            return verdict
         oracle = AuthOracle(
             fetch_fn=session_fetch_fn(session),
             page_url=root.final_url or root.url,
-            probe_url=ctx.auth_probe,
+            probe_url=crawl_session_probe(ctx, loaded),
             login_url=ctx.login_url,
         )
         verdict = oracle.check()
@@ -656,10 +656,14 @@ def run_live_crawl(ctx: LiveRunContext) -> LiveRunResult:
         crawl = holder.get("crawl")
         output = crawl.last_output if crawl is not None else None
         verdict = holder.get("verdict")
+        loaded = session.start_report
         run = RunBlock(
             crawl_run_id=ctx.run_id,
             session_name=ctx.session_name,
             account=ctx.account,
+            role=ctx.role or (loaded.role if loaded is not None else None),
+            root_url=crawl_session_root(ctx, loaded),
+            auth_probe=crawl_session_probe(ctx, loaded),
             started_at=started_at,
             stop_reason=stop_reason,
             scope=list(ctx.scope),
@@ -718,7 +722,13 @@ def run_live_crawl(ctx: LiveRunContext) -> LiveRunResult:
         session=session,
         sidecar=sidecar,
         ledger=ledger,
-        prepare_fn=lambda: page_factory(ctx.target_url, None, 0, "seed", ()),
+        prepare_fn=lambda: page_factory(
+            crawl_session_root(ctx, session.start_report),
+            None,
+            0,
+            "seed",
+            (),
+        ),
         auth_fn=auth_fn,
         run_fn=run_fn,
         manifest_fn=manifest_fn,
@@ -823,18 +833,27 @@ def run_live_crawl(ctx: LiveRunContext) -> LiveRunResult:
     )
 
 
-def crawl_seed_urls(target_url: str, auth_probe: str | None) -> tuple[str, ...]:
-    """The ordered crawl seeds: the authenticated entry, then the public root.
+def crawl_session_root(ctx: LiveRunContext, loaded: Any = None) -> str:
+    """The loaded session's featured root, else the context's declared root."""
+    root = getattr(loaded, "root_url", None)
+    if isinstance(root, str) and root:
+        return root
+    return ctx.root_url or ctx.target_url
 
-    The public root never links the admin backend; the scaffolded auth probe is
-    the only reliable address of that surface. Keep the probe first so the
-    authenticated backend is explored before the public site's large link set.
-    A missing probe, or a probe equal to the root, yields just the root.
+
+def crawl_session_probe(ctx: LiveRunContext, loaded: Any = None) -> str | None:
+    """The session's own oracle; the root URL is the fallback.
+
+    An anonymous session has no authenticated oracle. A role session uses its
+    loaded `auth_probe` when present, else its configured probe, else its
+    root URL (2xx without a 3xx is the user's success rule).
     """
-    probe = resolve_probe_url(target_url, auth_probe)
-    if probe and normalize_url(probe) != normalize_url(target_url):
-        return (probe, target_url)
-    return (target_url,)
+    if ctx.anonymous:
+        return None
+    probe = getattr(loaded, "auth_probe", None)
+    if isinstance(probe, str) and probe:
+        return probe
+    return ctx.auth_probe or crawl_session_root(ctx, loaded)
 
 
 def _scope_predicate(scope: Sequence[str]) -> Callable[[str], bool]:
@@ -860,6 +879,5 @@ __all__ = [
     "LivePageFactory",
     "LiveRunContext",
     "LiveRunResult",
-    "crawl_seed_urls",
     "run_live_crawl",
 ]

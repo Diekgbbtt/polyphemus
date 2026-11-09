@@ -13,6 +13,7 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 
 _SCRIPT = (
     Path(__file__).resolve().parents[1]
@@ -302,6 +303,78 @@ def test_llm_verdicts_merge_from_the_target_assessment_yaml(assess, tmp_path):
     assert row["L1"]["scale"] == 3
     assert row["L4"]["scale"] == 1
     assert any("L4" in f for f in assess._failing(row))
+
+
+def test_auth_criterion_rewards_one_session_per_role_high_privilege_first(
+    assess, tmp_path
+):
+    staging = tmp_path / "staging"
+    auth = staging / "auth"
+    skill = staging / "skills" / "authn" / "SKILL.md"
+    auth.mkdir(parents=True)
+    skill.parent.mkdir(parents=True)
+    (auth / "overview.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "login_endpoint": "/login",
+                "technical_conditions": [
+                    {
+                        "name": "admin_session_replay",
+                        "check": "replay the admin console",
+                        "role": "super_administrator",
+                    },
+                    {
+                        "name": "member_session_replay",
+                        "check": "replay the member centre",
+                        "role": "member",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    credentials = {
+        "admin": {
+            "role": "super_administrator",
+            "root_url": "/admin",
+            "auth_probe": "/admin",
+            "browser_context": {"ref": "steel-auth-p1-admin"},
+            "credentials": {
+                "username": "admin",
+                "password": "pw",
+                "login_url": "/admin/login",
+            },
+        },
+        "member": {
+            "role": "member",
+            "root_url": "/member",
+            "auth_probe": "/member",
+            "browser_context": {"ref": "steel-auth-p1-member"},
+            "credentials": {
+                "username": "member",
+                "password": "pw",
+                "login_url": "/member/login",
+            },
+        },
+    }
+    (auth / "credentials.yaml").write_text(
+        yaml.safe_dump({"accounts": credentials}), encoding="utf-8"
+    )
+    skill.write_text(
+        "---\nname: authn\ndescription: target authn\n"
+        "metadata:\n  version: 1\n---\n# authn\n",
+        encoding="utf-8",
+    )
+
+    criterion = assess.assess_auth(staging)["D1"]
+
+    assert criterion["scale"] == 4
+    assert criterion["metrics"]["n_accounts"] == 2
+    assert criterion["metrics"]["n_roles"] == 2
+    assert criterion["metrics"]["n_sessions"] == 2
+    assert criterion["metrics"]["n_account_probes"] == 2
+    assert criterion["metrics"]["n_contexts"] == 2
+    assert criterion["metrics"]["high_privilege_session"] is True
 
 
 def test_cli_writes_the_full_result_json(assess, tmp_path, capsys):

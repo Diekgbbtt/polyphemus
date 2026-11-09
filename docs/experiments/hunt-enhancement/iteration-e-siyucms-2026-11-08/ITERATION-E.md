@@ -54,7 +54,7 @@ The local pool should:
 | Recon jobs | `httpx, httpx_reprofile, katana, jsluice, arjun, steel_crawl` |
 | Code identity | the `eval-e` branch at the run commit, recorded in `trial.yaml` |
 | Bring-up | one operator `up`; the trial runs with `--skip-up`, so it never recreates the target |
-| Browser context | the preflight mints the admin session after the up and seeds the deterministic context ref |
+| Browser context | the preflight mints every credential-bearing account after the up and seeds one deterministic context ref per account |
 | Thinking effort | design roles `max`, pod roles `high` (C.a patch) |
 | Pod watchdog | `HUNT_POD_SESSION_TIMEOUT_S=5400` |
 | Skill evolution | `SKILL_EVOLUTION_ENABLED=0` |
@@ -88,8 +88,8 @@ The alignment:
   `accounts.admin-first_authn_bootstrap.browser_context.ref =
   steel-auth-siyucms-web-admin-first-authn-bootstrap`;
 - the admin account is asserted `valid` after the preflight's oracle; the
-  member account is `not_valid` for the browser candidate because it holds no
-  decoupled context, while its request material remains;
+  member account starts `not_valid` until the preflight mints its decoupled
+  context and writes the reference, then it is crawled as its own session;
 - the admin snapshot was cleaned to the siyucms `PHPSESSID` only.
   The `cf_clearance`, `PrestaShop-*`, and `thinkphp_show_page_trace` cookies
   were leftovers from the C.a target substitution and did not belong to this
@@ -266,11 +266,16 @@ The recon `job_orchestrator` trace confirms the source.
 The `load_skill`, `write_skill`, `auth_store`, and `tools` spans between 22:48:14 and 22:48:31 carry `auth_probe`, `admin/Index`, `overview`, and `browser_context`.
 The auth gateway read the console from the scaffolded overview and authn skill.
 The public crawl never discovered it.
-The new `crawl_seed_urls` helper loads the auth probe as the first seed and the public root second, so the authenticated backend is rendered and explored before the public site.
+The admin-probe seed was an anti-pattern and has been removed.
+The auth store now models one account per session: `role`, `root_url`, `auth_probe`, and one `browser_context.ref`.
+The external preflight mints and verifies every credential-bearing account.
+The pod runs one lifecycle per valid account, bounded by the browser-pool size, and each lifecycle starts at its session root.
+No anonymous session runs when accounts exist; the context-less `/` session exists only for a zero-account store.
+The full decision record is `docs/design/crawl-session-fanout-adr.md`.
 
 The CDP capture sidecar already attaches before the root load and the auth probe; the oracle fetch is in the manifest as an observed endpoint.
 The cheap sidecar ordering fix was therefore already present.
-The missing piece was page exploration, which the auth-probe seed supplies.
+The missing piece was the role/session model, not another seed.
 
 The partial-manifest defect was confirmed.
 `_manifest_partial` returned `manifest: None`, so the pod failed and discarded the 111 endpoints.
@@ -283,6 +288,11 @@ The default settle window is now 30 seconds.
 The regression test drives a worker that settles at six seconds with a fake clock.
 
 ### Crawl smoke validation (2026-11-09)
+
+This smoke run used the removed admin-probe seed.
+It validates the auth context, the partial-manifest ingestion, the 1800-second budget, and the 30-second settle window.
+It is not evidence for the final per-account fan-out.
+The new fan-out has unit and contract coverage; the next live run validates it.
 
 A fresh admin context restored and the oracle passed in a 300-second standalone crawl.
 The admin console was the first page visit: `page_2`, `discovery_source: auth_probe`, status 200, title `SIYUCMS | 控制台`.
@@ -311,8 +321,10 @@ The hunting run is therefore a deployment-artifact failure, not a model, quota, 
 
 ### Remaining work
 
-The crawl fixes are in place: partial-manifest ingestion with `reduced_crawl_coverage`, an 1800-second default crawl budget, the admin `auth_probe` as the first frontier seed, and a 30-second worker settle window.
-The `login_url` is not a seed because it renders the signed-out form; the probe is the authenticated entry.
+The crawl fixes are in place: partial-manifest ingestion with `reduced_crawl_coverage`, an 1800-second per-session crawl budget, one lifecycle per valid account with its own `role`, `root_url`, and `auth_probe`, and a 30-second worker settle window.
+No anonymous session runs when accounts exist.
+The zero-account store is the only anonymous fallback.
+The old admin-probe seed is removed.
 The analysis's L1 coverage will stay thin until the crawl delivers the admin surface: the current run saw 15 endpoints, while the crawl captured 111.
 The next run should use the rebuilt image, the updated analysis code, and the populated L0 graph.
 
@@ -405,7 +417,7 @@ Capped spend was 708,946 over 122 calls: `mechanism_typist` 438,413, `job_orches
 - The analysis tool bound the project scope but let the caller overwrite it. A silent empty read is worse than a rejected one.
 - The reflection-turn tool gate needs a directive message; the model will retry an inert tool when the prompt says the tool is the only channel.
 - The L1 graph is input-bound. A discarded crawl manifest removes seven eighths of the endpoint surface and no analysis prompt can recover it.
-- An authenticated entry known to the gateway is not a public link. Seed the crawl with the auth probe instead of expecting the public navigation to discover it.
+- An authenticated entry known to the gateway is not a public link. Scaffold it as a session root with its own role, root, and probe; do not special-case the probe as a second seed.
 - A local-state action costs one page restore, so the crawl budget must cover the reload cost, not only the page count.
 - A container image built before a dependency lands is a deployment defect that presents as a model hang.
 - A role-level tool quota that resets per turn is not a bound; it is a false failure surface. The execution budget and the per-call timeout are the real bounds.

@@ -41,7 +41,8 @@ If it is not up, redeploy with `scripts/targetctl build <target> && scripts/targ
 
 Read `<staging>/<target>/auth/overview.yaml` and `<staging>/<target>/auth/credentials.yaml`, then the skill.
 
-The oracle is `overview.auth_probe.url`, a deployment-neutral path.
+Read the accounts and choose the highest-privilege usable session first; the account is one session with `role`, `root_url`, and `auth_probe`.
+The oracle is that account's `auth_probe`, or its `root_url` when the probe is empty; the overview `auth_probe` is legacy.
 Resolve it against `<base_url>` and treat it as the ONLY authentication verdict: 2xx with no followed redirect passes; 401, 403, or any 3xx fails; anything else is indeterminate and is not a pass.
 A login page is never the oracle.
 

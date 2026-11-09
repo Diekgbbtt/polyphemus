@@ -439,7 +439,7 @@ sequenceDiagram
     CP->>CJ: run_live_crawl(context)
     CJ->>SC: attach (never start)
     CJ->>SIDE: attach raw CDP
-    CJ->>AUTH: oracle at overview.auth_probe.url
+    CJ->>AUTH: oracle at account.auth_probe (root fallback)
     AUTH-->>CJ: authenticated / unauthenticated / indeterminate
     CJ->>RUN: frontier + Jev + sidecar + ledger
     RUN-->>CJ: flows, parameters, forms, declared records

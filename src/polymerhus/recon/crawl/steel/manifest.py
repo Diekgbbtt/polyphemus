@@ -38,6 +38,9 @@ class RunBlock(BaseModel):
     crawl_run_id: str
     session_name: str
     account: str | None = None
+    role: str | None = None
+    root_url: str | None = None
+    auth_probe: str | None = None
     started_at: str
     finished_at: str | None = None
     stop_reason: str

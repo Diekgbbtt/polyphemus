@@ -39,7 +39,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from polymerhus.app.llm.actor import AgentInbox
 
 from polymerhus.recon.control.authn_loop import (
     GatewayVerdict,
@@ -156,8 +159,8 @@ _BRANCH_MANNER = {
         "No blocking defence recorded. Mount the web browser with "
         "`browser(command=\"start\", account=<account>)`; the pool mounts the "
         "decoupled auth context and restores its cookies and localStorage. "
-        "Validate it with the authenticated-context oracle at "
-        "`overview.auth_probe.url` using "
+        "Validate it with the selected account's authenticated-context oracle "
+        "(`account.auth_probe`, else `account.root_url`) using "
         "`browser(command=\"exec\", input=\"eval ...\")`: 2xx passes; 401, "
         "403, or any 3xx fails; anything else is indeterminate and stops the "
         "run. Call `browser(command=\"end\", persist_context=true)` when the "
@@ -190,7 +193,7 @@ _BRANCH_MANNER = {
     "request_browser_first": (
         "Replayable defence. Mount the web browser with "
         "`browser(command=\"start\", account=<account>)` and validate the "
-        "oracle at `overview.auth_probe.url` first. The request material is "
+        "account's oracle (`auth_probe`, else `root_url`) first. The request material is "
         "applied server-side by the pipeline. Do not read or compare token "
         "values. On a failed oracle, sign in or mint a new account through "
         "the authn skill's sign-up procedure with synthetic identity data, "
@@ -402,7 +405,6 @@ class ReconOrchestratorActor:
         from polymerhus.app.auth.seams import auth_capable_binding  # noqa: PLC0415
         from polymerhus.app.llm.actor import (  # noqa: PLC0415
             AgentInbox,
-            AgentMessage,
             build_inbox_delivery,
             run_session_agent,
         )

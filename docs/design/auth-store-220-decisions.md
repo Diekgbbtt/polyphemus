@@ -191,3 +191,39 @@ The `steel` field validates `state` when present and ignores `profile`.
 decoupled auth-context object; the auth store holds only the reference. The
 browser tool mounts the object with `browser(command="start", account=...)`.
 There is no fallback and no compatibility read of `steel.state`.
+
+## Amendment 2026-11-09 - the account is the session
+
+One account is one browser session.
+This supersedes the single-account-only crawl reading of D220-3 and the
+gateway-selected-account-only crawl reading of D223-19.
+The account record gains three optional session fields:
+
+- `role`: the privilege surface, such as `super_administrator` or `member`.
+  The effective role is `role`, then `default_role`, then no role.
+  An account with no role starts at `/`.
+- `root_url`: the session's featured entry, a root-relative path in committed
+  data. The preflight resolves it against the target origin and writes the
+  absolute value to the pool record.
+- `auth_probe`: the session's own oracle, a root-relative path in committed
+  data. When absent or empty, the session root is the oracle; a non-4xx,
+  non-3xx response there passes.
+  The overview `auth_probe` remains the legacy fallback for an account that
+  declares neither.
+
+`roles` remains the credential-variant map; it is not the session list.
+`browser_context.ref` remains one context per account.
+The preflight mints and verifies every credential-bearing account, writes the
+absolute role/root/probe into the pool record, and sets `status` to `valid` or
+`not_valid`.
+The crawl's session list is the valid accounts, plus one anonymous fallback
+only when the auth store has zero accounts.
+No anonymous session runs when accounts exist.
+`overview.technical_conditions` carries one authenticated-request shape per
+role; the authn skill prose covers the sign-in and sign-up procedure for each
+role.
+The validator checks the record shapes and deployment-neutral URLs, not the
+prose coverage.
+The `auth_store` summary and read view expose the account's `role`, `root_url`,
+and `auth_probe`; relative values resolve against the canonical origin on read.
+The full decision record is `docs/design/crawl-session-fanout-adr.md`.

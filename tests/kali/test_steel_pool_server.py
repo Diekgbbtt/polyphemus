@@ -49,6 +49,9 @@ class FakeManager:
             cdp_host="localhost:3000",
             remaining_ms=900_000,
             context_ref="steel-auth-p-alice",
+            role="member",
+            root_url="http://app.test/index/user/index.html",
+            auth_probe="http://app.test/index/user/index.html",
         )
         self.payload: dict = {"success": True, "data": {"title": "app"}}
         self.end_report = EndReport(
@@ -86,6 +89,9 @@ class FakeManager:
             cdp_host=self.view.cdp_host,
             remaining_ms=self.view.remaining_ms,
             context_ref=context_ref,
+            role=self.view.role,
+            root_url=self.view.root_url,
+            auth_probe=self.view.auth_probe,
         )
 
     def exec(self, mcp_session_id: str, args):
@@ -242,6 +248,9 @@ class TestBrowserService:
             "cdp_host": "localhost:3000",
             "remaining_ms": 900_000,
             "context_ref": None,
+            "role": "member",
+            "root_url": "http://app.test/index/user/index.html",
+            "auth_probe": "http://app.test/index/user/index.html",
         }
 
     def test_start_hides_the_http_worker_origin(self):
@@ -251,7 +260,8 @@ class TestBrowserService:
         result = service.start("mcp-1", "hunt")
 
         body = json.dumps(result)
-        assert "http://" not in body
+        assert "http://172.20.0.5" not in body
+        assert "http://localhost:3000" not in body
         assert "container" not in body
         assert "worker" not in body.lower()
         assert result["cdp_url"] == "ws://172.20.0.5:3000/"

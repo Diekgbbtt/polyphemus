@@ -31,7 +31,9 @@ from __future__ import annotations
 
 import logging
 import shlex
+from collections.abc import Mapping
 from typing import Iterator
+from urllib.parse import urlsplit
 
 from polymerhus.app.auth.probe import resolve_auth_probe
 
@@ -97,6 +99,28 @@ def resolve_account(project_id: str, account_name: str, *, store=None) -> dict:
         return {}
     logger.warning("auth feed: account %r not on record for project %s",
                    account_name, project_id)
+    return {}
+
+
+def resolve_accounts(project_id: str, *, store=None) -> dict:
+    """Read the full account map for the crawl's session fan-out.
+
+    A missing or unreadable store is a loud empty map; the caller's empty-map
+    path is the anonymous fallback, never a crash."""
+    try:
+        if store is None:
+            from polymerhus.app.auth.store import AuthStore  # noqa: PLC0415
+
+            store = AuthStore()
+        accounts = store.read(project_id, "accounts")
+        if isinstance(accounts, dict):
+            return accounts
+    except Exception:  # noqa: BLE001 - fail-open, loudly
+        logger.warning(
+            "auth feed: accounts unresolvable for project %s",
+            project_id,
+            exc_info=True,
+        )
     return {}
 
 
@@ -197,6 +221,21 @@ def project_request_auth(account: dict | None,
     return material
 
 
+def _account_probe(account: dict, origin: str | None) -> str | None:
+    """The account's own probe, then its root URL, resolved against origin."""
+    for key in ("auth_probe", "root_url"):
+        value = account.get(key)
+        if not isinstance(value, str) or not value:
+            continue
+        parsed = urlsplit(value)
+        if parsed.scheme or parsed.netloc:
+            return value
+        if not origin:
+            return value
+        return f"{origin.rstrip('/')}/{value.lstrip('/')}"
+    return None
+
+
 def project_browser_auth(account: dict | None,
                          overview: dict | None = None,
                          origin: str | None = None) -> dict:
@@ -204,16 +243,17 @@ def project_browser_auth(account: dict | None,
 
     The pool store is the only browser-state store, so this projection carries
     NO cookie, header, or storage values: the browser MCP restores them from
-    the account's decoupled auth context. The only crawl inputs are the resolved
-    authenticated-context oracle (`auth_probe`) and the optional `login_url`
-    used by the legacy surface gate.
+    the account's decoupled auth context. The only crawl inputs are the
+    account's oracle (`auth_probe`, falling back to its `root_url`) and the
+    optional `login_url` used by the legacy surface gate. The overview probe
+    is the legacy fallback for an account that declares neither.
 
-    An absent/empty overview projects no probe; an account without a login URL
+    An absent/empty projection carries no probe; an account without a login URL
     projects no login URL. The result is empty when neither exists."""
     if not isinstance(account, dict):
         return {}
     material: dict = {}
-    probe = resolve_auth_probe(overview, origin)
+    probe = _account_probe(account, origin) or resolve_auth_probe(overview, origin)
     if probe:
         material["auth_probe"] = probe
     credentials = account.get("credentials")
@@ -252,6 +292,89 @@ def project_browser_context(
     if isinstance(ref, str) and ref.startswith("steel-auth-"):
         return ref
     return None
+
+
+def project_sessions(
+    project_id: str,
+    accounts: Mapping[str, dict] | None,
+    *,
+    origin: str | None = None,
+) -> list[dict]:
+    """One JSON-ready crawl session per account.
+
+    The account is the session: its `role` (or `default_role`) names the
+    privilege surface, `root_url` is that surface's featured entry (default
+    `/`), and `auth_probe` is that session's own oracle. A missing or empty
+    probe is deliberately `None`: the crawl falls back to the root URL.
+
+    `origin` resolves the committed root-relative paths against the target's
+    canonical origin. The pool record carries the resulting absolute values.
+    A malformed account is skipped; an empty account map is the anonymous
+    fallback, which the crawl pod owns.
+    """
+    if not isinstance(accounts, Mapping):
+        return []
+    sessions: list[dict] = []
+    for account_name, account in accounts.items():
+        if not isinstance(account_name, str) or not isinstance(account, dict):
+            continue
+        if account.get("status") == "not_valid":
+            continue
+        role = account.get("role")
+        if not isinstance(role, str) or not role:
+            role = account.get("default_role")
+        if not isinstance(role, str) or not role:
+            role = None
+        root = account.get("root_url")
+        if not isinstance(root, str) or not root:
+            root = "/"
+        root_url = _resolve_session_url(root, origin)
+        probe = account.get("auth_probe")
+        auth_probe = (
+            _resolve_session_url(probe, origin)
+            if isinstance(probe, str) and probe
+            else None
+        )
+        credentials = account.get("credentials")
+        login_url = (
+            credentials.get("login_url")
+            if isinstance(credentials, dict)
+            and isinstance(credentials.get("login_url"), str)
+            and credentials.get("login_url")
+            else None
+        )
+        procedure = account.get("procedure")
+        sessions.append(
+            {
+                "account": account_name,
+                "role": role,
+                "root_url": root_url,
+                "auth_probe": auth_probe,
+                "login_url": login_url,
+                "browser_context_ref": project_browser_context(
+                    account,
+                    project_id=project_id,
+                    account_name=account_name,
+                ),
+                "procedure": (
+                    procedure
+                    if isinstance(procedure, str) and procedure
+                    else None
+                ),
+                "anonymous": False,
+            }
+        )
+    return sessions
+
+
+def _resolve_session_url(value: str, origin: str | None) -> str:
+    """Resolve a session URL against the target origin; keep absolute URLs."""
+    parsed = urlsplit(value)
+    if parsed.scheme or parsed.netloc:
+        return value
+    if not origin:
+        return value
+    return f"{origin.rstrip('/')}/{value.lstrip('/')}"
 
 
 # Tools whose auth-cookie flag is `--headers "Cookie: ..."` rather than the

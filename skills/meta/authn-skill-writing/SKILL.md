@@ -21,7 +21,7 @@ You need no polymerhus internals beyond the seed-face contract and that parametr
 
 ## The two planes and the one join
 
-The store holds the WHAT: durable verified state (credentials, tokens, steel session-state reference, snapshot, roles, the anti-bot and replayability facts, overview).
+The store holds the WHAT: durable verified state (credentials, tokens, the decoupled `browser_context` reference, snapshot, the per-account `role`, `root_url`, and `auth_probe`, roles, the anti-bot and replayability facts, overview).
 The authn skill holds the HOW: the replayable procedure a follower executes.
 The only formal edge between them is the `procedure` label on an account record, naming the skill procedure that minted or serves that account.
 Every procedure cites the account and token NAMES it uses, never their values.
@@ -42,20 +42,34 @@ An unknown project returns 404.
 The in-process agent store tool is the in-system agent path, not yours: do not use it and do not document it.
 Name every account `<username>-<minting_context>`: the credential username with its email location suffix stripped (`diegogobbetti69@gmail.com` -> `diegogobbetti69`), a hyphen, then the run or flow that minted it (`first_authn_bootstrap`, `hunting_misauthr`, ...), which you assess at write time.
 The minting context is the run or flow, never the procedure, so sign-up and sign-in in one bootstrap share ONE account name; a second name for the same credential identity is a fork, not a second account.
-Per account record: `credentials` (username, password, login_url, plus optional domain and form selectors), `tokens` (each `{value, location: cookie|header|storage, target?, expiry?}`), `steel` (`{state}` key only, never browser state), `snapshot` (`{cookies, params, captured_at}`; the required header fact single-sources on the overview's `required_headers`, never duplicated here), `roles` with `default_role` where multiple roles exist, `notes`.
-Overview fields, all optional: `login_endpoint`, `required_headers`, `mechanism`, `defences`, `fingerprinting`, `technical_conditions` (a list of `{name, check}`), `anti-bot`, `http-client-replayability`, `auth_probe` (`{url}` - the authenticated-context oracle), `notes`.
+Per account record: one account is one session. `role` (the privilege surface), `root_url` (the featured root, default `/`), `auth_probe` (that session's oracle, default `root_url`), `credentials` (username, password, login_url, plus optional domain and form selectors), `tokens` (each `{value, location: cookie|header|storage, target?, expiry?}`), `browser_context` (`{ref}` key only, never browser state), `snapshot` (`{cookies, params, captured_at}`; the required header fact single-sources on the overview's `required_headers`, never duplicated here), `roles` with `default_role` where multiple roles exist, `notes`.
+Overview fields, all optional: `login_endpoint`, `required_headers`, `mechanism`, `defences`, `fingerprinting`, `technical_conditions` (a list of `{name, check, role?}`), `anti-bot`, `http-client-replayability`, `auth_probe` (`{url}` - the legacy fallback oracle), `notes`.
 `anti-bot` is the defence type (a vendor, product, or challenge name such as `akamai_v3`, `cf_clearance`, `datadome`, `incapsula`, or `waf:<name>`) or null when none; `http-client-replayability` is `true` or `false`, and leaving it unset means UNKNOWN, never false.
-`auth_probe.url` is a deployment-neutral path such as `/api/authentication`, never a host.
-It is the ONE deterministic authentication oracle: the target answers 2xx only with an authenticated context, and 401, 403, or a 3xx without one.
+`account.auth_probe` is a deployment-neutral path such as `/api/authentication`, never a host.
+It is the session's deterministic oracle: the target answers 2xx only with that session's authenticated context, and 401, 403, or a 3xx without one.
+When the account probe is absent or empty, a non-4xx, non-3xx response at `account.root_url` is the success rule.
 The app resolves the path against the project's canonical origin at read.
+The overview `auth_probe` is only the legacy fallback for an account that declares neither.
+`technical_conditions` carries one authenticated-request shape per role; the optional `role` names the surface.
 Procedural prose never lands in the store.
 Secret values never land in the skill.
 The skill bundle is a separate write path from the seed face: write facts to the store, steps to the bundle, and never cross the two.
 
+## Role coverage and privilege priority
+
+Enumerate every distinct role the target exposes: super-administrator or admin, operator or editor, member or user, support, and the least-privileged baseline.
+Mint and verify one account/session per role, in descending privilege order, highest privilege first.
+Stop only when the credential material or the application's sign-up path is exhausted; do not stop after one privileged account when the target exposes more roles.
+Record `role`, `root_url`, `auth_probe`, and `browser_context.ref` on each account.
+An account with no explicit role starts at `/`; it is the baseline session.
+The overview carries one `technical_conditions` entry per role; the skill prose carries the sign-in and sign-up procedure for each role.
+Prefer the highest-privilege role because its surface is the superset for authorization testing; the baseline role supplies the anonymous or least-privileged comparison.
+
 ## P0 - Read state
 
 Read the store full state and any existing authn skill bundle before acting.
-Treat `overview` as operator ground truth: `mechanism`, `defences`, `fingerprinting`, `required_headers`, `login_endpoint`, `technical_conditions`, `anti-bot`, `http-client-replayability`, `auth_probe`.
+Treat `overview` as operator ground truth: `mechanism`, `defences`, `fingerprinting`, `required_headers`, `login_endpoint`, `technical_conditions`, `anti-bot`, `http-client-replayability`.
+Read each account's `role`, `root_url`, and `auth_probe`; an account with no role starts at `/`.
 Gate: you can name the operator-stated mechanism and defences, say whether the two facts are already recorded, and name the existing oracle or know it is absent.
 
 ## P1 - Anti-bot posture and HTTP-client replayability
@@ -111,7 +125,7 @@ A state restore that cannot complete answers `restore_failed`; stop and report i
 A pool with no free worker answers `pool_exhausted`; retry after a lease ends.
 A missing browser capability answers `browser_unavailable`; continue on the request path when the target permits it.
 Log in when the mounted session does not pass the oracle.
-Verify with the oracle: a browser request to `overview.auth_probe.url` answers 2xx only for an authenticated context; 401, 403, or 3xx is not authenticated; anything else is indeterminate and is not a pass.
+Verify with the account's oracle: a browser request to `account.auth_probe` (or `account.root_url` when the probe is empty) answers 2xx only for an authenticated context; 401, 403, or 3xx is not authenticated; anything else is indeterminate and is not a pass.
 An unverified session never passes a verdict.
 Call `browser(command="end", persist_context=true)` on every authenticated path after the first mount.
 It captures cookies, localStorage, sessionStorage, and indexedDB, saves them under the account's context reference, stops the browser, and releases the session.
@@ -182,10 +196,11 @@ An unverified flow never yields a verdict and never advances to P4.
 ## P4 - Record the facts (WHAT)
 
 Write the verified facts into the store through the seed face from the contract section above.
-Record per account only what P3 verified: `credentials`, `tokens`, the `browser_context` reference after a successful `browser(command="end", persist_context=true)`, `snapshot`, `roles` and `default_role`, `notes`.
-Record overview only what P0 through P2 established: `login_endpoint`, `required_headers`, `mechanism`, `defences`, `fingerprinting`, `technical_conditions`, `anti-bot`, `http-client-replayability`, `auth_probe`, `notes`.
+Record per account only what P3 verified: `role`, `root_url`, `auth_probe`, `credentials`, `tokens`, the `browser_context` reference after a successful `browser(command="end", persist_context=true)`, `snapshot`, `roles` and `default_role`, `notes`.
+Record overview only what P0 through P2 established: `login_endpoint`, `required_headers`, `mechanism`, `defences`, `fingerprinting`, `technical_conditions`, `anti-bot`, `http-client-replayability`, `notes`.
 Set `anti-bot` to the named defence or null; set `http-client-replayability` to `true` or `false` only once the replay was actually run, otherwise leave it unset so it reads UNKNOWN.
-Set `auth_probe` to the verified oracle path: `{url: /api/...}`.
+Set each account's `auth_probe` to that session's verified oracle path; set its `root_url` to the featured root.
+Use an overview `auth_probe` only as the legacy fallback for an account that declares neither.
 Never store a host; the app resolves the path against the project's canonical origin at read.
 Gate: no procedure prose landed in the store and no secret value landed in the skill.
 
@@ -196,7 +211,7 @@ Every sign-up procedure carries this line verbatim, so every target mints new ac
 Cite for EVERY step the tool it uses AND why it uses it (request-based because no blocking defence was observed, steel because a named WAF, anti-bot, or fingerprinting signal forced it).
 When `http-client-replayability` is `true`, the procedure cites the recorded HTTP history replay (`search_http_history`, `replay_http_request`) or the pipeline's server-side request material, plus the static/dynamic element names and locations. It never instructs a model-facing follower to read or paste a value; the `auth_store` view is redacted.
 When it is `false`, the procedure carries the browser steps instead, and says plainly that a plain-client replay cannot reach the authenticated state. Those steps mount the account's auth context and never start a twin.
-Every procedure, request or browser, carries the same verification step: run the oracle at `overview.auth_probe.url` and pass only on 2xx with no followed redirect. A 401, 403, or 3xx is a failure; anything else is indeterminate and stops the run.
+Every procedure, request or browser, carries the same verification step: run the session's oracle at `account.auth_probe` (or `account.root_url` when the probe is empty) and pass only on 2xx with no followed redirect. A 401, 403, or 3xx is a failure; anything else is indeterminate and stops the run.
 The browser procedure's failure branch names the typed outcomes: `session_in_use` means the execution unit already holds the session and it must be reused, never twinned; `no_session` means no live lease exists and `start` must run first; `restore_failed` means the stored context could not be mounted; `pool_exhausted` means retry after a lease ends; `browser_unavailable` means the pool is unreachable. A follower asserts `not_valid` and stops when the context is gone. When the target supports sign-up, the follower may mint a new account with synthetic identity data, write its credentials, and prove the oracle; it never fails open.
 Name for every browser step the account, the `browser(command="exec", input="...")` string, and the evidence it produces.
 Resolve script citations to the steel-browser skill's published references beside that skill (`references/extract-reads.sh`, `references/eval-inline.sh`, `references/eval-interact.sh`, `references/auth-oracle.sh`) or the authn skill's own `references/` scripts.
@@ -214,7 +229,7 @@ Gate: the skill file exists at that path with valid frontmatter (name equal to t
 Set each served account's `procedure` label to the skill procedure that minted or serves it.
 Make each procedure cite the account and token names it uses.
 Re-verify replayability: the programmatic follower can reproduce each flow from the raw store, and a model-facing follower can reproduce it through the recorded HTTP history replay or the operator-owned browser session. The two recorded facts match what the procedure does.
-Re-verify the oracle: the procedure names `overview.auth_probe.url` and passes only on 2xx with no followed redirect. Re-run it after any expiry.
+Re-verify the oracle: the procedure names the account's `auth_probe` (or its `root_url`) and passes only on 2xx with no followed redirect. Re-run it after any expiry.
 Re-verify secrecy: the skill holds names and steps, never values.
 Re-verify the failure branch: the skill's unexpected-failure path cites the `overview.technical_conditions` checks as its diagnostic ladder, and stops rather than failing open.
 Gate: the two planes are mutually consistent and non-overlapping, with no orphan account and no orphan procedure.
@@ -228,15 +243,17 @@ Gate: the two planes are mutually consistent and non-overlapping, with no orphan
 | `credentials` | Sign-in or sign-up step | Secrets stay in store, skill cites account |
 | `tokens.<t>` value plus location | Token carrying or reading step | Location dictates where token travels; a model-facing follower is redacted and the value is applied server-side |
 | `browser_context: {ref}` | Browser session step | Store holds the decoupled context reference after a successful `browser(command="end", persist_context=true)` |
+| `role`, `root_url`, `auth_probe` | Role/root and verification step | Each account is one session; the session starts at its root and proves its own oracle |
 | `snapshot` | Request replay step | Replay the account snapshot exactly |
 | `overview.anti-bot` | Defence-naming step (P1) | Store holds the vendor name, skill names it for the mode decision |
 | `overview.http-client-replayability` | Replay verdict and continuation facts (P1/P5) | true means the skill carries replay steps; false means browser steps; unset means unknown |
 | `overview.mechanism`, `defences`, `fingerprinting` | P1 mode decision | Skill consumes ground truth, never restates |
 | `overview.required_headers`, `login_endpoint` | Request step shape | Send exactly these |
-| `overview.auth_probe.url` | Verification step | The only pass/fail oracle: 2xx passes, 401/403/3xx fails, else indeterminate |
+| `account.auth_probe` (legacy `overview.auth_probe.url`) | Verification step | The session's oracle: 2xx passes, 401/403/3xx fails, else indeterminate; the root is the fallback |
 | `overview.technical_conditions` | Unexpected-failure branch | Diagnostic ladder lives in store |
 | `origin` trust split | Seed-face writes | Reader acts as operator, never as in-system agent |
-| `roles`, `default_role` | Role procedures | Each role set maps to a procedure |
+| `roles`, `default_role` | Role procedures | Each role set maps to a procedure; the session `role` is the privilege surface |
+| `role` set and root | One session per role | Mint highest privilege first; the baseline starts at `/` |
 | Steel-browser and authn-skill `references/` | Script names in procedures | Store holds neither |
 
 ## Stale state

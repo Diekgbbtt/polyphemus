@@ -5,6 +5,8 @@ Fully mocked - no live Steel/LLM/Neo4j. `run_crawl_fn`, `triage_fn`, and
 (pure, deterministic) so the assertion actually exercises the manifest ->
 AssetDelta decomposition end to end.
 """
+import json
+
 from polymerhus.recon.crawl import crawl_pod
 from polymerhus.recon.domain.parsers.steel_parser import parse as steel_parse
 from polymerhus.recon.domain.types import JobSpec
@@ -158,7 +160,124 @@ def test_crawl_pod_partial_v2_manifest_keeps_its_surface():
         if observation.macro_kind == "reduced_crawl_coverage"
     ]
     assert len(coverage) == 1
-    assert coverage[0].evidence == "session_deadline"
+    assert coverage[0].evidence.endswith("session_deadline")
+
+
+def _dedupe_curate_fn():
+    calls = []
+
+    def curate_fn(assets, observations, project_id, scope_domain=None):
+        unique_assets = []
+        seen_assets = set()
+        for asset in assets:
+            key = json.dumps(
+                {"type": asset.type, "identity": asset.identity},
+                sort_keys=True,
+                default=str,
+            )
+            if key not in seen_assets:
+                seen_assets.add(key)
+                unique_assets.append(asset)
+        unique_observations = []
+        seen_observations = set()
+        for observation in observations:
+            key = (
+                observation.macro_kind,
+                observation.evidence,
+                json.dumps(observation.anchor, sort_keys=True, default=str),
+            )
+            if key not in seen_observations:
+                seen_observations.add(key)
+                unique_observations.append(observation)
+        calls.append(
+            {
+                "assets": unique_assets,
+                "observations": unique_observations,
+            }
+        )
+        return (
+            len(unique_assets),
+            len(unique_observations),
+            unique_assets,
+            unique_observations,
+        )
+
+    curate_fn.calls = calls
+    return curate_fn
+
+
+def _session_manifest(urls, *, account, role, partial=False):
+    return {
+        "schema_version": "steel-crawl/v2",
+        "run": {
+            "account": account,
+            "role": role,
+            "stop_reason": "session_deadline" if partial else "frontier_empty",
+            "partial": partial,
+        },
+        "endpoints": [
+            {"method": "GET", "url": url, "path": url.split("://", 1)[1].split("/", 1)[1]}
+            for url in urls
+        ],
+        "stats": {"flows": 1},
+    }
+
+
+def test_crawl_pod_ingests_every_session_and_records_failures():
+    batch = {
+        "manifests": [
+            _session_manifest(
+                ["https://app.example.com/one"],
+                account="admin",
+                role="admin",
+            ),
+            _session_manifest(
+                [
+                    "https://app.example.com/one",
+                    "https://app.example.com/two",
+                ],
+                account="member",
+                role="member",
+            ),
+        ],
+        "sessions": [
+            {"account": "admin", "role": "admin", "error": None},
+            {"account": "member", "role": "member", "error": None},
+            {
+                "account": "broken",
+                "role": "auditor",
+                "error": "auth_precondition_failed",
+            },
+        ],
+    }
+
+    def run_crawl_fn(target, *, scope, browser_context_ref=None, browser_auth=None):
+        return batch
+
+    curate_fn = _dedupe_curate_fn()
+    pod = crawl_pod.build_crawl_pod(
+        run_crawl_fn=run_crawl_fn,
+        parse_fn=steel_parse,
+        triage_fn=lambda exec_result, assets, job: [],
+        curate_fn=curate_fn,
+    )
+
+    result = pod.invoke(base_pod_state())
+    export = result["export"]
+
+    assert export.verdict == "success"
+    assets = curate_fn.calls[0]["assets"]
+    endpoints = [asset for asset in assets if asset.type == "Endpoint"]
+    paths = [asset.identity["path"] for asset in endpoints]
+    assert paths.count("/one") == 1
+    assert paths.count("/two") == 1
+    coverage = [
+        observation
+        for observation in curate_fn.calls[0]["observations"]
+        if observation.macro_kind == "reduced_crawl_coverage"
+    ]
+    assert len(coverage) == 1
+    assert "auditor: auth_precondition_failed" in coverage[0].evidence
 
 
 def test_crawl_pod_complete_v2_manifest_is_not_reduced():

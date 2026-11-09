@@ -73,6 +73,9 @@ class BrowserStart:
     warnings: tuple[str, ...] = ()
     remaining_ms: int | None = None
     context_ref: str | None = None
+    role: str | None = None
+    root_url: str | None = None
+    auth_probe: str | None = None
     cdp_url: str = ""
     cdp_host: str = ""
 
@@ -88,6 +91,10 @@ def _error_shape(error: object) -> tuple[str, str, bool, str | None]:
     if isinstance(error, str):
         return error or "browser_error", "", False, None
     return "browser_error", "", False, None
+
+
+def _optional_text(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None
 
 
 def _result_data(result: object) -> Mapping[str, Any]:
@@ -174,6 +181,9 @@ class McpBrowserClient:
             warnings=tuple(str(item) for item in data.get("warnings") or ()),
             remaining_ms=remaining if isinstance(remaining, int) else None,
             context_ref=mounted,
+            role=_optional_text(data.get("role")),
+            root_url=_optional_text(data.get("root_url")),
+            auth_probe=_optional_text(data.get("auth_probe")),
             cdp_url=cdp_url if isinstance(cdp_url, str) else "",
             cdp_host=cdp_host if isinstance(cdp_host, str) else "",
         )

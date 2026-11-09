@@ -19,7 +19,9 @@ from polymerhus.recon.control.auth_feed import (
     project_browser_auth,
     project_request_auth,
     project_browser_context,
+    project_sessions,
     resolve_account,
+    resolve_accounts,
     resolve_overview,
     select_account_role,
     serialize_auth_flags,
@@ -75,6 +77,17 @@ def test_resolve_account_returns_the_named_record(tmp_path):
     store = _seeded_store(tmp_path)
     account = resolve_account("p1", "alice", store=store)
     assert account["browser_context"] == {"ref": "steel-auth-p1-alice"}
+
+
+def test_resolve_accounts_returns_the_full_map(tmp_path):
+    store = _seeded_store(tmp_path)
+
+    accounts = resolve_accounts("p1", store=store)
+
+    assert set(accounts) == {"alice"}
+    assert accounts["alice"]["browser_context"] == {
+        "ref": "steel-auth-p1-alice"
+    }
 
 
 def test_resolve_account_unknown_name_fails_open_to_empty(tmp_path):
@@ -195,6 +208,115 @@ def test_project_request_auth_first_colon_splits_name_from_value():
 def test_project_request_auth_empty_account_projects_empty():
     assert project_request_auth({}, {}) == {}
     assert project_request_auth(None, None) == {}
+
+
+def _session_accounts(tmp_path):
+    store = AuthStore(tmp_path)
+    store.replace_operator_state(
+        "p1",
+        accounts={
+            "admin": {
+                "role": "super_administrator",
+                "root_url": "/index.php/admin/Index/index.html",
+                "auth_probe": "/index.php/admin/Index/index.html",
+                "credentials": {
+                    "username": "admin",
+                    "password": "pw",
+                    "login_url": "/index.php/admin/Login/index.html",
+                },
+            },
+            "member": {
+                "role": "member",
+                "root_url": "/index.php/index/user/index.html",
+                "credentials": {
+                    "username": "m",
+                    "password": "pw",
+                    "login_url": "/index.php/index/user/login.html",
+                },
+            },
+            "baseline": {
+                "credentials": {
+                    "username": "b",
+                    "password": "pw",
+                    "login_url": "/index.php/index/user/login.html",
+                },
+            },
+        },
+    )
+    return store
+
+
+def test_project_sessions_one_entry_per_account_with_defaults(tmp_path):
+    store = _session_accounts(tmp_path)
+    accounts = store.read("p1", "accounts")
+
+    sessions = project_sessions("p1", accounts, origin="http://target.test")
+
+    assert [session["account"] for session in sessions] == [
+        "admin", "member", "baseline"
+    ]
+    admin, member, baseline = sessions
+
+    assert admin["role"] == "super_administrator"
+    assert admin["root_url"] == (
+        "http://target.test/index.php/admin/Index/index.html"
+    )
+    assert admin["auth_probe"] == (
+        "http://target.test/index.php/admin/Index/index.html"
+    )
+    assert admin["login_url"] == "/index.php/admin/Login/index.html"
+    assert admin["browser_context_ref"] == "steel-auth-p1-admin"
+    assert admin["anonymous"] is False
+
+    assert member["role"] == "member"
+    assert member["root_url"] == (
+        "http://target.test/index.php/index/user/index.html"
+    )
+    assert member["auth_probe"] is None
+
+    assert baseline["role"] is None
+    assert baseline["root_url"] == "http://target.test/"
+    assert baseline["auth_probe"] is None
+
+
+def test_project_sessions_keeps_absolute_and_defaults_default_role():
+    accounts = {
+        "legacy": {
+            "default_role": "admin",
+            "root_url": "https://member.example/app",
+            "auth_probe": "https://member.example/me",
+        },
+        "broken": None,
+    }
+
+    sessions = project_sessions("p1", accounts, origin="http://target.test")
+
+    assert len(sessions) == 1
+    session = sessions[0]
+    assert session["account"] == "legacy"
+    assert session["role"] == "admin"
+    assert session["root_url"] == "https://member.example/app"
+    assert session["auth_probe"] == "https://member.example/me"
+
+
+def test_project_sessions_skips_stale_accounts():
+    accounts = {
+        "valid": {"status": "valid", "root_url": "/valid"},
+        "stale": {"status": "not_valid", "root_url": "/stale"},
+        "unknown": {"root_url": "/unknown"},
+    }
+
+    sessions = project_sessions("p1", accounts, origin="http://target.test")
+
+    assert [session["account"] for session in sessions] == [
+        "valid",
+        "unknown",
+    ]
+
+
+def test_project_sessions_empty_accounts_is_the_anonymous_fallback():
+    assert project_sessions("p1", {}, origin="http://target.test") == []
+    assert project_sessions("p1", None, origin="http://target.test") == []
 
 
 def test_project_browser_auth_carries_only_probe_and_login_url(tmp_path):

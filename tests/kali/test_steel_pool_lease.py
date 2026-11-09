@@ -838,6 +838,31 @@ def test_start_mounts_the_decoupled_context_over_the_session_cache(tmp_path):
     assert harness.lease().context_ref == "steel-auth-proj-alice"
 
 
+def test_start_view_carries_the_stored_session_model(tmp_path):
+    harness = Harness(tmp_path)
+    harness.store.save(
+        BrowserSessionRecord(
+            name="steel-auth-proj-alice",
+            account="alice",
+            role="super_administrator",
+            root_url="http://app.test/index.php/admin/Index/index.html",
+            auth_probe="http://app.test/index.php/admin/Index/index.html",
+        )
+    )
+
+    view = harness.manager.start(
+        "mcp-1", "hunt", context_ref="steel-auth-proj-alice"
+    )
+
+    assert view.role == "super_administrator"
+    assert view.root_url == (
+        "http://app.test/index.php/admin/Index/index.html"
+    )
+    assert view.auth_probe == (
+        "http://app.test/index.php/admin/Index/index.html"
+    )
+
+
 def test_end_does_not_persist_the_context_by_default(tmp_path):
     harness = Harness(tmp_path)
     harness.store.save(

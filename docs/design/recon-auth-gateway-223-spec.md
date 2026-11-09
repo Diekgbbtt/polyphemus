@@ -105,7 +105,9 @@ The state machine implements exactly this transition table:
 
 ### The authenticated-context oracle (2026-10-29)
 
-The gateway verifies the loaded browser session against ONE recorded URL, `overview.auth_probe.url`.
+The gateway verifies the selected account against its own recorded oracle.
+The account's `auth_probe` is the primary URL; when it is absent or empty, the account's `root_url` is the fallback, and a non-4xx, non-3xx response there passes.
+The overview `auth_probe` remains the legacy fallback for an account that declares neither.
 The external bootstrapper proves both polarities before recording it: authenticated -> 2xx with no followed redirect; anonymous -> 401, 403, or 3xx.
 A URL that answers 2xx anonymously is not an oracle; a login page is never the oracle.
 The value is a deployment-neutral path such as `/api/authentication`; the model-facing read and the crawl feed resolve it against the project's canonical origin (#384).
@@ -120,6 +122,19 @@ A 3xx is a failure even when the browser follows it to a 200 login or SPA page.
 The canonical probe is `skills/internal/tools/steel-browser/references/auth-oracle.sh`.
 The crawl provider asks the same oracle before its first authenticated navigation; without one it keeps the legacy surface gate and records the missing oracle loudly.
 The store and the tool resolve the probe path but never rewrite an absolute agent-minted value.
+
+### The account oracle and the session fan-out (2026-11-09)
+
+One account is one browser session.
+The gateway still selects one account for the request-based jobs.
+The pipeline also hands every valid account to `steel_crawl`.
+The crawl runs one lifecycle per account, bounded by the browser-pool size, and each lifecycle uses that account's `role`, `root_url`, and `auth_probe`.
+The per-session oracle is independent of the starting root.
+The anonymous outcome remains the zero-account shape: the crawl then uses one context-less session at `/`.
+When accounts exist, the crawl never adds an anonymous session; an all-stale store is a recorded failure, not a public-only success.
+The external preflight mints and verifies every credential-bearing account before the trial.
+The gateway prompt and transition hints name the selected account's probe or root, not the overview-only probe.
+The full decision record is `docs/design/crawl-session-fanout-adr.md`.
 
 ### Account state and the store
 

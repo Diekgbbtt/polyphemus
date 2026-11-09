@@ -176,8 +176,8 @@ def test_heartbeat_ticks_during_a_slow_gateway(tmp_path, monkeypatch):
         async def stop(self): pass
 
     _, calls, _, fake_run_job, fake_read_assets = _harness(tmp_path, model_steps=[[]])
-    registry = _run(calls, _SlowFactory, fake_run_job, fake_read_assets,
-                    subset=["subfinder"])
+    _run(calls, _SlowFactory, fake_run_job, fake_read_assets,
+         subset=["subfinder"])
 
     assert len(ticks) >= 2, "heartbeat never ticked during the slow gateway"
 
@@ -245,6 +245,102 @@ def test_account_identifier_bound_for_use_auth_jobs_only(tmp_path):
     assert "auth_account" not in subfinder_extra
     blob = repr(calls)
     assert "password" not in blob and "VAULT-SECRET" not in blob  # never rides
+
+
+def test_crawl_gets_one_session_per_scaffolded_account(tmp_path):
+    """The request jobs keep the selected account; the crawl gets every
+    account's privilege surface and its own root/probe."""
+    accounts = {
+        "alice": {
+            "role": "admin",
+            "root_url": "/admin",
+            "auth_probe": "/admin",
+            "credentials": {
+                "username": "u",
+                "password": "p",
+                "login_url": "/login",
+            },
+        },
+        "bob": {
+            "role": "member",
+            "root_url": "/member",
+            "credentials": {
+                "username": "m",
+                "password": "p",
+                "login_url": "/member/login",
+            },
+        },
+    }
+    store, calls, factory, fake_run_job, fake_read_assets = _harness(
+        tmp_path,
+        model_steps=[[_verdict_call()]],
+        accounts=accounts,
+    )
+
+    _run(
+        calls,
+        factory,
+        fake_run_job,
+        fake_read_assets,
+        settings={"target_domain": "t.com"},
+        subset=["httpx", "steel_crawl"],
+        auth_store=store,
+    )
+
+    sessions = calls["steel_crawl"]["extra"]["auth_sessions"]
+    assert [session["account"] for session in sessions] == ["alice", "bob"]
+    assert sessions[0]["role"] == "admin"
+    assert sessions[0]["root_url"] == "http://t.com/admin"
+    assert sessions[0]["auth_probe"] == "http://t.com/admin"
+    assert sessions[1]["role"] == "member"
+    assert sessions[1]["root_url"] == "http://t.com/member"
+    assert sessions[1]["auth_probe"] is None
+    assert "auth_sessions" not in calls["httpx"]["extra"]
+
+
+def test_anonymous_verdict_does_not_hide_existing_accounts_from_the_crawl(
+    tmp_path,
+):
+    accounts = {
+        "alice": {
+            "role": "admin",
+            "root_url": "/admin",
+            "auth_probe": "/admin",
+            "credentials": {
+                "username": "u",
+                "password": "p",
+                "login_url": "/login",
+            },
+        },
+    }
+    store, calls, factory, fake_run_job, fake_read_assets = _harness(
+        tmp_path,
+        model_steps=[[
+            _verdict_call(
+                outcome="anonymous",
+                account=None,
+                rationale="no declared auth surface",
+            )
+        ]],
+        accounts=accounts,
+    )
+
+    _run(
+        calls,
+        factory,
+        fake_run_job,
+        fake_read_assets,
+        settings={"target_domain": "t.com"},
+        subset=["steel_crawl"],
+        auth_store=store,
+    )
+
+    crawl_extra = calls["steel_crawl"]["extra"]
+    assert [session["account"] for session in crawl_extra["auth_sessions"]] == [
+        "alice"
+    ]
+    assert crawl_extra["auth_accounts_present"] is True
+    assert "auth_account" not in crawl_extra
 
 
 def test_anonymous_verdict_runs_all_phases_without_account(tmp_path):

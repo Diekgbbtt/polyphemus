@@ -51,11 +51,14 @@ The in-process `auth_store` read is REDACTED: it returns names, statuses, shapes
 A `<redacted>` value is the contract working, not a failed read.
 Never read, copy, or paste a secret value into a command, a write, or the rationale.
 
-The authoritative fact is the overview's authenticated-context oracle: `overview.auth_probe.url`.
+The authoritative fact is the selected account's authenticated-context oracle: `account.auth_probe`.
+When the account probe is absent or empty, use the account's `root_url`; a non-4xx, non-3xx response there passes.
+The overview `auth_probe` is the legacy fallback for an account that declares neither.
 The external bootstrapper proved that this URL answers 2xx only with an authenticated context.
 The store holds a deployment-neutral path such as `/api/authentication`; the read resolves it against the project's live canonical origin, so use the absolute URL you read.
 A browser request to that URL is the oracle.
 It is the ONLY pass/fail signal.
+Each account is one session: it carries its own `role`, `root_url`, and `auth_probe`.
 
 Mount the web browser before the oracle: `browser(command="start", account=<account>)`.
 The pool mounts the account's decoupled auth context and restores its cookies and localStorage; an account with no stored context starts fresh.
@@ -81,8 +84,9 @@ A 2xx is the only pass.
 A 3xx is a failure even when the browser follows it to a 200 login page.
 A 2xx from a login page is not a pass: the URL must be the recorded oracle, not a landing-page substitute.
 
-If `auth_probe` is absent, do not guess a landing page and do not read secrets.
-Establish the oracle from the `authn` skill's named probe and persist it with an `auth_store` write of `overview.auth_probe`.
+If the account has no `auth_probe`, use its `root_url`.
+If both are absent, do not guess a landing page and do not read secrets.
+Establish the oracle from the `authn` skill's named probe and persist it with an `auth_store` write of `accounts.<account>.auth_probe`.
 If the skill names none, stop with `outcome: failed` and report the missing bootstrap data dependency.
 Do not fail open.
 

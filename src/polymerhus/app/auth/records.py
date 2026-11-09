@@ -64,6 +64,12 @@ _ACCOUNT_KEYS = frozenset(
         "notes",
         "roles",
         "default_role",
+        # The session model: one account is one browser session. `role` and
+        # `root_url` describe the privilege surface; `auth_probe` is that
+        # session's own oracle (root_url is the fallback when it is absent).
+        "role",
+        "root_url",
+        "auth_probe",
         # #223 D223-14/D223-18 (settled): the loop-asserted validity fact and
         # the server-stamped selection-recency fact. Both are validated here;
         # `updated_at` is STAMPED by the store (never trusted from the client).
@@ -218,6 +224,27 @@ def _check_auth_probe(probe: object) -> None:
 _BROWSER_CONTEXT_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 
 
+def _check_session_url(value: object, field: str) -> None:
+    """A session's root/probe URL: absent, empty, or a safe probe URL.
+
+    Empty is meaningful: the projection defaults the root to `/` and the
+    oracle to the root URL. Absolute http(s) URLs are accepted for live,
+    agent-minted state; committed data dependencies use root-relative paths.
+    """
+    if value is None:
+        return
+    if not isinstance(value, str):
+        _fail(field, "must be a string")
+    if not value:
+        return
+    if not is_valid_probe_url(value):
+        _fail(
+            field,
+            "must be a root-relative path such as '/api/me' or an absolute "
+            "http(s) URL without userinfo, fragment, or whitespace",
+        )
+
+
 def _check_browser_context(value: object) -> None:
     """Validate the decoupled auth-context reference.
 
@@ -305,6 +332,11 @@ def validate_account(record: object) -> dict:
             _fail(f"account.{key}", "is not a known account field")
     if record.get("origin") not in _ORIGINS:
         _fail("account.origin", 'must be "operator" or "agent"')
+    role = record.get("role")
+    if role is not None and not isinstance(role, str):
+        _fail("account.role", "must be a string")
+    _check_session_url(record.get("root_url"), "account.root_url")
+    _check_session_url(record.get("auth_probe"), "account.auth_probe")
     procedure = record.get("procedure")
     if procedure is not None and (not isinstance(procedure, str) or not procedure):
         _fail("account.procedure", "must be a non-empty string")

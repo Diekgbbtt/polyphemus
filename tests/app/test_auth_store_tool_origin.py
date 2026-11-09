@@ -53,6 +53,55 @@ def test_relative_login_url_resolves_against_the_project_origin(tmp_path):
     assert out["value"]["domain"] == "t-abc.target"
 
 
+def test_the_session_root_and_probe_resolve_against_the_origin(tmp_path):
+    store = AuthStore(tmp_path)
+    store.write(
+        PROJECT,
+        "accounts.alice",
+        {
+            "role": "member",
+            "root_url": "/index/user/index.html",
+            "auth_probe": "/index/user/index.html",
+            "credentials": {
+                "username": "alice",
+                "password": PASSWORD,
+                "login_url": "/api/login",
+            },
+        },
+        origin="operator",
+    )
+    tool = build_auth_store_tool(
+        PROJECT, store, settings_fn=_settings("t-abc.target")
+    )
+
+    value = tool.invoke({"command": "read", "path": "accounts.alice"})["value"]
+
+    assert value["root_url"] == "http://t-abc.target/index/user/index.html"
+    assert value["auth_probe"] == "http://t-abc.target/index/user/index.html"
+
+
+def test_an_absolute_session_root_is_never_rewritten(tmp_path):
+    store = AuthStore(tmp_path)
+    store.write(
+        PROJECT,
+        "accounts.alice",
+        {
+            "role": "member",
+            "root_url": "https://member.example/index",
+            "auth_probe": "https://member.example/me",
+        },
+        origin="operator",
+    )
+    tool = build_auth_store_tool(
+        PROJECT, store, settings_fn=_settings("t-abc.target")
+    )
+
+    value = tool.invoke({"command": "read", "path": "accounts.alice"})["value"]
+
+    assert value["root_url"] == "https://member.example/index"
+    assert value["auth_probe"] == "https://member.example/me"
+
+
 def test_the_full_read_resolves_accounts_too(tmp_path):
     tool = build_auth_store_tool(
         PROJECT, _store(tmp_path), settings_fn=_settings("t-abc.target")

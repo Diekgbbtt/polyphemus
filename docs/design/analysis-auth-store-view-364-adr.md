@@ -63,3 +63,10 @@ The full write contract remains for the recon gateway and the operator seed path
 The change is pinned by `tests/app/test_auth_seams.py::test_the_modeller_arming_binds_the_read_only_auth_contract`.
 
 See `docs/design/hunting-context-dedup-2026-10-23-adr.md` D7.
+
+## Amendment 2026-11-09 - the read view carries the session model
+
+The read-only and read/write tool views now project the account's `role`, `root_url`, and `auth_probe` in the summary and the canonical-origin read.
+The fields are session metadata, not secrets: the contract names one account as one session, and the analysis proposers can type the authenticated surface against the role's root and probe.
+The redaction rules and the secret slots are unchanged.
+The change is pinned by `tests/app/test_auth_store_tool.py` and `tests/app/test_auth_store_tool_origin.py`.

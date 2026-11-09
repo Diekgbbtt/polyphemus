@@ -57,6 +57,7 @@ Score each 0-4 with the anchors in `RUBRIC.md`, section 3, family L:
   Name the gaps you believe exist; do not name specific vulnerabilities.
 - **L5 `auth_coherence`**
   When the auth bundle is staged: do the accounts, roles, and the skill's flow match the KB's authenticated services and the surface map's auth observations?
+  Does the bundle carry one verified session per role the target exposes, highest privilege first, with each session's root and oracle?
   When it is absent: score 0 and say "not staged" in the evidence - do not punish the artifact for a missing view.
 
 ## Output - write `<TARGET_DIR>/assessment.yaml` exactly in this shape

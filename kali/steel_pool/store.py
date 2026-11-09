@@ -152,6 +152,15 @@ def _mapping(value: object, field_name: str) -> dict[str, Any]:
     return _json_copy(dict(value), field_name)
 
 
+def _optional_text(value: object, field_name: str) -> str | None:
+    """An optional string; empty means absent, never an invalid record."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise CorruptSessionRecord(f"{field_name} is not a string")
+    return value or None
+
+
 def _cookies(value: object) -> list[dict[str, Any]]:
     if value is None:
         return []
@@ -177,6 +186,9 @@ class BrowserSessionRecord:
 
     name: str
     account: str | None = None
+    role: str | None = None
+    root_url: str | None = None
+    auth_probe: str | None = None
     cookies: list[dict[str, Any]] = field(default_factory=list)
     local_storage: dict[str, dict[str, Any]] = field(default_factory=dict)
     session_storage: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -188,6 +200,13 @@ class BrowserSessionRecord:
         object.__setattr__(self, "name", validate_name(self.name))
         if self.account is not None and not isinstance(self.account, str):
             raise CorruptSessionRecord("account is not a string")
+        object.__setattr__(self, "role", _optional_text(self.role, "role"))
+        object.__setattr__(
+            self, "root_url", _optional_text(self.root_url, "root_url")
+        )
+        object.__setattr__(
+            self, "auth_probe", _optional_text(self.auth_probe, "auth_probe")
+        )
         object.__setattr__(self, "cookies", _cookies(self.cookies))
         object.__setattr__(
             self, "local_storage", _mapping(self.local_storage, "localStorage")
@@ -207,6 +226,7 @@ class BrowserSessionRecord:
         return (
             "BrowserSessionRecord("
             f"name={self.name!r}, account={self.account!r}, "
+            f"role={self.role!r}, root_url={self.root_url!r}, "
             f"cookies=<{len(self.cookies)} redacted>, "
             f"localStorage=<{len(self.local_storage)} origins>, "
             f"sessionStorage=<{len(self.session_storage)} origins>, "
@@ -232,6 +252,9 @@ class BrowserSessionRecord:
         context: Mapping[str, Any],
         *,
         account: str | None = None,
+        role: str | None = None,
+        root_url: str | None = None,
+        auth_probe: str | None = None,
         created_at: str | None = None,
         updated_at: str | None = None,
     ) -> "BrowserSessionRecord":
@@ -246,6 +269,9 @@ class BrowserSessionRecord:
         return cls(
             name=name,
             account=account,
+            role=role,
+            root_url=root_url,
+            auth_probe=auth_probe,
             cookies=context.get("cookies"),
             local_storage=context.get("localStorage", context.get("local_storage")),
             session_storage=context.get(
@@ -260,6 +286,9 @@ class BrowserSessionRecord:
         return {
             "name": self.name,
             "account": self.account,
+            "role": self.role,
+            "root_url": self.root_url,
+            "auth_probe": self.auth_probe,
             "cookies": _json_copy(self.cookies, "cookies"),
             "localStorage": _json_copy(self.local_storage, "localStorage"),
             "sessionStorage": _json_copy(self.session_storage, "sessionStorage"),
@@ -281,6 +310,9 @@ class BrowserSessionRecord:
         return cls(
             name=name,
             account=data.get("account"),
+            role=data.get("role"),
+            root_url=data.get("root_url", data.get("rootUrl")),
+            auth_probe=data.get("auth_probe", data.get("authProbe")),
             cookies=data.get("cookies"),
             local_storage=data.get("localStorage", data.get("local_storage")),
             session_storage=data.get(

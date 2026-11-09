@@ -36,11 +36,18 @@ loop.
 from __future__ import annotations
 
 import json
+import re
 
 from typing import Optional
+from urllib.parse import urlsplit
 
 from langgraph.graph import StateGraph, START, END
 
+from polymerhus.recon.crawl.sessions import (
+    CrawlSession,
+    anonymous_session,
+    run_crawl_sessions,
+)
 from polymerhus.recon.domain.types import PodState, PodExport, Observation
 from polymerhus.recon.domain.parsers import get_parser
 from polymerhus.recon.domain.parsers._urls import registrable_domain
@@ -51,15 +58,18 @@ _EMPTY_MANIFEST_KEYS = ("endpoints", "js_urls")
 
 
 class CrawlPodState(PodState, total=False):
-    """`PodState` plus the field this graph's `crawl` node produces.
+    """`PodState` plus the fields this graph's `crawl` node produces.
 
     LangGraph's `StateGraph` schema only merges keys declared on the schema
     TypedDict - a node returning an undeclared key is silently dropped, not
-    an error - so `manifest`/`crawl_error` must be declared here rather
-    than only referenced ad hoc from `pod.py`'s `PodState`.
+    an error - so the manifest batch, the per-session failures, and the
+    terminal error must be declared here rather than only referenced ad hoc
+    from `pod.py`'s `PodState`.
     """
 
     manifest: Optional[dict]
+    manifests: list[dict]
+    session_errors: list[dict]
     crawl_error: Optional[str]
 
 
@@ -83,9 +93,6 @@ def _manifest_is_empty(manifest: dict | None) -> bool:
     return not any(manifest.get(key) for key in _EMPTY_MANIFEST_KEYS)
 
 
-_PARTIAL_PREFIX = "partial crawl: "
-
-
 def _manifest_partial(manifest: dict | None) -> str | None:
     """The partial stop reason, or None when the v2 run is complete.
 
@@ -102,11 +109,56 @@ def _manifest_partial(manifest: dict | None) -> str | None:
     return str(run.get("stop_reason") or "partial")
 
 
-def _partial_reason(crawl_error: str | None) -> str | None:
-    """The partial stop reason carried by the crawl state, or None."""
-    if isinstance(crawl_error, str) and crawl_error.startswith(_PARTIAL_PREFIX):
-        return crawl_error[len(_PARTIAL_PREFIX) :] or "partial"
-    return None
+def _normalize_crawl_result(result) -> tuple[list[dict], list[dict]]:
+    """Read a manifest batch or one legacy manifest from the collaborator.
+
+    The production collaborator returns `{"manifests": [...], "sessions":
+    [...]}`. The injected fakes and older callers return one manifest dict;
+    both shapes are accepted so the pod graph stays backward-compatible.
+    """
+    if isinstance(result, dict) and isinstance(result.get("manifests"), list):
+        manifests = [
+            manifest
+            for manifest in result.get("manifests") or []
+            if isinstance(manifest, dict)
+        ]
+        sessions = list(result.get("sessions") or [])
+        return manifests, sessions
+    if isinstance(result, dict):
+        return [result], []
+    if isinstance(result, list):
+        return [manifest for manifest in result if isinstance(manifest, dict)], []
+    return [], []
+
+
+def _session_error(manifest: dict, reason: str) -> dict:
+    run = manifest.get("run") if isinstance(manifest.get("run"), dict) else {}
+    return {
+        "account": run.get("account"),
+        "role": run.get("role"),
+        "error": str(reason),
+    }
+
+
+def _session_coverage_observation(
+    input_asset: dict, entry: dict
+) -> Observation:
+    target = _input_asset_url(input_asset) or ""
+    label = entry.get("role") or entry.get("account") or "crawl session"
+    reason = entry.get("error") or "unknown"
+    return Observation(
+        macro_kind="reduced_crawl_coverage",
+        severity="info",
+        evidence=f"{label}: {reason}",
+        rationale=(
+            f"The {label} crawl session did not complete successfully; "
+            "endpoint/parameter coverage for this session is reduced relative "
+            "to a full crawl."
+        ),
+        anchor={"type": "BaseURL", "identity": {"url": target}},
+        source_job="crawl",
+        source_tool="steel_crawl",
+    )
 
 
 def _coverage_observation(input_asset: dict, reason: str) -> Observation:
@@ -160,35 +212,103 @@ def live_run_crawl_fn(
         run_live_crawl,
     )
 
-    account = extra.get("auth_account")
-    session_name = browser_session_name(
-        project_id, "crawl", run_id, account
-    )
     browser_auth = browser_auth or {}
-    context = LiveRunContext(
-        project_id=project_id,
-        run_id=run_id,
-        session_name=session_name,
-        target_url=target,
-        scope=list(scope),
-        data_root=DATA_ROOT,
-        auth_probe=browser_auth.get("auth_probe"),
-        login_url=browser_auth.get("login_url"),
-        account=account,
-        edge_url=os.environ.get("KALI_HTTP_HISTORY_EDGE_URL") or None,
-        edge_token=os.environ.get("KALI_HTTP_HISTORY_EDGE_TOKEN") or None,
-        browser_mcp_url=os.environ.get("KALI_BROWSER_MCP_URL", "").strip(),
-        browser_context_ref=extra.get("browser_context_ref"),
-        max_duration_s=float(
-            os.environ.get("STEEL_CRAWL_MAX_DURATION_S", "1800")
-        ),
-        coverage={"scope": list(scope)},
+    raw_sessions = extra.get("auth_sessions")
+    sessions: list[CrawlSession] = []
+    if isinstance(raw_sessions, list):
+        sessions = [
+            CrawlSession.from_descriptor(item, target=target)
+            for item in raw_sessions
+            if isinstance(item, dict)
+        ]
+    if not sessions and (
+        extra.get("browser_context_ref")
+        or extra.get("auth_account")
+        or browser_auth
+    ):
+        sessions = [
+            CrawlSession.from_descriptor(
+                {
+                    "account": extra.get("auth_account"),
+                    "root_url": target,
+                    "auth_probe": browser_auth.get("auth_probe"),
+                    "login_url": browser_auth.get("login_url"),
+                    "browser_context_ref": extra.get("browser_context_ref"),
+                },
+                target=target,
+            )
+        ]
+    if not sessions and not bool(extra.get("auth_accounts_present")):
+        sessions = [anonymous_session(target)]
+
+    max_workers = int(os.environ.get("STEEL_CRAWL_MAX_WORKERS", "2"))
+    max_duration_s = float(
+        os.environ.get("STEEL_CRAWL_MAX_DURATION_S", "1800")
     )
-    result = run_live_crawl(context)
-    return result.manifest.model_dump(mode="json")
+
+    def run_one(session: CrawlSession) -> dict:
+        session_run_id = _session_run_id(run_id, session)
+        session_name = browser_session_name(
+            project_id,
+            f"crawl-{session.role or 'baseline'}",
+            session_run_id,
+            session.account,
+        )
+        session_scope = list(scope)
+        root_host = urlsplit(session.root_url).hostname
+        if root_host and root_host not in session_scope:
+            session_scope.append(root_host)
+        context = LiveRunContext(
+            project_id=project_id,
+            run_id=session_run_id,
+            session_name=session_name,
+            target_url=target,
+            scope=session_scope,
+            data_root=DATA_ROOT,
+            auth_probe=session.auth_probe,
+            login_url=session.login_url,
+            account=session.account,
+            role=session.role,
+            root_url=session.root_url,
+            anonymous=session.anonymous,
+            edge_url=os.environ.get("KALI_HTTP_HISTORY_EDGE_URL") or None,
+            edge_token=os.environ.get("KALI_HTTP_HISTORY_EDGE_TOKEN") or None,
+            browser_mcp_url=os.environ.get("KALI_BROWSER_MCP_URL", "").strip(),
+            browser_context_ref=session.browser_context_ref,
+            max_duration_s=max_duration_s,
+            coverage={"scope": session_scope},
+        )
+        result = run_live_crawl(context)
+        return result.manifest.model_dump(mode="json")
+
+    results = run_crawl_sessions(
+        sessions, run_one=run_one, max_workers=max_workers
+    )
+    return {
+        "manifests": [
+            result.manifest
+            for result in results
+            if result.manifest is not None
+        ],
+        "sessions": [
+            {
+                "account": result.session.account,
+                "role": result.session.role,
+                "error": result.error,
+            }
+            for result in results
+        ],
+    }
 
 
 default_run_crawl_fn = live_run_crawl_fn
+
+
+def _session_run_id(run_id: str, session: CrawlSession) -> str:
+    """A stable, unique run id for one session lifecycle."""
+    label = session.account or session.role or "anonymous"
+    slug = re.sub(r"[^A-Za-z0-9_-]+", "-", label).strip("-_").lower()
+    return f"{run_id}-{slug or 'session'}"
 
 
 def _host_of(url: str) -> str:
@@ -269,51 +389,83 @@ def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn):
         if accepts_extra:
             kwargs["extra"] = extra
         try:
-            manifest = run_crawl_fn(target, **kwargs)
+            result = run_crawl_fn(target, **kwargs)
         except Exception as exc:  # noqa: BLE001 - best-effort, never raise
-            return {"manifest": None, "crawl_error": str(exc)}
-
-        if _manifest_is_empty(manifest):
-            return {"manifest": None, "crawl_error": "empty crawl manifest"}
-
-        partial = _manifest_partial(manifest)
-        if partial is not None:
-            # Keep the manifest so parse/triager/curator ingest the captured
-            # surface; the prefix marks the reduced-coverage observation.
             return {
-                "manifest": manifest,
-                "crawl_error": f"{_PARTIAL_PREFIX}{partial}",
+                "manifest": None,
+                "manifests": [],
+                "session_errors": [],
+                "crawl_error": str(exc),
             }
 
-        return {"manifest": manifest}
+        manifests, sessions = _normalize_crawl_result(result)
+        kept: list[dict] = []
+        errors: list[dict] = []
+        for manifest in manifests:
+            if _manifest_is_empty(manifest):
+                errors.append(_session_error(manifest, "empty crawl manifest"))
+                continue
+            kept.append(manifest)
+            partial = _manifest_partial(manifest)
+            if partial is not None:
+                errors.append(_session_error(manifest, partial))
+        for session in sessions:
+            if isinstance(session, dict) and session.get("error"):
+                errors.append(
+                    {
+                        "account": session.get("account"),
+                        "role": session.get("role"),
+                        "error": str(session.get("error")),
+                    }
+                )
+        if not kept:
+            reason = errors[0]["error"] if errors else "empty crawl manifest"
+            return {
+                "manifest": None,
+                "manifests": [],
+                "session_errors": errors,
+                "crawl_error": reason,
+            }
+        return {
+            "manifest": kept[0],
+            "manifests": kept,
+            "session_errors": errors,
+        }
 
     def gate(state: CrawlPodState) -> str:
-        return "parse" if state.get("manifest") is not None else "fail"
+        return "parse" if state.get("manifests") else "fail"
 
     def parse(state: CrawlPodState) -> dict:
-        manifest = state.get("manifest") or {}
-        assets = parse_fn(json.dumps(manifest))
+        assets = []
+        for manifest in state.get("manifests") or []:
+            assets.extend(parse_fn(json.dumps(manifest)))
         return {"assets": assets}
 
     def triager(state: CrawlPodState) -> dict:
         from polymerhus.recon.domain.types import ExecResult
 
         job = state.get("job")
-        manifest = state.get("manifest") or {}
-        exec_result = ExecResult(stdout=json.dumps(manifest), stderr="", returncode=0)
-        observations = list(triage_fn(exec_result, state.get("assets", []), job))
+        observations = []
+        for manifest in state.get("manifests") or []:
+            exec_result = ExecResult(
+                stdout=json.dumps(manifest), stderr="", returncode=0
+            )
+            observations.extend(
+                triage_fn(exec_result, state.get("assets", []), job)
+            )
         return {"observations": observations}
 
     def curator_node(state: CrawlPodState) -> dict:
         assets = state.get("assets", [])
         observations = list(state.get("observations", []))
-        # A partial manifest is ingested, never discarded. Its captured surface
-        # rides the normal path with one reduced-coverage observation so the
-        # graph knows the evidence is real but incomplete.
-        partial = _partial_reason(state.get("crawl_error"))
-        if partial is not None:
+        # Every partial or failed session is ingested as evidence, never
+        # discarded. The successful manifests supply the assets; each failure
+        # carries one reduced-coverage observation naming its session.
+        for entry in state.get("session_errors") or []:
             observations.append(
-                _coverage_observation(state.get("input_asset") or {}, partial)
+                _session_coverage_observation(
+                    state.get("input_asset") or {}, entry
+                )
             )
         # Thread the SAME registrable-domain scope the crawl frontier used as the
         # curator's `scope_domain`, so the agnostic noise filter (D14/D15) drops
@@ -343,8 +495,14 @@ def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn):
     def fail(state: CrawlPodState) -> dict:
         input_asset = state.get("input_asset") or {}
         reason = state.get("crawl_error") or "crawl failed"
-        observation = _coverage_observation(input_asset, reason)
-        _, observations_merged, _, merged_observations = curate_fn([], [observation], state["project_id"])
+        observations = [_coverage_observation(input_asset, reason)]
+        for entry in state.get("session_errors") or []:
+            observations.append(
+                _session_coverage_observation(input_asset, entry)
+            )
+        _, observations_merged, _, merged_observations = curate_fn(
+            [], observations, state["project_id"]
+        )
         export = PodExport(
             input_asset=input_asset,
             verdict="failed",

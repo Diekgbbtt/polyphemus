@@ -5,6 +5,8 @@
 
 # steel_crawl workbench: authenticated full-surface crawl
 
+*Historical design workbench. The current session model is `docs/design/crawl-session-fanout-adr.md`; the current requirements are `docs/design/steel-crawl-spec.md`. References below to `overview.auth_probe.url` describe the pre-2026-11-09 single-account model.*
+
 **Status: DESIGN WORKBENCH, 2026-10-30.**
 This is the bench for the grilling phase.
 It is not a ratified specification and it changes no source.

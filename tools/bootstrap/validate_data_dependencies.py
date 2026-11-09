@@ -363,14 +363,14 @@ def check_auth(project_dir: Path) -> list[str]:
             overview_doc = loaded
     from polymerhus.recon.control.authn_loop import declares_auth_surface  # noqa: PLC0415
 
-    if has_accounts or declares_auth_surface(overview_doc):
+    if not has_accounts and declares_auth_surface(overview_doc):
         probe = overview_doc.get("auth_probe")
         if not isinstance(probe, dict) or not isinstance(probe.get("url"), str) \
                 or not probe.get("url"):
             errors.append(
                 "overview.yaml: missing auth_probe {url: /path}; a declared "
-                "auth surface needs the authenticated-context oracle "
-                "(2xx authenticated, 401/403/3xx anonymous)")
+                "auth surface with no account needs the authenticated-context "
+                "oracle (2xx authenticated, 401/403/3xx anonymous)")
 
     # A target with no authentication surface legitimately records an empty
     # `accounts` and no authn skill (the eval marks its auth-bootstrap

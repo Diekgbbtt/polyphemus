@@ -58,6 +58,30 @@ def test_save_and_load_round_trip(store):
     assert loaded.account == "alice"
 
 
+def test_session_record_round_trips_the_session_model(store):
+    record = _record(
+        role="member",
+        root_url="http://app.test/index/user/index.html",
+        auth_probe="http://app.test/index/user/index.html",
+    )
+    saved = store.save(record)
+    loaded = store.load(saved.name)
+
+    assert loaded.role == "member"
+    assert loaded.root_url == "http://app.test/index/user/index.html"
+    assert loaded.auth_probe == "http://app.test/index/user/index.html"
+    assert loaded.to_dict()["role"] == "member"
+    assert BrowserSessionRecord.from_dict(loaded.to_dict()) == loaded
+
+
+def test_session_model_fields_are_optional():
+    record = _record()
+
+    assert record.role is None
+    assert record.root_url is None
+    assert record.auth_probe is None
+
+
 def test_save_updates_updated_at_and_preserves_created_at(store):
     saved = store.save(_record())
     loaded = store.load(saved.name)

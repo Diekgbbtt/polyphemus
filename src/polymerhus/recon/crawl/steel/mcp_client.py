@@ -187,6 +187,9 @@ class McpBackend:
             cdp_host=start.cdp_host,
             warnings=start.warnings,
             remaining_ms=start.remaining_ms,
+            role=start.role,
+            root_url=start.root_url,
+            auth_probe=start.auth_probe,
         )
 
     def command(self, verb: str, *args: str) -> list[str]:

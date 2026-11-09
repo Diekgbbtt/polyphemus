@@ -62,12 +62,43 @@ def test_a_path_login_url_is_accepted(tmp_path):
     assert [e for e in tool.check_auth(project) if ".login_url" in e] == []
 
 
-def test_a_declared_surface_without_the_oracle_is_refused(tmp_path):
+def test_a_declared_surface_with_an_account_uses_the_account_root(tmp_path):
+    """The per-account session model makes the overview probe optional."""
     project = _project_dir(
         tmp_path, {"alice": _account(_base_credentials())}, auth_probe=False
     )
     errors = tool.check_auth(project)
-    assert any("auth_probe" in e for e in errors), errors
+    assert not any("auth_probe" in e for e in errors), errors
+
+
+def test_an_account_carries_its_role_root_and_probe(tmp_path):
+    account = _account(_base_credentials())
+    account.update(
+        role="member",
+        root_url="/index/user/index.html",
+        auth_probe="/index/user/index.html",
+    )
+    project = _project_dir(tmp_path, {"alice": account})
+
+    errors = tool.check_auth(project)
+
+    assert not any(
+        "role" in e or "root_url" in e or "auth_probe" in e
+        for e in errors
+    ), errors
+
+
+def test_an_account_absolute_session_url_is_refused(tmp_path):
+    account = _account(_base_credentials())
+    account.update(
+        role="member",
+        root_url="http://46.224.225.245:35493/index/user/index.html",
+    )
+    project = _project_dir(tmp_path, {"alice": account})
+
+    errors = tool.check_auth(project)
+
+    assert any("absolute" in e and "root_url" in e for e in errors), errors
 
 
 def test_a_declared_surface_with_the_oracle_is_accepted(tmp_path):

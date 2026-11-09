@@ -52,6 +52,30 @@ scenarios:
         - the User-Agent string
       dynamic:
         - the challenge solve that mints cf_clearance on a fresh origin
+    role_order:
+      - super_administrator
+      - member
+    seed_accounts:
+      ops-admin-first_authn_bootstrap:
+        role: super_administrator
+        root_url: /admin
+        auth_probe: /account
+        browser_context: {ref: steel-auth-shop-ops-admin}
+        procedure: sign-in-admin
+        credentials:
+          username: <redacted>
+          password: <redacted>
+          login_url: /login
+      member-first_authn_bootstrap:
+        role: member
+        root_url: /account
+        auth_probe: /account
+        browser_context: {ref: steel-auth-shop-member}
+        procedure: sign-in-member
+        credentials:
+          username: <redacted>
+          password: <redacted>
+          login_url: /login
     seed_overview:
       login_endpoint: https://shop.example/login
       mechanism: password
@@ -59,6 +83,13 @@ scenarios:
         - X-Requested-With
       anti-bot: cf_clearance
       http-client-replayability: true
+      technical_conditions:
+        - name: admin-session-fresh
+          check: replay the admin session when /admin bounces back to /login
+          role: super_administrator
+        - name: member-session-fresh
+          check: replay the member session when /account bounces back to /login
+          role: member
       notes: >-
         Anonymous probes are Cloudflare-challenged; the trusted context
         replays with a plain client once cf_clearance and the session cookie
@@ -115,6 +146,30 @@ scenarios:
       dynamic:
         - the _abck and bm_sz sensor values
         - the per-request sensor payload the sign-in script builds
+    role_order:
+      - super_administrator
+      - member
+    seed_accounts:
+      ops-admin-first_authn_bootstrap:
+        role: super_administrator
+        root_url: /account
+        auth_probe: /account
+        browser_context: {ref: steel-auth-bank-ops-admin}
+        procedure: browser-sign-in-admin
+        credentials:
+          username: <redacted>
+          password: <redacted>
+          login_url: /signin
+      member-first_authn_bootstrap:
+        role: member
+        root_url: /account
+        auth_probe: /account
+        browser_context: {ref: steel-auth-bank-member}
+        procedure: browser-sign-in-member
+        credentials:
+          username: <redacted>
+          password: <redacted>
+          login_url: /signin
     seed_overview:
       login_endpoint: https://bank.example/signin
       mechanism: password+script
@@ -123,6 +178,10 @@ scenarios:
       technical_conditions:
         - name: sensor-fresh
           check: re-run the browser sign-in when the session URL bounces back to /signin
+          role: super_administrator
+        - name: member-session-fresh
+          check: re-run the member browser sign-in when the member centre bounces back to /signin
+          role: member
       notes: >-
         Akamai Bot Manager gates the script-driven sign-in; the trust is
         browser-bound, so a plain client cannot reach the authenticated state.
