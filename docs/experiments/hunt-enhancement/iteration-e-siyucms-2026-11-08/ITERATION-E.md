@@ -165,18 +165,126 @@ Langfuse is the trajectory layer.
 The session ids are `hunting:<run_id>:<role>`, `recon:<run_id>:<job>`, and
 `pod:<dispatch_id>:<spec_id>`.
 
+## Post-run diagnosis (2026-11-09)
+
+### Observability recovery
+
+The local Node build was linked against `libsimdjson.33.dylib` while Homebrew had simdjson 36 installed, so every `npx` invocation failed before the CLI loaded.
+`brew reinstall node` moved Node to 26.13.0 and `npx langfuse-cli` works again.
+The Langfuse Cloud project is on the v4 ingestion path: the v3 `/api/public/traces` endpoint returns zero rows, while `/api/public/v2/observations` returns the analysis records.
+The app's flush was healthy; the empty trace list was a query-endpoint mismatch, not a tracing failure.
+The session review used:
+
+```bash
+npx langfuse-cli api observations list \
+  --from-start-time 2026-11-08T22:40:00Z \
+  --to-start-time 2026-11-08T23:30:00Z \
+  --fields core,basic,io,metadata,model,usage,metrics \
+  --all --max-items 20000 --json
+```
+
+### The L1 graph did insert its edges
+
+The earlier `69 nodes / 0 links` reading was stale.
+It was taken before the new analysis wrote, when only the previous run's bootstrap shells existed.
+The current project graph reads `269 nodes / 261 links`.
+The L1 core is:
+
+| Edge | Count |
+|---|---:|
+| `Service->System` (`ROUTED_BY`) | 5 |
+| `Service->System` (`IDENTIFIED_BY`) | 5 |
+| `Service->System` (`EXPOSED_VIA`) | 4 |
+| `AGGREGATES` (`Service->L0`) | 8 |
+| `EVIDENCED_BY` (`System->L0`) | 40 |
+
+The 14 `Service->System` edges cover the five public front-office services: `home-page`, `site-search`, `column-listing`, `entry-detail`, `team-management`.
+The other 28 Services have no L1 edge because the crawl never delivered an admin endpoint.
+The graph is thin because the L0 input is thin, not because the writer dropped edges.
+
+### Analysis session review
+
+The analysis ran four Assigner sessions and four mechanism-typist sessions.
+Three of each were read end-to-end from Langfuse, with every model turn, tool call, tool result, and curator receipt.
+
+| Session | Chunk | Result | Decision quality | Finding |
+|---|---|---|---|---|
+| Assigner 1 | `httpx:0` | 1 aggregate (`home-page`) | Sound | Correct root-route ownership; the artifact read returned metadata only, as documented |
+| Assigner 2 | `katana:0` | 8 aggregates over 7 endpoints | Sound | Shared ownership on the two team-detail routes is justified; the mangled path was left unassigned rather than guessed |
+| Assigner 3 | `arjun:0` | 2 aggregates | Sound | No tool calls needed; both contracts match the path nouns |
+| Typist 1 | `httpx:0` | 3 Systems, 3 edges | Sound | Correct proxy, session, and home-shell typing; the first two `graph_view` calls used the domain slug and returned empty |
+| Typist 2 | `katana:0` | 6 Systems, 10 edges | Sound | Strongest session: it probed the encoded path, the search reflection and SQL trace, and the listing class; all decision nodes hold |
+| Typist 3 | `arjun:0` | 2 Systems, 0 edges | Sound | It verified the existing five Services already carry the proxy and session edges, and withheld the missing `team-management` presentation edge because no `team-management::site-shell` node exists |
+
+No wrong ownership or mechanism decision was found in the sampled sessions.
+The null results are deliberate and evidence-backed, not failures.
+The typist's multiple candidate hypotheses, read-only probes, and duplicate-edge checks are the behaviour the design asks for.
+
+### Confirmed defects
+
+1. **`graph_view` accepted the caller's `project_id`.**
+   The analysis tool merged the bound scope first and the caller's parameters second.
+   The typist sees the domain slug `siyucms` in the overview, so `params={"project_id": "siyucms"}` naturally followed.
+   The read returned zero rows instead of an error.
+   Two of the four typist sessions lost their first two `graph_view` calls this way.
+   The bound scope is now authoritative, and the contract says the tool injects it.
+2. **The inert reflection-turn `L1DeltaBatch` tool invited retries.**
+   The tool is bound on the reflection turn for cache-shape stability, but its result said only "structured output is only produced on the extraction turn".
+   The model retried the full payload one to three times per chunk.
+   The refused calls cost about 240 seconds of model time across the four sessions, including one 74.6-second call.
+   The result now names the reflection turn and tells the model to finish with prose.
+3. **`response_size` is the wire size.**
+   The HTTP-history summary reports the compressed body size, while the L0 graph's `content_length` is decoded.
+   Assigner 1 noticed the `19,997` versus `135,861` discrepancy; Assigner 2 used the compressed sizes to compare detail and listing classes.
+   The relative comparison held, but the absolute values are not comparable across the two tools.
+4. **`get_http_artifact` never returns the body.**
+   Its contract says so, but the typist prompt invites a transaction read when a hypothesis depends on what the page renders.
+   The typist correctly fell back to one bounded `exec` fetch.
+   The Assigner has no `exec`, so it cannot read a body at all.
+   This is a prompt-versus-tool contract gap, not a data loss.
+
+### Hunting bootstrap
+
+The hunting run `e82960ac-1b0c-4f13-9501-ca321982c32a` never reached its first LLM call.
+Both the hunting start and the stop handlers raised `No module named 'cvss'`.
+The deployed `polymerhus-agent:latest` was built at `2026-11-08T15:42:54Z`, before `cvss==3.6` entered `requirements-app.txt`.
+The API-key hypothesis is not supported: the analysis made 122 successful calls and the failure occurs before any hunting call.
+The image was rebuilt at `2026-11-09T09:17:32Z` from the eval worktree at `93692b0c`, and `docker run --rm polymerhus-agent:latest python -c "import cvss"` reports `3.6`.
+The hunting run is therefore a deployment-artifact failure, not a model, quota, or graph failure.
+
+### Remaining work
+
+The crawl fixes are owned by the other session: partial-manifest ingestion with `reduced_crawl_coverage`, a 900-second default crawl budget, admin `auth_probe` and `login_url` frontier seeds, and a longer worker settle window.
+The analysis's L1 coverage will stay thin until the crawl delivers the admin surface: the current run saw 15 endpoints, while the crawl captured 111.
+The next run should use the rebuilt image, the updated analysis code, and the populated L0 graph.
+
 ## Terminal state
 
-Pending.
+Recon and analysis completed.
+The `steel_crawl` job ended `degraded` with a partial manifest at `session_deadline` and zero recon assets.
+The analysis drained at `23:21:04` with 6 passes and 274 L0 assets.
+The hunting run started at `23:21:19`, hung at the `cvss` import, and was stopped by the operator.
+The stack is down; volumes and artifacts are preserved.
 
 ## Results
 
-Pending.
+The auth gateway and the single browser tool passed.
+The admin context mounted from the deterministic reference, restored 6 cookies, 1 origin, and 1 storage key, and the oracle returned the SIYUCMS console.
+The crawl produced a real partial manifest: 111 endpoints, 11 parameters, 4 pages, 10,757 captured flows, 919 MB, 648 seconds.
+The analysis wrote the public L1 skeleton: 269 nodes, 261 links, 14 `Service->System` edges, 8 `AGGREGATES`, 40 `EVIDENCED_BY`.
+Hunting produced no units, no specs, no pods, and no hunting-agent calls.
+Capped spend was 708,946 over 122 calls: `mechanism_typist` 438,413, `job_orchestrator` 116,856, `triager` 79,654, `assigner` 74,023.
 
 ## Learnings
 
-Pending.
+- A stale graph read can look exactly like a write failure. Read the graph after the analysis drains, not before.
+- The analysis tool bound the project scope but let the caller overwrite it. A silent empty read is worse than a rejected one.
+- The reflection-turn tool gate needs a directive message; the model will retry an inert tool when the prompt says the tool is the only channel.
+- The L1 graph is input-bound. A discarded crawl manifest removes seven eighths of the endpoint surface and no analysis prompt can recover it.
+- A container image built before a dependency lands is a deployment defect that presents as a model hang.
 
 ## Recommendation
 
-Pending.
+Rebuild the image before every eval run from the same commit that supplies `requirements-app.txt`, and assert `import cvss` in the image health check.
+Run the next iteration E with the rebuilt image, the bound `graph_view` scope, the directive reflection gate, and the fixed crawl.
+Measure the L1 edge count and the L0 endpoint recall against the crawl manifest, not against the stale bootstrap graph.
