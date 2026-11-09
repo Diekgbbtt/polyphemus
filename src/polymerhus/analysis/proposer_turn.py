@@ -277,7 +277,14 @@ def _prose_tools(role_id: str, *, tools_bound: bool = False) -> tuple:
             name=spec.name,
             description=spec.description,
             args_schema=spec.json_schema,
-            func=lambda **_: "structured output is only produced on the extraction turn",
+            # Directive, not merely descriptive: live sessions retried this
+            # inert call 1-3 times per chunk before inferring the gate. Name the
+            # turn and the required next action so the model stops immediately.
+            func=lambda **_: (
+                "Reflection turn: the structured payload is NOT accepted here. "
+                "Do not call this tool again. Finish the reflection with prose; "
+                "the extraction turn follows and accepts the structured payload."
+            ),
         ),)
     except Exception:  # noqa: BLE001 - fail-open: an unbuildable tool binds nothing
         return ()

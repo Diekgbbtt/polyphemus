@@ -43,6 +43,41 @@ def test_read_path_returns_rows_through_the_injected_seam():
     assert seen["project_id"] == "p1"
 
 
+def test_caller_project_id_cannot_override_the_bound_scope():
+    """A proposer sees the domain slug in the overview and naturally passes
+    `params={"project_id": "siyucms"}`. The bound project scope is
+    authoritative; otherwise the read silently returns zero rows and the model
+    reasons over a false-empty graph (observed live in iteration E)."""
+    seen = {}
+
+    def read_fn(cypher, params):
+        seen.update(params)
+        return [{"path": "/"}]
+
+    tool = build_analysis_graph_view_tool("project-uuid", read_fn=read_fn)
+    out = tool.invoke({
+        "cypher": "MATCH (e:Endpoint) RETURN e.path LIMIT 1",
+        "params": {"project_id": "siyucms"},
+    })
+    assert out == {"rows": [{"path": "/"}]}
+    assert seen["project_id"] == "project-uuid"
+
+
+def test_the_bound_scope_merge_keeps_every_other_caller_param():
+    seen = {}
+
+    def read_fn(cypher, params):
+        seen.update(params)
+        return []
+
+    tool = build_analysis_graph_view_tool("project-uuid", read_fn=read_fn)
+    tool.invoke({
+        "cypher": "MATCH (e:Endpoint) RETURN e.path LIMIT $limit",
+        "params": {"project_id": "siyucms", "limit": 5},
+    })
+    assert seen == {"project_id": "project-uuid", "limit": 5}
+
+
 def test_read_failure_degrades_fail_open_to_an_error_dict():
     def read_fn(cypher, params):
         raise RuntimeError("store down")
