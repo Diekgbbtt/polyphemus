@@ -182,6 +182,35 @@ class Frontier:
 
     def run(self, root: PageInstance) -> FrontierResult:
         """Traverse from the seeded root page until the frontier is empty."""
+        return self.run_many((root,))
+
+    def run_many(self, roots: Sequence[PageInstance]) -> FrontierResult:
+        """Traverse every seed in order, stopping at the first terminal stop.
+
+        A seed whose own frontier exhausts continues to the next seed, so the
+        public root and a known authenticated entry (the auth probe) are one
+        run. A deadline, cancel, session loss, or typed failure stops the whole
+        run: no later seed can make progress under that terminal state. The
+        merged result keeps every page and action from the seeds already
+        traversed, so a partial multi-seed run never discards evidence.
+        """
+        results: list[FrontierResult] = []
+        for index, root in enumerate(roots):
+            result = self._run(root, restore_root=index > 0)
+            results.append(result)
+            if result.stop_reason != "frontier_empty":
+                break
+        return _merge_results(results)
+
+    def _run(
+        self, root: PageInstance, *, restore_root: bool = False
+    ) -> FrontierResult:
+        """Traverse from one seeded root page until its frontier is empty.
+
+        The first seed was just loaded, so its refs are live. A later seed was
+        loaded earlier, but the previous traversal moved the browser away, so
+        it must be restored before its first projection.
+        """
         page_visits: list[PageVisit] = [PageVisit(page=root)]
         action_visits: list[ActionVisit] = []
         removed: list[Element] = []
@@ -191,10 +220,9 @@ class Frontier:
         failed: list[FailedVisit] = []
         stack: list[PageInstance] = []
         current: PageInstance | None = root
-        # The root was just loaded by the page factory; its snapshot and refs
-        # are the live document's. A restore before the first projection would
-        # reload the page and invalidate those refs for no benefit.
-        needs_restore = False
+        # The first seed was just loaded by the page factory; a later seed is
+        # not live, so `run_many` asks for one restore before its projection.
+        needs_restore = restore_root
 
         def finish(
             stop_reason: StopReason, error: str | None = None
@@ -393,6 +421,39 @@ class Frontier:
             if self._candidates(page):
                 return page
         return None
+
+
+def _merge_results(results: Sequence[FrontierResult]) -> FrontierResult:
+    """Merge per-seed traversals into one result.
+
+    Every result before the last is `frontier_empty` (the loop stopped at the
+    first terminal reason), so the last result's stop reason and error are the
+    run's. The tuple evidence is concatenated in traversal order.
+    """
+    if not results:
+        return FrontierResult(stop_reason="frontier_empty")
+    last = results[-1]
+    return FrontierResult(
+        stop_reason=last.stop_reason,
+        page_visits=tuple(
+            visit for result in results for visit in result.page_visits
+        ),
+        action_visits=tuple(
+            visit for result in results for visit in result.action_visits
+        ),
+        removed=tuple(
+            element for result in results for element in result.removed
+        ),
+        unrecoverable=tuple(
+            page for result in results for page in result.unrecoverable
+        ),
+        duplicates=tuple(
+            visit for result in results for visit in result.duplicates
+        ),
+        stale=tuple(visit for result in results for visit in result.stale),
+        failed=tuple(visit for result in results for visit in result.failed),
+        error=last.error,
+    )
 
 
 def _error_text(error: BaseException) -> str:

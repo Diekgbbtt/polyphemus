@@ -130,6 +130,15 @@ class CrawlRun:
 
     def run(self, root: PageInstance) -> RunOutput:
         """Traverse from the loaded root and return the captured evidence."""
+        return self.run_many((root,))
+
+    def run_many(self, roots: Sequence[PageInstance]) -> RunOutput:
+        """Traverse every loaded seed in order and return the captured evidence.
+
+        The seeds share one browser state and one capture sidecar, so a public
+        root and the authenticated auth-probe entry form one run with one flow
+        ledger and one deduplicated visited set.
+        """
         frontier = Frontier(
             project=self._project,
             restore=self._restore,
@@ -141,7 +150,7 @@ class CrawlRun:
             cancel=self._cancel,
             in_scope=self._in_scope,
         )
-        result = frontier.run(root)
+        result = frontier.run_many(roots)
         self._sidecar.pump()
         artifacts: list[tuple[HttpArtifact, dict[str, bytes]]] = []
         flow_artifacts: dict[str, str] = {}

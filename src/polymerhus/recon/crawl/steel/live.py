@@ -36,9 +36,9 @@ from urllib.parse import urlsplit
 from polymerhus.recon.crawl.steel.auth import (
     AuthOracle,
     AuthVerdict,
+    resolve_probe_url,
     session_fetch_fn,
 )
-from polymerhus.recon.crawl.steel.capture.flow import Flow
 from polymerhus.recon.crawl.steel.capture.history import (
     CaptureContext,
     HistoryClient,
@@ -93,7 +93,7 @@ CDP_BODY_LIMIT = 2**24
 CDP_TIMEOUT_S = 30.0
 SNAPSHOT_COMMAND = ("snapshot", "-i", "-c", "-u")
 NAVIGATE_ARGS = ("--wait-until", "domcontentloaded")
-MAX_DURATION_S_DEFAULT = 600
+MAX_DURATION_S_DEFAULT = 1800
 
 
 class LiveCrawlError(RuntimeError):
@@ -627,7 +627,19 @@ def run_live_crawl(ctx: LiveRunContext) -> LiveRunResult:
     def run_fn(root: PageInstance) -> FrontierResult:
         crawl = build_crawl()
         holder["crawl"] = crawl
-        return crawl.run(root).frontier
+        # The public root does not link the authenticated backend: the admin
+        # console is a known entry from the scaffolded auth overview, not a
+        # discoverable link. The oracle already proves that entry in this
+        # session, so explore it as a seed before the public surface. The
+        # login URL alone is not a useful seed: it renders the signed-out form.
+        root_url = root.final_url or root.url
+        seeds: list[PageInstance] = []
+        for url in crawl_seed_urls(root_url, ctx.auth_probe):
+            if normalize_url(url) == normalize_url(root_url):
+                seeds.append(root)
+            else:
+                seeds.append(page_factory(url, None, 0, "auth_probe", ()))
+        return crawl.run_many(seeds).frontier
 
     def auth_fn(root: PageInstance) -> AuthVerdict:
         oracle = AuthOracle(
@@ -811,6 +823,20 @@ def run_live_crawl(ctx: LiveRunContext) -> LiveRunResult:
     )
 
 
+def crawl_seed_urls(target_url: str, auth_probe: str | None) -> tuple[str, ...]:
+    """The ordered crawl seeds: the authenticated entry, then the public root.
+
+    The public root never links the admin backend; the scaffolded auth probe is
+    the only reliable address of that surface. Keep the probe first so the
+    authenticated backend is explored before the public site's large link set.
+    A missing probe, or a probe equal to the root, yields just the root.
+    """
+    probe = resolve_probe_url(target_url, auth_probe)
+    if probe and normalize_url(probe) != normalize_url(target_url):
+        return (probe, target_url)
+    return (target_url,)
+
+
 def _scope_predicate(scope: Sequence[str]) -> Callable[[str], bool]:
     """The base host plus its subdomains (spec T2)."""
     hosts = [entry.lower().strip(".") for entry in scope if entry]
@@ -834,5 +860,6 @@ __all__ = [
     "LivePageFactory",
     "LiveRunContext",
     "LiveRunResult",
+    "crawl_seed_urls",
     "run_live_crawl",
 ]

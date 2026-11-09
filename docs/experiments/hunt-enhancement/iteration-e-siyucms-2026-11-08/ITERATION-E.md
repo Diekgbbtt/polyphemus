@@ -243,6 +243,41 @@ The typist's multiple candidate hypotheses, read-only probes, and duplicate-edge
    The Assigner has no `exec`, so it cannot read a body at all.
    This is a prompt-versus-tool contract gap, not a data loss.
 
+### Crawl diagnosis and fixes (2026-11-09)
+
+The crawl stopped at `session_deadline` after 648 seconds: 111 endpoints, 11 parameters, 4 pages, 10,757 flows, 919 MB.
+The loaded session did carry the admin auth context.
+The oracle passed, the restored context held 6 cookies, 1 origin, and 1 storage key, and a manual admin navigation returned `SIYUCMS | 控制台` in 4.87 seconds.
+The member-centre link `/index/user/index.html` was in the root DOM and the crawl clicked it, but it redirected to `/index/user/login` because the admin `PHPSESSID` is not a member session.
+`/index/User/set.html` sits behind that member login, so the admin session cannot reach it.
+That redirect is expected auth scoping, not a page-parser failure.
+
+`/index/honours.html` was a visible link in the root navigation, but the crawl did not reach it before the deadline.
+The root page reloaded about sixty times in the 648 seconds: each local-state action is followed by a restore navigation, so 71 actions cost roughly nine seconds each.
+The honours link was offered, but the budget expired first.
+The 600-second budget was genuinely too short; the default is now 1800 seconds.
+
+The admin console is not linked from the public root.
+The root DOM contains no `/admin`, `/index.php/admin`, or `/index/User/set.html` link.
+The coverage algorithm therefore cannot discover the admin surface by navigation, so its absence was genuine for the public surface.
+The surface is technically reachable because the scaffolded `overview.yaml` names `auth_probe.url = /index.php/admin/Index/index.html`, and the authn skill and auth gateway use it.
+The crawl used that URL only in the oracle fetch, never as a frontier seed.
+The new `crawl_seed_urls` helper loads the auth probe as the first seed and the public root second, so the authenticated backend is rendered and explored before the public site.
+
+The CDP capture sidecar already attaches before the root load and the auth probe; the oracle fetch is in the manifest as an observed endpoint.
+The cheap sidecar ordering fix was therefore already present.
+The missing piece was page exploration, which the auth-probe seed supplies.
+
+The partial-manifest defect was confirmed.
+`_manifest_partial` returned `manifest: None`, so the pod failed and discarded the 111 endpoints.
+A partial v2 manifest now keeps its manifest, parses its endpoints and parameters, and adds one `reduced_crawl_coverage` observation.
+The captured manifest parses to 268 assets: 133 `BaseURL`, 133 `Endpoint`, and 2 `Parameter`; the other parameter records lack a valid endpoint anchor.
+
+The worker stop reported `released: true` and `stopped: false` at the five-second settle bound.
+The session was not leaked; the worker had only not installed its fresh idle placeholder yet.
+The default settle window is now 30 seconds.
+The regression test drives a worker that settles at six seconds with a fake clock.
+
 ### Hunting bootstrap
 
 The hunting run `e82960ac-1b0c-4f13-9501-ca321982c32a` never reached its first LLM call.
@@ -254,7 +289,8 @@ The hunting run is therefore a deployment-artifact failure, not a model, quota, 
 
 ### Remaining work
 
-The crawl fixes are owned by the other session: partial-manifest ingestion with `reduced_crawl_coverage`, a 900-second default crawl budget, admin `auth_probe` and `login_url` frontier seeds, and a longer worker settle window.
+The crawl fixes are in place: partial-manifest ingestion with `reduced_crawl_coverage`, an 1800-second default crawl budget, the admin `auth_probe` as the first frontier seed, and a 30-second worker settle window.
+The `login_url` is not a seed because it renders the signed-out form; the probe is the authenticated entry.
 The analysis's L1 coverage will stay thin until the crawl delivers the admin surface: the current run saw 15 endpoints, while the crawl captured 111.
 The next run should use the rebuilt image, the updated analysis code, and the populated L0 graph.
 
@@ -281,6 +317,8 @@ Capped spend was 708,946 over 122 calls: `mechanism_typist` 438,413, `job_orches
 - The analysis tool bound the project scope but let the caller overwrite it. A silent empty read is worse than a rejected one.
 - The reflection-turn tool gate needs a directive message; the model will retry an inert tool when the prompt says the tool is the only channel.
 - The L1 graph is input-bound. A discarded crawl manifest removes seven eighths of the endpoint surface and no analysis prompt can recover it.
+- An authenticated entry known to the gateway is not a public link. Seed the crawl with the auth probe instead of expecting the public navigation to discover it.
+- A local-state action costs one page restore, so the crawl budget must cover the reload cost, not only the page count.
 - A container image built before a dependency lands is a deployment defect that presents as a model hang.
 
 ## Recommendation

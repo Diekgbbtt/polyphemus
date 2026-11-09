@@ -42,7 +42,11 @@ except ImportError:  # flat deployment beside mcp_server.py
 
 DEFAULT_SESSION_TIMEOUT_MS = 3_600_000
 DEFAULT_INACTIVITY_TIMEOUT_MS = 0
-DEFAULT_SETTLE_TIMEOUT_S = 5.0
+# The v0.5.5 worker marks the session `released` before it finishes the CDP
+# teardown and installs the fresh idle placeholder. Five seconds was shorter
+# than that tail on a loaded worker (iteration E saw `released` at the end of
+# the window), so the stop path now gives the end handler a wider margin.
+DEFAULT_SETTLE_TIMEOUT_S = 30.0
 DEFAULT_SETTLE_POLL_S = 0.05
 _RESET_URL = "about:blank"
 

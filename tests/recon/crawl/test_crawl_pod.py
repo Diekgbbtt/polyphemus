@@ -5,8 +5,6 @@ Fully mocked - no live Steel/LLM/Neo4j. `run_crawl_fn`, `triage_fn`, and
 (pure, deterministic) so the assertion actually exercises the manifest ->
 AssetDelta decomposition end to end.
 """
-import json
-
 from polymerhus.recon.crawl import crawl_pod
 from polymerhus.recon.domain.parsers.steel_parser import parse as steel_parse
 from polymerhus.recon.domain.types import JobSpec
@@ -103,12 +101,33 @@ def test_crawl_pod_generic_exception_yields_failed_export_no_crash():
     assert observations[0].macro_kind == "reduced_crawl_coverage"
 
 
-def test_crawl_pod_partial_v2_manifest_yields_reduced_coverage():
+def test_crawl_pod_partial_v2_manifest_keeps_its_surface():
+    """A partial crawl is evidence with reduced coverage, not a failed crawl.
+
+    Iteration E captured 111 endpoints and 11 parameters but hit the session
+    deadline. The old partial branch returned `manifest: None`, so the fail
+    node discarded every one of them. The partial path must parse the captured
+    surface and attach the reduced-coverage observation beside it.
+    """
     partial = {
         "schema_version": "steel-crawl/v2",
         "run": {"stop_reason": "session_deadline", "partial": True},
         "endpoints": [
-            {"method": "GET", "url": "https://app.example.com/one", "path": "/one"}
+            {
+                "endpoint_id": "ep_1",
+                "method": "GET",
+                "url": "https://app.example.com/one",
+                "path": "/one",
+            }
+        ],
+        "parameters": [
+            {
+                "name": "q",
+                "position": "query",
+                "endpoint_id": "ep_1",
+                "endpoint_path": "/one",
+                "baseurl": "https://app.example.com",
+            }
         ],
         "stats": {"flows": 1},
     }
@@ -127,11 +146,19 @@ def test_crawl_pod_partial_v2_manifest_yields_reduced_coverage():
     result = pod.invoke(base_pod_state())
     export = result["export"]
 
-    assert export.verdict == "failed"
-    assert "partial crawl: session_deadline" in export.error
+    assert export.verdict == "success"
+    assert export.error is None
+    assets = curate_fn.calls[0]["assets"]
+    assert {asset.type for asset in assets} == {"BaseURL", "Endpoint", "Parameter"}
+    assert export.assets_merged == len(assets)
     observations = curate_fn.calls[0]["observations"]
-    assert len(observations) == 1
-    assert observations[0].macro_kind == "reduced_crawl_coverage"
+    coverage = [
+        observation
+        for observation in observations
+        if observation.macro_kind == "reduced_crawl_coverage"
+    ]
+    assert len(coverage) == 1
+    assert coverage[0].evidence == "session_deadline"
 
 
 def test_crawl_pod_complete_v2_manifest_is_not_reduced():
