@@ -262,6 +262,10 @@ The root DOM contains no `/admin`, `/index.php/admin`, or `/index/User/set.html`
 The coverage algorithm therefore cannot discover the admin surface by navigation, so its absence was genuine for the public surface.
 The surface is technically reachable because the scaffolded `overview.yaml` names `auth_probe.url = /index.php/admin/Index/index.html`, and the authn skill and auth gateway use it.
 The crawl used that URL only in the oracle fetch, never as a frontier seed.
+The recon `job_orchestrator` trace confirms the source.
+The `load_skill`, `write_skill`, `auth_store`, and `tools` spans between 22:48:14 and 22:48:31 carry `auth_probe`, `admin/Index`, `overview`, and `browser_context`.
+The auth gateway read the console from the scaffolded overview and authn skill.
+The public crawl never discovered it.
 The new `crawl_seed_urls` helper loads the auth probe as the first seed and the public root second, so the authenticated backend is rendered and explored before the public site.
 
 The CDP capture sidecar already attaches before the root load and the auth probe; the oracle fetch is in the manifest as an observed endpoint.
