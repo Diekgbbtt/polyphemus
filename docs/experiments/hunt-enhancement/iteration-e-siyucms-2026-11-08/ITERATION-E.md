@@ -278,6 +278,24 @@ The session was not leaked; the worker had only not installed its fresh idle pla
 The default settle window is now 30 seconds.
 The regression test drives a worker that settles at six seconds with a fake clock.
 
+### Crawl smoke validation (2026-11-09)
+
+A fresh admin context restored and the oracle passed in a 300-second standalone crawl.
+The admin console was the first page visit: `page_2`, `discovery_source: auth_probe`, status 200, title `SIYUCMS | 控制台`.
+The crawl made 5,420 flows and captured 174 endpoints, 10 parameters, and 60 scripts before the 300-second deadline.
+The partial manifest parses to 462 assets: 230 `BaseURL`, 230 `Endpoint`, and 2 `Parameter`.
+Only the oracle fetch is an `/index.php/admin` endpoint in this short run.
+The admin menu links were offered on the rendered page, but the budget expired before JEV chose them.
+The 1800-second default is the full validation budget.
+The end report is clean: `stopped: true`, `saved: true`, `captured: true`, `released: null`, no warnings, and no manifest errors.
+The 30-second settle window is validated on a live worker.
+
+The first standalone attempt failed `restore_failed` because the fresh kali and worker containers had no `t-38e49ca5.target` alias.
+The normal `orchestrator up` writes that alias; the manual test added it.
+The stored admin `PHPSESSID` was twelve hours old and redirected to the login page.
+The preflight re-minted it through the scaffolded sign-in, and the normal trial mints a fresh context after the up.
+This staleness is a standalone-test artifact, not a crawl defect.
+
 ### Hunting bootstrap
 
 The hunting run `e82960ac-1b0c-4f13-9501-ca321982c32a` never reached its first LLM call.
