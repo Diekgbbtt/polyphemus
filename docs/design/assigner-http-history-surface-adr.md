@@ -4,7 +4,7 @@ Date: 2026-10-15.
 Status: accepted.
 Supersedes: `docs/design/assigner-adjacent-surface-adr.md` D-A2 and D-A4
 **for the Assigner only**. The mechanism-typist keeps its D-A2 surface
-(`graph_view` + HTTP pair + bounded `exec`); the D-A3 deductive target is
+(`graph_view` + HTTP pair + `exec`); the D-A3 deductive target is
 untouched.
 
 ## Context

@@ -59,7 +59,8 @@ def test_authorization_system_description_requires_the_observed_primitives() -> 
     assert "trust-agreement semantics" in prompt
     assert "at most three sentences" in prompt
     assert "never every route" in prompt
-    assert "bounded READ-ONLY probe" in prompt
+    assert "READ-ONLY probe" in prompt
+    assert "bounded READ-ONLY probe" not in prompt
     assert "never extensive probing" in prompt
     assert "never a hierarchy dump" in prompt
     assert "full primitive coverage is a later threat-modelling phase" in prompt

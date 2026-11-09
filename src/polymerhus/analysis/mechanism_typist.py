@@ -34,7 +34,7 @@ register-ready in `proposer_bodies["mechanism_typist"]`. Fail-open throughout.
 
 TOOL SURFACE (D-A2, extended past assigner-only): every turn of the chain binds the
 read-only `graph_view`, the HTTP-history pair (`search_http_history` /
-`get_http_artifact`), and a bounded `exec` (the SAME kali `execute_command` seam the
+`get_http_artifact`), and an `exec` (the SAME kali `execute_command` seam the
 hunting agents use, `analysis/graph_tools.build_analysis_exec_tool`). The when+how
 lives in `prompts/technical-system.md` and the `_REFLECTION_STEPS` scaffold; the
 binding lives in `proposer_turn._surface_tools`. See
@@ -423,7 +423,7 @@ def _reflection_prompt(chunk: Chunk, inventory: dict | None, *,
         f"{_asset_observation_paragraphs(chunk)}\n\n"
         f"{cot_scaffold(_REFLECTION_STEPS)}\n\n"
         "Write your reasoning as prose. You MAY call `graph_view`, "
-        "`search_http_history` / `get_http_artifact`, and the bounded `exec` while "
+        "`search_http_history` / `get_http_artifact`, and the `exec` while "
         "you work - use them to ground a hypothesis in the target's real evidence. "
         "Do NOT emit the structured `systems` / `system_edges` output in this step; "
         "that is the next call."

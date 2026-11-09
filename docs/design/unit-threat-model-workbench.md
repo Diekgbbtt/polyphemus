@@ -853,7 +853,7 @@ Runtime (pre-redesign baseline):
 
 Tools and evidence:
 - Today the orchestrator's surface is exactly `hunts_store`, `notes`, `graph_view` (`G3`); no exec, no HTTP-history verbs, no auth store (the role is binding-exempt), no skills (the redesign binds the web-vulnerability skills suite to the modeller, Q13: the suite is added to all hunter agents and the threat modeller).
-- `exec` is the kali MCP `execute_command`; bounded-budget precedent: the analysis typist's exec (default 6, env `ANALYSIS_TYPIST_EXEC_BUDGET`); the hunter's exec is deliberately unbounded.
+- `exec` is the kali MCP `execute_command`; the analysis typist's exec is unbounded at the role level, like the hunter's (the old per-call budget was removed as an anti-pattern on 2026-11-09). The execution-wide token budget and the per-call timeout are the bounds.
 - Auth store: per-project `data/<project_id>/auth/` (credentials plus login mechanisms), consumed by exec through the auth-feed seam (headers and cookies; Steel profiles).
 - HTTP history: per-project `history.sqlite3` plus body blobs; the artifact record carries `artifact_id`, `capture_context` (session id, run id, spec id, ...), and request/response timestamps; ordered by `(created_at, artifact_id)`; the hunter holds a read pair (search and get), the pod holds `replay`.
 - Back-edge to recon: removed by standing operator ruling 2026-08-22 (recorded in four docs); stale residue in `hunting-67-orchestrator-spec.md` and `OrchestratorTools.back_edge` belongs on the R4-2 cleanup list.

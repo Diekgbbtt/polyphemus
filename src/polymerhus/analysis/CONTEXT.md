@@ -350,7 +350,7 @@ _Avoid_: analyser (the whole-model term).
 **TechnicalSystem / mechanism-typist**:
 The sole owner of mechanism TYPING (agent spec #9) - it defines/extends the cross-cutting `System`s the streamed surface evidences and links them to Services as typed `Service->System` edges, never Service props. BREADTH-ONLY: it emits `L1DeltaBatch{systems, system_edges}` plus each System's `evidence` witnesses (the `EVIDENCED_BY` grounding, #354); all System DEEPENING (WebPresentation rendering/navigation, authz inverse-pyramid, backward-recon probes, the `AnatomyResult` triple) is Phase B (epic #39).
 It runs a THREE-call chain over one chunk delivered AFTER the Assigner: a hypothesis-driven free-text **reflection** (define which Systems the assets impact, verify soundly against tool-grounded evidence - exhaustion fails the step CLOSED), then structured **systems extraction**, then structured **services linking** (soft pass-through on later-step exhaustion).
-Every turn binds the read-only `graph_view`, the HTTP-history pair, and the bounded `exec` tool (D-A2 extended past assigner-only; see `docs/design/typist-tool-workflows.md`); the reflection turn carries them as tools while keeping `response_format` prose, so the request shape never toggles.
+Every turn binds the read-only `graph_view`, the HTTP-history pair, and the `exec` tool (D-A2 extended past assigner-only; see `docs/design/typist-tool-workflows.md`); the reflection turn carries them as tools while keeping `response_format` prose, so the request shape never toggles.
 The role prompt rides the seam default on all three calls (byte-identical, cache-safe).
 _Avoid_: analyser (the whole-model term); anatomy (the Phase-B deepening path).
 

@@ -2,6 +2,7 @@
 
 Date: 2026-10-15.
 Status: accepted.
+Amended: 2026-11-09 - the per-call exec budget is removed as an anti-pattern (operator ruling); the typist's `exec` is unbounded at the role level.
 Owner change: the proposer-tool-workflows rework (branch `feat/proposer-tool-workflows`).
 Amends: `docs/design/assigner-adjacent-surface-adr.md` D-A2 (the HTTP-history remit and the tools' role reach).
 
@@ -15,7 +16,7 @@ The mechanism-typist had a THREE-call chain (reflection, systems extraction, ser
 This change does three things and records why:
 
 1. It stops the Assigner's volatile user turn from restating the `graph_view` widening that the system prompt already owns, and it widens the HTTP-history remit past disambiguation-only.
-2. It gives the mechanism-typist a real tool surface (`graph_view`, the HTTP-history pair, and a bounded `exec`), with a when+how spec in both the skill and the reflection scaffold.
+2. It gives the mechanism-typist a real tool surface (`graph_view`, the HTTP-history pair, and an `exec`), with a when+how spec in both the skill and the reflection scaffold.
 3. It removes the typist's redundant per-call `system_prompt=` restatement, relying on the seam default.
 
 ## Trace evidence
@@ -52,7 +53,7 @@ The typist's three calls are three states of one reasoning pass, and the tool su
 | Call | State | What the model is doing | Where a tool call pays off |
 |---|---|---|---|
 | 1 reflection (prose) | **ORIENT** | read each asset + its insight + its response evidence; decide what mechanisms the slice could evidence | `graph_view` broad enumeration (unit's endpoints, content_type/title/status/server, Headers/Technologies, Observations); text/html census for page clustering |
-| 1 reflection (prose) | **VERIFY / FALSIFY** | test each hypothesis against evidence; decide new-vs-extend | `graph_view` read of currently-defined Systems and the unit's existing edges; `search_http_history`/`get_http_artifact` for the recorded request/response shape; bounded `exec` to read a rendered page's embedded features |
+| 1 reflection (prose) | **VERIFY / FALSIFY** | test each hypothesis against evidence; decide new-vs-extend | `graph_view` read of currently-defined Systems and the unit's existing edges; `search_http_history`/`get_http_artifact` for the recorded request/response shape; `exec` to read a rendered page's embedded features |
 | 2 systems extraction (structured) | **EMIT (systems)** | fold the surviving mechanisms into typed `systems` with compounded descriptions | none required; the tools remain bound only so the request shape stays constant |
 | 3 services linking (structured) | **EMIT (links)** | connect each System to the Services it overlays | `graph_view` read of existing edges immediately before the link, to avoid duplicating a committed edge |
 
@@ -66,7 +67,7 @@ D-A2 (as originally written) bound `graph_view` plus the HTTP-history pair on th
 This change amends it in two directions:
 
 - **Reach.** `proposer_turn._surface_tools` now binds the read tools on the Assigner AND the mechanism-typist turns.
-  The typist's turn additionally binds the bounded `exec` term.
+  The typist's turn additionally binds the `exec` term.
   No other role binds surface tools: adjacent-surface reading and probing are not their ownership.
 - **Remit.** The HTTP-history pair is no longer disambiguation/confirmation only: when a collected Endpoint looks even adjacently promising for a candidate Service, the Assigner MAY pull its fuller response (one endpoint often embeds several features - iframes in HTML, menu entries, tabs).
 
@@ -94,13 +95,22 @@ The `exec` term reuses the SAME execution seam the hunting agents use:
 - The tool is `attack/hunting/hunter_tools.ExecTool`, the hunting agent's exec tool, bound by `build_hunter_tools` and wired in production with `exec_fn=default_exec_fn` (`attack/hunting/runtime.py::_default_hunter_builder`).
 
 `analysis/graph_tools.build_analysis_exec_tool` returns a THIN wrapper over the hunting `exec` tool.
-It adds exactly two things, both analysis-side:
+It adds exactly one analysis-side thing:
 
-- the model-facing description (`ANALYSIS_EXEC_CONTRACT`) - the hunter's description is written for a spec-holding probe agent (the partition guard, the replay lineage) and would mislead the typist;
-- a per-call call budget - the typist is a bounded read phase, and an unbounded exec loop must not sit on the analysis critical path.
+- the model-facing description (`ANALYSIS_EXEC_CONTRACT`) - the hunter's description is written for a spec-holding probe agent (the partition guard, the replay lineage) and would mislead the typist.
 
 Everything else is the hunting tool verbatim: it holds an `hunter_tools.ExecTool` and delegates each call to it, so the same `exec_fn(command, timeout_s)` seam, the same `ExecArgs` schema, the same fail-open result shaping, and the same tool name (`exec`) are reused unchanged.
-The budget defaults to 6 (`ANALYSIS_TYPIST_EXEC_BUDGET`, env-overridable) and degrades to a denoted `exec_budget_exhausted` result, never a raise.
+
+**Amendment 2026-11-09 (operator ruling): the per-call exec budget is removed.**
+It was an anti-pattern for three reasons:
+
+- it reset on every model turn because the surface tools are rebuilt per turn, so it did not bound the chunk;
+- it returned a false `exec_budget_exhausted` tool failure the model could not act on;
+- it duplicated the execution-wide token budget and the analysis pass semaphore.
+
+The typist's `exec` is now UNBOUNDED at the role level, exactly like the hunter's.
+The execution-wide token budget, the analysis pass semaphore, and the per-call `EXEC_TIMEOUT_S` are the bounds.
+`ANALYSIS_TYPIST_EXEC_BUDGET` and the `exec_budget_exhausted` result are removed from the code and the environment.
 
 ### Prompt delivery and the 4c dedup
 
@@ -122,7 +132,7 @@ The policy itself stays in the system half (byte-stable, cacheable), where it be
 ## Consequences
 
 - The typist can now ground a hypothesis in the target's real evidence, closing the "asserted from a path noun" failure mode the traces expose.
-- Per-chunk cost grows by the typist's bounded read/probe phase; the exec budget and the `graph_view` LIMIT discipline keep it bounded.
+- Per-chunk cost grows by the typist's read/probe phase; the execution-wide token budget, the per-call timeout, and the `graph_view` LIMIT discipline bound it.
 - The typist's structured-output wire method moves to the tools axis on capable models (see above).
 - The 2026-09-17 operator ruling ("the analysis proposers carry no skill surface") is preserved: the new tools are a data-grounding surface, not a skill surface. The adjacent-surface tools are not `load_skill`, carry no L1 index middleware, and pass no skill context.
 - `tests/integration/test_assigner_contracts.py::test_C35c` and `test_C35e` encoded the old layering and the disambiguation-only remit; they are rewritten by this change, not grandfathered.

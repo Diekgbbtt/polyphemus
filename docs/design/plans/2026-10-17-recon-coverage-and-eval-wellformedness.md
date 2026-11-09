@@ -49,7 +49,7 @@ Sources: eval server (`eval-server-polyphemus`), containers `ph-dd131acc-*`; Pos
 - white-jotter: credentials store populated with account `wjprobe_1790894002-first_authn_bootstrap`, tokens `JSESSIONID` and `rememberMe`, `login_endpoint http://t-1618c524.target/api/login`, `mechanism: password`, defence `shiro-session-authentication`.
 - The recon orchestrator role (`job_orchestrator`) is the auth gateway; it called `auth_store` (8 calls in the wj formal run census).
 - Hunting pod runners called `auth_store` too (8 on wj, 1 on comfyui).
-- The analysis agents bind no `auth_store` tool: the assigner binds only the HTTP-history pair (`search_http_history`, `get_http_artifact`); the mechanism typist binds `graph_view` plus the HTTP-history pair plus bounded `exec` (`src/polymerhus/analysis/proposer_turn.py`, `_surface_tools`).
+- The analysis agents bind no `auth_store` tool: the assigner binds only the HTTP-history pair (`search_http_history`, `get_http_artifact`); the mechanism typist binds `graph_view` plus the HTTP-history pair plus `exec` (`src/polymerhus/analysis/proposer_turn.py`, `_surface_tools`).
 - The read-only auth-capable binding exists (`app/auth/seams.py::auth_capable_binding`); the pod triager uses it, and `recon/CONTEXT.md` states explicitly that the analysis-domain agents never bind it.
 - Typist HTTP-history usage in the formal runs is non-zero (comfyui: 32 `search_http_history` + 10 `get_http_artifact`; white-jotter: 14 + 12); assigner usage: comfyui 42 + 6, white-jotter 14 + 8.
 
