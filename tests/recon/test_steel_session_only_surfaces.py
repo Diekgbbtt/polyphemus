@@ -11,7 +11,6 @@ provider, wrapper, gateway, and auth-gate tiers.
 """
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -64,6 +63,17 @@ def test_gateway_prompt_names_the_oracle_and_fails_closed() -> None:
     assert "authenticated landing" not in lower
 
 
+def test_gateway_prompt_uses_the_account_oracle_and_root_fallback() -> None:
+    text = _read(
+        "src", "polymerhus", "recon", "control", "prompts", "auth-gateway.md"
+    )
+    lower = text.lower()
+    assert "account.auth_probe" in text
+    assert "root_url" in lower
+    assert "one session" in lower
+    assert "overview.auth_probe.url" not in text
+
+
 def test_gateway_prompt_names_the_crawl_phase_and_the_job() -> None:
     text = _read(
         "src", "polymerhus", "recon", "control", "prompts", "auth-gateway.md"
@@ -90,6 +100,24 @@ def test_authn_meta_skill_and_bootstrap_teach_the_oracle() -> None:
         assert "indeterminate" in text.lower(), name
         assert "auth-oracle.sh" in text, name
         assert "mint" in text.lower(), name
+
+
+def test_authn_meta_skill_and_bootstrap_teach_the_session_model() -> None:
+    skill = _read("skills", "meta", "authn-skill-writing", "SKILL.md")
+    prompt = _read(
+        "skills", "meta", "authn-skill-writing", "references",
+        "bootstrap-workflow.md",
+    )
+    for name, text in (("SKILL.md", skill), ("bootstrap-workflow.md", prompt)):
+        lower = text.lower()
+        assert "account is one session" in lower, name
+        assert "role" in lower, name
+        assert "root_url" in lower, name
+        assert "auth_probe" in lower, name
+        assert "browser_context" in lower, name
+        assert "privilege" in lower, name
+    assert "highest privilege first" in skill.lower()
+    assert "highest privilege first" in prompt.lower()
 
 
 def test_gateway_prompt_uses_the_redacted_store_and_recorded_replay() -> None:
@@ -191,5 +219,6 @@ def test_authn_meta_skill_and_bootstrap_prompt_have_no_profile_vocabulary() -> N
 def test_external_bootstrapper_prompt_uses_a_state_reference() -> None:
     text = _read("tools", "bootstrap", "prompts", "data-dep-authn.md")
     assert "{profile}" not in text
-    assert "steel? ({state})" in text
+    assert "browser_context? ({ref})" in text
+    assert "steel? ({state})" not in text
     assert "profile" not in text.lower()

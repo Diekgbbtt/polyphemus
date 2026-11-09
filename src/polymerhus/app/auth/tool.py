@@ -92,14 +92,19 @@ AUTH_STORE_CONTRACT = (
     "`mechanism`, `defences`, `fingerprinting`, `technical_conditions` "
     "(optional list of `{name, check}`, absent by default), `auth_probe` "
     "(`{url}` - the authenticated-context oracle: a path that answers 2xx only "
-    "with an authenticated context, 401/403/3xx without one), `notes`. Account "
-    "record: `origin` (operator or agent, stamped server-side), optional "
-    "`procedure` label, optional `credentials` (`username`, `password`, "
+    "with an authenticated context, 401/403/3xx without one; the legacy "
+    "fallback for an account that declares neither a probe nor a root), "
+    "`notes`. Account "
+    "record: one account is one session. `origin` (operator or agent, stamped "
+    "server-side), optional `procedure` label, optional `role`, `root_url`, "
+    "and `auth_probe` (the session privilege surface, its featured root "
+    "default `/`, and its own oracle default the root), optional "
+    "`credentials` (`username`, `password`, "
     "`login_url` plus optional `domain` and form selectors), optional `roles` "
     "(role name -> credential set) with `default_role` naming a configured "
     "role, optional "
     "`tokens` (each `{value, location: cookie | header | storage, target?, "
-    "expiry?}`), optional `browser_context` (`{ref}` key only), optional concrete "
+    "expiry?}`), optional `browser_context.ref` (`{ref}` key only), optional concrete "
     "`snapshot` (`{headers, cookies, params, captured_at}`), optional "
     "`notes`, the loop-asserted validity fact `status` (`valid` | `not_valid`, "
     "absent until asserted - any other value refuses with `auth_invalid`), "
@@ -108,7 +113,7 @@ AUTH_STORE_CONTRACT = (
     "Full state shape: `{\"overview\": ..., \"accounts\": ...}`.\n\n"
     "READ/WRITE RULES - reads are field-arbitrary. An empty path returns the "
     "concise `summary` view by default: the overview plus the account names, "
-    "origins, procedures, role names, default roles, statuses, and token "
+    "origins, procedures, session roles, roots, probes, role names, default roles, statuses, and token "
     "METADATA (location, target, expiry) - never a credential value, token "
     "value, form selector, role credential set, steel reference, snapshot, or "
     "notes body. `view=\"full\"` returns the full state; `view=\"overview\"` "
@@ -144,7 +149,8 @@ REDACTED = "<redacted>"
 AUTH_STORE_READ_CONTRACT = (
     "Read the run's per-project auth store in READ-ONLY form: the `overview` "
     "(login endpoint, `required_headers`, mechanism) plus `account` records "
-    "(`tokens`, `snapshot`, `browser_context`, `status`).\n\n"
+    "(`role`, `root_url`, `auth_probe`, `tokens`, `snapshot`, "
+    "`browser_context`, `status`). One account is one session.\n\n"
     "Names, shapes, and statuses only: passwords, token values, and snapshot "
     "cookie/header/param values read as " + REDACTED + ". Never reconstruct or "
     "replay a secret.\n\n"
@@ -411,7 +417,16 @@ def _summary_account(name: str, record: Any) -> dict:
     out: dict = {"name": name}
     if not isinstance(record, dict):
         return out
-    for key in ("origin", "procedure", "default_role", "status", "updated_at"):
+    for key in (
+        "origin",
+        "procedure",
+        "role",
+        "root_url",
+        "auth_probe",
+        "default_role",
+        "status",
+        "updated_at",
+    ):
         if key in record:
             out[key] = record[key]
     roles = record.get("roles")
@@ -519,11 +534,12 @@ def _credential_sets(record: Any):
 def _resolve_canonical_origin(state: Any, origin: str | None) -> Any:
     """Resolve deployment-neutral stored paths against the canonical origin.
 
-    Mutates the (already copied) read state in place: `login_url` and
-    `overview.auth_probe.url` gain the origin when they carry no scheme, and
-    the informational `domain` is back-filled when absent. An absolute value
-    is NEVER rewritten (agent-minted live state stays as recorded); a None
-    origin leaves everything untouched."""
+    Mutates the (already copied) read state in place: `login_url`, the
+    account `root_url`/`auth_probe`, and `overview.auth_probe.url` gain the
+    origin when they carry no scheme, and the informational `domain` is
+    back-filled when absent. An absolute value is NEVER rewritten
+    (agent-minted live state stays as recorded); a None origin leaves
+    everything untouched."""
     if not origin or not isinstance(state, dict):
         return state
     overview = state.get("overview")
@@ -538,6 +554,12 @@ def _resolve_canonical_origin(state: Any, origin: str | None) -> Any:
         return state
     host = origin.split("://", 1)[1].split("/", 1)[0]
     for record in accounts.values():
+        if not isinstance(record, dict):
+            continue
+        for key in ("root_url", "auth_probe"):
+            value = record.get(key)
+            if isinstance(value, str) and value and "://" not in value:
+                record[key] = f"{origin.rstrip('/')}/{value.lstrip('/')}"
         for credentials in _credential_sets(record):
             login_url = credentials.get("login_url")
             if isinstance(login_url, str) and login_url and "://" not in login_url:

@@ -106,6 +106,17 @@ def test_contract_carries_the_account_identity_rule():
         assert marker in AUTH_STORE_CONTRACT, f"contract missing {marker!r}"
 
 
+def test_contract_teaches_the_session_model():
+    for marker in (
+        "one account is one session",
+        "role",
+        "root_url",
+        "auth_probe",
+        "browser_context.ref",
+    ):
+        assert marker in AUTH_STORE_CONTRACT, f"contract missing {marker!r}"
+
+
 def test_contract_carries_the_overall_schema():
     for marker in ("login_endpoint", "required_headers", "mechanism",
                    "defences", "fingerprinting", "technical_conditions",
@@ -211,6 +222,35 @@ def test_read_of_an_unseeded_project_is_a_valid_empty(tmp_path):
     assert out == {"ok": True, "command": "read", "path": "",
                    "view": "summary",
                    "value": {"overview": {}, "accounts": []}}
+
+
+def test_summary_account_carries_the_session_model(tmp_path):
+    store = AuthStore(tmp_path)
+    store.write(
+        PROJECT,
+        "accounts.alice",
+        {
+            "role": "member",
+            "root_url": "/index/user/index.html",
+            "auth_probe": "/index/user/index.html",
+            "credentials": {
+                "username": "alice",
+                "password": "secret",
+                "login_url": "/login",
+            },
+        },
+        origin="operator",
+    )
+    tool = build_auth_store_tool(PROJECT, store)
+
+    out = tool.invoke({"command": "read"})
+    account = next(
+        item for item in out["value"]["accounts"] if item["name"] == "alice"
+    )
+
+    assert account["role"] == "member"
+    assert account["root_url"] == "/index/user/index.html"
+    assert account["auth_probe"] == "/index/user/index.html"
 
 
 def test_read_defaults_to_a_bounded_summary_without_secret_values(tmp_path):

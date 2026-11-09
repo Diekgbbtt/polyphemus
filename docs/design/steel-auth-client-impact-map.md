@@ -1,5 +1,7 @@
 # Steel and authn client impact map
 
+*Historical impact map for the 2026-10 browser-client work. The current session model is `docs/design/crawl-session-fanout-adr.md`; the `overview.auth_probe.url` references below are the pre-2026-11-09 single-account model.*
+
 Date: 2026-10-29.
 Scope: every component that consumes the Steel browser contract or the project authentication state.
 Question: did the session-only migration, the redacted auth-store view, and the live-view changes converge across all clients?

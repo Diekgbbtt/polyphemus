@@ -365,15 +365,12 @@ def assess_surface(target_dir: Path) -> dict[str, dict]:
     from polymerhus.analysis.scaffold import build_shells_from_path as build_shells  # noqa: PLC0415
 
     try:
-        services, systems, _d = build_shells(target_dir / "operator_kb.md")
+        services, _systems, _d = build_shells(target_dir / "operator_kb.md")
         kb_slugs = {getattr(s, "business_function_slug", "") for s in services}
-        kb_kinds = {getattr(s, "kind", "") for s in systems}
     except Exception:  # noqa: BLE001 - parity degrades, never raises
-        kb_slugs, kb_kinds = set(), set()
+        kb_slugs = set()
     surface_slugs = {str((u.get("identity") or {}).get("business_function_slug"))
                      for u in units if isinstance(u, dict) and u.get("label") == "Service"}
-    surface_kinds = {str((u.get("identity") or {}).get("kind"))
-                     for u in units if isinstance(u, dict) and u.get("label") == "System"}
     missing = sorted(s for s in kb_slugs - surface_slugs if s and s != "None")
     auth_frac = round(auth_edges / auth_services, 2) if auth_services else 1.0
     c3 = _criterion(
@@ -389,31 +386,106 @@ def assess_surface(target_dir: Path) -> dict[str, dict]:
 
 # --- family D: the auth bundle ------------------------------------------------
 
+# The role names that denote a privileged surface for the bootstrap score.
+# The match is a substring on purpose: `super_administrator`, `super-admin`,
+# `administrator`, `admin`, `operator`, `owner`, and `root` all count.
+_PRIVILEGED_ROLE_MARKERS = (
+    "super_admin",
+    "super-admin",
+    "superadmin",
+    "administrator",
+    "admin",
+    "operator",
+    "owner",
+    "root",
+)
+
+
+def _session_role(account: dict) -> str | None:
+    role = account.get("role") or account.get("default_role")
+    return role if isinstance(role, str) and role else None
+
+
+def _has_high_privilege_session(roles: list[str | None]) -> bool:
+    for role in roles:
+        if not role:
+            continue
+        low = role.lower()
+        if any(marker in low for marker in _PRIVILEGED_ROLE_MARKERS):
+            return True
+    return False
+
+
 def assess_auth(project_dir: Path) -> dict[str, dict]:
-    """D1: the AuthContext + authn skill (shape, via the validator)."""
+    """D1: the AuthContext + authn skill (shape, via the validator).
+
+    One account is one session. The criterion rewards one session per role,
+    a high-privilege session, and a per-account root or probe. The overview
+    probe is a legacy fallback, not the required oracle.
+    """
     validator = _validator()
     errors = validator.check_auth(project_dir)
     overview = _read_yaml(project_dir / "auth" / "overview.yaml") or {}
     credentials = _read_yaml(project_dir / "auth" / "credentials.yaml") or {}
     accounts = credentials.get("accounts") if isinstance(credentials, dict) else {}
-    n_accounts = len(accounts) if isinstance(accounts, dict) else 0
+    account_rows = (
+        [record for record in accounts.values() if isinstance(record, dict)]
+        if isinstance(accounts, dict)
+        else []
+    )
+    n_accounts = len(account_rows)
+    roles = [_session_role(record) for record in account_rows]
+    named_roles = {role for role in roles if role}
+    n_roots = sum(
+        1 for record in account_rows if record.get("root_url")
+    )
+    n_account_probes = sum(
+        1 for record in account_rows if record.get("auth_probe")
+    )
+    n_contexts = sum(
+        1
+        for record in account_rows
+        if isinstance(record.get("browser_context"), dict)
+        and record["browser_context"].get("ref")
+    )
+    high_privilege = _has_high_privilege_session(roles)
     probe = overview.get("auth_probe") if isinstance(overview, dict) else None
     probe_present = isinstance(probe, dict) and bool(probe.get("url"))
     skill = project_dir / "skills" / "authn" / "SKILL.md"
+    metrics = {
+        "validator_errors": len(errors),
+        "n_accounts": n_accounts,
+        "n_sessions": n_accounts,
+        "n_roles": len(named_roles),
+        "n_account_probes": n_account_probes,
+        "n_roots": n_roots,
+        "n_contexts": n_contexts,
+        "high_privilege_session": high_privilege,
+        "auth_probe_present": probe_present,
+        "overview_probe_present": probe_present,
+        "skill_present": skill.is_file(),
+        "overview_present": bool(overview),
+    }
     if errors:
-        d1 = _criterion(1 if skill.is_file() or n_accounts else 0,
-                        {"validator_errors": len(errors), "n_accounts": n_accounts,
-                         "auth_probe_present": probe_present},
-                        errors[:5])
-    else:
         d1 = _criterion(
-            4 if n_accounts >= 2 and skill.is_file() and probe_present
-            else 3 if n_accounts >= 1 and probe_present
-            else 2 if not n_accounts else 1,  # valid empty = unauthenticated target
-            {"n_accounts": n_accounts,
-             "skill_present": skill.is_file(),
-             "auth_probe_present": probe_present,
-             "overview_present": bool(overview)})
+            1 if skill.is_file() or n_accounts else 0, metrics, errors[:5]
+        )
+    else:
+        if (
+            n_accounts >= 2
+            and skill.is_file()
+            and len(named_roles) >= 2
+            and high_privilege
+            and n_contexts == n_accounts
+        ):
+            scale = 4
+        elif n_accounts >= 1 and skill.is_file() and n_contexts >= 1:
+            scale = 3
+        elif not n_accounts:
+            scale = 2  # valid empty = unauthenticated target
+        else:
+            scale = 1
+        d1 = _criterion(scale, metrics)
     return {"D1": d1}
 
 

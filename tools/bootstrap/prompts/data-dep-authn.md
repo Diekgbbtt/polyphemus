@@ -37,7 +37,7 @@ Write to (`<staging>` is the staging root from the Substitutions block, `<projec
 
 `overview.yaml` - the operator-owned login-mechanism header:
 `{login_endpoint?, required_headers? (list of "Name: value"), mechanism?, defences?, fingerprinting?, technical_conditions? (list of {name, check, role?}), anti-bot? (a vendor/challenge name or null), http-client-replayability? (true|false; unset = UNKNOWN), auth_probe? ({url: <path>} - the legacy fallback oracle), notes?}`.
-`auth_probe.url` is a deployment-neutral path such as `/api/authentication`, never a host.
+`account.auth_probe` and `account.root_url` are deployment-neutral paths such as `/api/authentication`, never hosts; the overview `auth_probe` is legacy-only.
 Add one `technical_conditions` entry per role with the authenticated-request shape for that role; the `role` label names the account role.
 The primary oracle lives on each account, not on the overview.
 Prove that it answers 2xx only with an authenticated context: 401, 403, or 3xx without one.
@@ -48,6 +48,14 @@ The recon gateway uses it as the only authentication oracle; a target with a dec
 `role` names the privilege surface; `root_url` is the featured entry (default `/`); `auth_probe` is that session's oracle (default the root URL); `browser_context.ref` is the durable pool reference.
 Scaffold one account per role, including the least-privileged baseline; an account with no role starts at `/`.
 The authn skill prose covers the sign-in and sign-up procedure for every role.
+
+## Role coverage and privilege priority
+
+Enumerate every distinct role the target exposes: super-administrator or admin, operator or editor, member or user, support, and the least-privileged baseline.
+Mint and verify one account/session per role, in descending privilege order, highest privilege first.
+Do not stop after one privileged account when the target exposes more roles.
+The highest-privilege role is the authorization-testing superset; the baseline role supplies the least-privileged comparison.
+The overview carries one `technical_conditions` entry per role, and the authn skill prose carries that role's sign-in and sign-up procedure.
 Name every account `<username>-<minting_context>` with the credential username (email suffix stripped), a hyphen, then `first_authn_bootstrap`.
 Never put `origin` in the store payload normally, but the file MAY carry `origin: operator` for the operator-seeded record; leave it out if unsure.
 Secret values live in `credentials.yaml` and NEVER in the skill.
@@ -68,7 +76,7 @@ Record the **session snapshot** (`snapshot.headers`, `snapshot.cookies`, and any
 - Request-replayable: reproduce the sign-up/sign-in request shape with curl, verify a fresh session cookie + a non-login landing, then capture the account's cookies/tokens into `credentials.yaml`.
 - If a defence signal forces the browser: the Steel CLI may not be authenticated in this environment - if it is unavailable, record `http-client-replayability: false` honestly and author the browser steps anyway, flagging the gap in your report. Never fake a replay.
 - New accounts are minted with synthetic identity data (a fake email and fake personal details), never real personal data; the exact values are recorded in the account's `credentials`.
-- Find and prove the authenticated-context oracle before recording: a same-origin path that returns 2xx with the authenticated session and 401/403/3xx without it.
+- Find and prove the authenticated-context oracle per role before recording: a same-origin path that returns 2xx with that role's session and 401/403/3xx without it. If the role has no probe, its `root_url` is the fallback oracle.
   A login page is never the oracle.
 - Re-run the oracle before recording; treat an expired/missing session as a loud failure, never a silent anonymous fallback.
 

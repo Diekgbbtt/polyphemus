@@ -5,6 +5,8 @@
 
 # Steel session-only change: exhaustive impact map (#395)
 
+*Historical impact map. The current session model is `docs/design/crawl-session-fanout-adr.md`; the `steel.state` references below are the retired pre-2026-11-07 model.*
+
 *Status: implemented and audited 2026-10-21.*
 *Implementation commit: `894711c1`. The close-out commit adds the client audit and documentation disposition recorded here.*
 *Decision record: `docs/design/steel-session-only-395-decisions.md`.*

@@ -128,6 +128,7 @@ The implemented seams are:
 - `recon/control/pipeline.py`: every valid account is handed to the crawl.
 - `docs/experiments/hunt-enhancement/iteration-e-siyucms-2026-11-08/seed_iteration_e.py`: the all-account preflight planner and the admin/member mint dispatch.
 
+The per-component impact map and the residual live validation are in `docs/design/crawl-session-fanout-impact-map.md`.
 The TDD seams are the five agreed boundaries:
 
 1. Auth record validation and session projection.
@@ -138,7 +139,7 @@ The TDD seams are the five agreed boundaries:
 
 ## Evidence
 
-The crawl, Kali, app, auth-feed, pipeline-gateway, authn-loop, bootstrap-validator, preflight-planner, and project-management suites pass.
+The affected crawl, Kali, app, auth-feed, pipeline-gateway, authn-loop, bootstrap-validator, bootstrap-assessment, preflight-planner, and project-management suites pass: 3,871 passed, 42 skipped.
 The full suite collects 8,099 tests; it did not finish inside the 20-minute command window.
 The earlier 300-second live smoke proved the auth context and the partial/budget/settle fixes.
 It used the removed admin-probe seed, so it is not evidence for this fan-out.

@@ -16,11 +16,12 @@ Three data dependencies per target, the N12 work items of the eval harness:
    When the account's `auth_probe` is absent or empty, a non-4xx, non-3xx response at its `root_url` is the success rule.
    The overview's `auth_probe` remains the fallback for a legacy account that declares neither.
    The overview's `technical_conditions` cite the authenticated-request shape for each role.
+   Mint one account per role, highest privilege first, and keep the least-privileged baseline; do not stop after one privileged account.
    It is the recon gateway's only pass/fail signal for authentication, and the crawl's precondition.
    Placed through the data-dependency endpoints: the auth files land in the app data root `<data_root>/<project_id>/auth/`.
    The account browser-context reference is `browser_context: {ref: <pool context key>}`.
    The retired `steel` object (and its `steel.profile` / `steel.state` fields) is not a valid reference: the store refuses it, and the data-dependency validator refuses it.
-3. **Project authn skill** - the replayable sign-in/sign-up procedure bundle.
+3. **Project authn skill** - the replayable sign-in/sign-up procedure bundle. It covers every role, and the bootstrap mints the highest-privilege role first.
    Placed through the authn-skill endpoint: the canonical live bundle is `<skills_root>/target-specific-procedure/<project_id>/authn/SKILL.md`.
    The data root is not a skill location.
    The skill cites secret names and session names only, never a value.
@@ -45,7 +46,7 @@ eval/data/webexploitbench/<target>/
 eval/data-dependencies/
   <project_id>/         # placeholder project id (the target name; remapped to the real eval project id at wire time)
     auth/
-      overview.yaml     # AuthContext overview (includes auth_probe: {url}) - SECRET-BEARING when it carries tokens; never commit
+      overview.yaml     # AuthContext overview (legacy fallback auth_probe: {url}); per-account probes live in credentials.yaml; never commit when it carries token material
       credentials.yaml  # AuthContext accounts - SECRET-BEARING; never commit
     skills/
       authn/

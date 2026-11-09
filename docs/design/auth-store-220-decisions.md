@@ -224,4 +224,6 @@ role; the authn skill prose covers the sign-in and sign-up procedure for each
 role.
 The validator checks the record shapes and deployment-neutral URLs, not the
 prose coverage.
+The `auth_store` summary and read view expose the account's `role`, `root_url`,
+and `auth_probe`; relative values resolve against the canonical origin on read.
 The full decision record is `docs/design/crawl-session-fanout-adr.md`.

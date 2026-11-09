@@ -21,7 +21,8 @@ It is the prompt form of the mandatory workflow in `../SKILL.md`; the skill is t
 - `<mechanics_skill_path>` - the path to the `steel-browser` operation-mechanics skill (`skills/internal/tools/steel-browser/SKILL.md`), with its `references/` scripts beside it.
 - `<session_name>` - the agent-chosen session name for a browser step.
 - `<session_timeout_ms>` - the session hard timeout in milliseconds.
-- `<auth_probe_path>` - the authenticated-context oracle path (for example `/api/authentication`), or `none` while you are still discovering it.
+- `<roles>` - the distinct privilege roles the target exposes, highest privilege first (for example `super_administrator, member, anonymous`); use `anonymous` only when the target has no credential-bearing baseline.
+- `<auth_probe_path>` - the authenticated-context oracle path (for example `/api/authentication`), or `none` while you are still discovering it. It is per account, not one global URL.
 - `<authenticated_landing_substr>` - a substring of the authenticated landing URL, for a wait condition only.
 - `<marker>` - a text marker that appears only in the authenticated state, for a wait condition only.
 
@@ -35,6 +36,10 @@ Read `<meta_skill_path>` and follow its phases P0 through P6 in order, including
 Before the first browser step, read `<mechanics_skill_path>` (and its `references/` scripts beside it) for the operation MECHANICS - snapshot, batch, waiting, ref flow, variadic encoding, session lifecycle; do not re-derive the command grammar from `--help`.
 Interfaces: write store facts with `PUT <seed_face_url>` and body `{overview?, accounts?}`; read state with `GET <read_face_url>`; write the project skill at `<data_root>/<project_id>/skills/<skill_name>/SKILL.md` with references beside it.
 Target: sign-in at `<login_url>`; sign-up at `<signup_url>`; account `<credentials>`.
+Enumerate `<roles>` and mint one verified session per role, in descending privilege order, highest privilege first.
+Do not stop after one privileged account when the target exposes more roles.
+The least-privileged baseline role starts at `/`; an account with no role is that baseline.
+An account is one session: record `role`, `root_url`, `auth_probe`, and `browser_context.ref` on it.
 If `<signup_url>` is not `none`, run sign-up and sign-in as SEPARATE flows, never merged.
 An account is keyed by its credential identity: when both flows use the same credentials they share ONE account (sign-up mints it, sign-in serves it), never a second account for the same identity.
 
@@ -52,10 +57,10 @@ The interaction mode defaults to request-based; the browser is taken only when t
 7. Persist both facts through the seed face, merging the overview you read first; a shape violation returns 400 `auth_invalid` and lands nothing.
 8. Keep the shared vocabulary: `waf_protected` and `waf_detection` for a block, `rate_limited` for a throttle; an application-level 401/403 takes no blocking-signature name.
 
-## The authenticated-context oracle (mandatory)
+## The authenticated-context oracle (mandatory, per role)
 
-Find ONE URL that answers 2xx only with an authenticated context.
-Use `<auth_probe_path>` when it is already known; otherwise choose a same-origin candidate such as `/api/me`, `/api/authentication`, or an account page.
+Find one URL per role that answers 2xx only with that role's authenticated context.
+Use `<auth_probe_path>` when it is already known; otherwise choose a same-origin candidate such as `/api/me`, `/api/authentication`, or the role's landing page.
 Prove both polarities before recording it:
 
 - With the authenticated session, a browser request returns 2xx with no followed redirect.
@@ -66,8 +71,10 @@ Prove both polarities before recording it:
 Verify with the canonical probe: `browser(command="exec", input="eval <fetch-script>")`, using the script in `<mechanics_skill_path>/../references/auth-oracle.sh`.
 The oracle is the ONLY pass/fail signal for authentication.
 2xx passes; 401, 403, or 3xx fails; anything else is indeterminate and is not a pass.
-Store `overview.auth_probe = {url: <auth_probe_path>}`; it is a deployment-neutral path, never a host.
-A target with no reliable oracle is a loud blocker, not a pass.
+Store the role's `account.auth_probe = {url: <auth_probe_path>}` and its `root_url`; both are deployment-neutral paths, never hosts.
+When a role's probe is absent or empty, a non-4xx, non-3xx response at its root is the success rule.
+The overview `auth_probe` is only the legacy fallback for an account that declares neither.
+A target with no reliable oracle for a role is a loud blocker for that role, not a pass for it.
 
 ## Browser branch (only when the probe forces it)
 
@@ -92,6 +99,6 @@ Cite secret names only: no secret VALUE in the report or in the skill.
 
 ## Deliverable
 
-- Store facts via the seed face: the typed overview (`login_endpoint`, `required_headers`, `mechanism`, `defences`, `fingerprinting`, `technical_conditions`, `anti-bot`, `http-client-replayability`, `auth_probe`) and, per account named `<username>-<minting_context>` (the credential username with its email location suffix stripped, plus the run or flow that minted it, never the procedure), `credentials`, `tokens` (with locations), the `browser_context` reference after a successful `browser(command="end", persist_context=true)`, `snapshot`, and the `procedure` label joining the account to the skill procedure.
-- The project skill at `<data_root>/<project_id>/skills/<skill_name>/SKILL.md`, with the mandatory block embedded verbatim and target-specific ordered steps (tool plus why per step), sign-up and sign-in as separate named procedures, the oracle verification step, and secret values cited by name only.
-- Report: the mode decision with its forcing evidence; the `anti-bot` name or null; the replayability verdict and continuation facts; the oracle path and both polarities; the token names/locations if a browser was used; the written skill path; and any error verbatim.
+- Store facts via the seed face: the typed overview (`login_endpoint`, `required_headers`, `mechanism`, `defences`, `fingerprinting`, `technical_conditions` with one role shape per role, `anti-bot`, `http-client-replayability`, the legacy `auth_probe` only when an account declares neither) and, per account named `<username>-<minting_context>` (the credential username with its email location suffix stripped, plus the run or flow that minted it, never the procedure), `role`, `root_url`, `auth_probe`, `credentials`, `tokens` (with locations), the `browser_context` reference after a successful `browser(command="end", persist_context=true)`, `snapshot`, and the `procedure` label joining the account to the skill procedure.
+- The project skill at `<data_root>/<project_id>/skills/<skill_name>/SKILL.md`, with the mandatory block embedded verbatim and target-specific ordered steps (tool plus why per step), sign-up and sign-in as separate named procedures per role, each role's oracle verification step, and secret values cited by name only.
+- Report: the roles found and the mint order; the mode decision with its forcing evidence; the `anti-bot` name or null; the replayability verdict and continuation facts; every session's root and oracle path with both polarities; the token names/locations if a browser was used; the written skill path; and any error verbatim.

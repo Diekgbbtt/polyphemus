@@ -574,8 +574,10 @@ rules remain in force.*
 
 ### D223-20 - The authenticated-context oracle is the only verification method
 
-The gateway verifies the loaded browser session against ONE recorded URL:
-`overview.auth_probe.url`.
+The gateway verifies the selected account against its recorded oracle:
+`account.auth_probe`, or `account.root_url` when the probe is empty.
+The overview `auth_probe` is the legacy fallback for an account that declares neither.
+This is amended by the per-account session model in the D223-19 amendment.
 
 - The value is a deployment-neutral path (`/api/authentication`), never a host.
   The model-facing auth-store read and the crawl feed resolve it against the

@@ -354,9 +354,9 @@ The browser MCP's own codes map onto the same typed surface:
 
 ### 4.5 Auth oracle
 
-The store records `overview.auth_probe.url`, a deployment-neutral path.
-The auth feed resolves it against the project's canonical origin and passes it as `browser_auth["auth_probe"]`.
-The crawl navigates to the root, then runs the fetch from that page:
+The store records the account's `auth_probe`, with the account `root_url` as the fallback and the overview `auth_probe` as legacy.
+The auth feed resolves it against the project's canonical origin and passes it to the session.
+The crawl navigates to the session's root, then runs the fetch from that page:
 
 ```text
 fetch(url, {redirect: "follow", credentials: "include", cache: "no-store"})

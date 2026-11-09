@@ -174,4 +174,5 @@ The preflight mints and verifies every credential-bearing account, not only the 
 The stale-account skip is `status: not_valid`; the crawl never adds an anonymous session when accounts exist.
 The zero-account store is the only anonymous fallback.
 This supersedes the "no change to the auth record shapes" non-goal for the three session fields.
+The bootstrap assessment D1 uses the same model: sessions, distinct roles, a high-privilege session, and a load reference on every session.
 The full decision record is `docs/design/crawl-session-fanout-adr.md`.
