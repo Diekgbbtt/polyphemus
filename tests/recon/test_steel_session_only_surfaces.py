@@ -120,6 +120,27 @@ def test_authn_meta_skill_and_bootstrap_teach_the_session_model() -> None:
     assert "highest privilege first" in prompt.lower()
 
 
+def test_external_bootstrap_contracts_teach_role_priority_and_session_roots() -> None:
+    contract = _read("tools", "bootstrap", "DATA-DEPENDENCIES.md")
+    authn = _read("tools", "bootstrap", "prompts", "data-dep-authn.md")
+    l1 = _read("tools", "bootstrap", "prompts", "data-dep-l1.md")
+
+    for name, text in (
+        ("DATA-DEPENDENCIES.md", contract),
+        ("data-dep-authn.md", authn),
+        ("data-dep-l1.md", l1),
+    ):
+        lower = text.lower()
+        assert "role" in lower, name
+        assert "root_url" in lower, name
+        assert "auth_probe" in lower, name
+        assert "privilege" in lower, name
+        assert "first" in lower, name
+
+    assert "one account per session" in authn.lower()
+    assert "account.auth_probe" in l1 or "account's `auth_probe`" in l1
+
+
 def test_gateway_prompt_uses_the_redacted_store_and_recorded_replay() -> None:
     text = _read(
         "src", "polymerhus", "recon", "control", "prompts", "auth-gateway.md"
