@@ -249,7 +249,7 @@ The hunting run `e82960ac-1b0c-4f13-9501-ca321982c32a` never reached its first L
 Both the hunting start and the stop handlers raised `No module named 'cvss'`.
 The deployed `polymerhus-agent:latest` was built at `2026-11-08T15:42:54Z`, before `cvss==3.6` entered `requirements-app.txt`.
 The API-key hypothesis is not supported: the analysis made 122 successful calls and the failure occurs before any hunting call.
-The image was rebuilt at `2026-11-09T09:17:32Z` from the eval worktree at `93692b0c`, and `docker run --rm polymerhus-agent:latest python -c "import cvss"` reports `3.6`.
+The image was rebuilt at `2026-11-09T09:17:32Z` from the eval worktree (then at `7a7d41c9`), and `docker run --rm polymerhus-agent:latest python -c "import cvss"` reports `3.6`.
 The hunting run is therefore a deployment-artifact failure, not a model, quota, or graph failure.
 
 ### Remaining work

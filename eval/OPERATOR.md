@@ -557,6 +557,18 @@ per agent session, spans per threat iteration. Session ids are semantic:
 `hunting:<run_id>:pod:<dispatch_id>:<spec_id>` - searchable when a verdict
 needs a closer look.
 
+The Cloud project is on the v4 ingestion path.
+The v3 `/api/public/traces` endpoint returns zero rows there; read the records from `/api/public/v2/observations` instead.
+The local CLI needs a working Node build: when `npx` fails on `libsimdjson`, run `brew reinstall node`, then confirm with `npx langfuse-cli api __schema`.
+The session-review query is:
+
+```bash
+npx langfuse-cli api observations list \
+  --from-start-time <ISO> --to-start-time <ISO> \
+  --fields core,basic,io,metadata,model,usage,metrics \
+  --all --max-items 20000 --json
+```
+
 #### The environment state
 
 - `python3 -m orchestrator status <setup.yaml>` - which instances and targets
