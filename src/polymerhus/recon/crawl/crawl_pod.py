@@ -10,10 +10,12 @@ are injected so tests never touch a live Steel/LLM/Neo4j - mirroring
 
 The `crawl` node is best-effort by construction (design's Global
 Constraints / plan §10.6): a `SteelNotConfigured` raise, any other
-exception, or an empty manifest are all treated the same way - route to a
-terminal `fail` node that sets `verdict="failed"` and curates ONE
-`reduced_crawl_coverage` Observation anchored to the pod's input BaseURL.
-Nothing from this node ever propagates as an unhandled exception.
+exception, or an empty manifest route to a terminal `fail` node that sets
+`verdict="failed"` and curates ONE `reduced_crawl_coverage` Observation
+anchored to the pod's input BaseURL. A partial v2 manifest is different: its
+endpoints and parameters are real evidence, so it takes the normal
+parse/triager/curator path and ALSO curates the `reduced_crawl_coverage`
+Observation. Nothing from this node ever propagates as an unhandled exception.
 
 The crawl path is session-only (#395, D20): the node runs under the
 gateway-established auth state. The feed supplies the decoupled auth-context
@@ -81,12 +83,16 @@ def _manifest_is_empty(manifest: dict | None) -> bool:
     return not any(manifest.get(key) for key in _EMPTY_MANIFEST_KEYS)
 
 
+_PARTIAL_PREFIX = "partial crawl: "
+
+
 def _manifest_partial(manifest: dict | None) -> str | None:
     """The partial stop reason, or None when the v2 run is complete.
 
-    A partial run is evidence, not a successful graph input: the pod routes it
-    to the reduced-coverage fail node instead of parsing a half surface as if
-    it were complete.
+    A partial run is real evidence with reduced coverage, not a failed crawl:
+    its endpoints and parameters must reach the graph. The reason rides the
+    state so the curator can attach the reduced-coverage observation without
+    discarding the surface the crawl did capture.
     """
     if not manifest or not isinstance(manifest, dict):
         return None
@@ -94,6 +100,13 @@ def _manifest_partial(manifest: dict | None) -> str | None:
     if not isinstance(run, dict) or run.get("partial") is not True:
         return None
     return str(run.get("stop_reason") or "partial")
+
+
+def _partial_reason(crawl_error: str | None) -> str | None:
+    """The partial stop reason carried by the crawl state, or None."""
+    if isinstance(crawl_error, str) and crawl_error.startswith(_PARTIAL_PREFIX):
+        return crawl_error[len(_PARTIAL_PREFIX) :] or "partial"
+    return None
 
 
 def _coverage_observation(input_asset: dict, reason: str) -> Observation:
@@ -167,7 +180,7 @@ def live_run_crawl_fn(
         browser_mcp_url=os.environ.get("KALI_BROWSER_MCP_URL", "").strip(),
         browser_context_ref=extra.get("browser_context_ref"),
         max_duration_s=float(
-            os.environ.get("STEEL_CRAWL_MAX_DURATION_S", "600")
+            os.environ.get("STEEL_CRAWL_MAX_DURATION_S", "1800")
         ),
         coverage={"scope": list(scope)},
     )
@@ -265,9 +278,11 @@ def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn):
 
         partial = _manifest_partial(manifest)
         if partial is not None:
+            # Keep the manifest so parse/triager/curator ingest the captured
+            # surface; the prefix marks the reduced-coverage observation.
             return {
-                "manifest": None,
-                "crawl_error": f"partial crawl: {partial}",
+                "manifest": manifest,
+                "crawl_error": f"{_PARTIAL_PREFIX}{partial}",
             }
 
         return {"manifest": manifest}
@@ -291,7 +306,15 @@ def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn):
 
     def curator_node(state: CrawlPodState) -> dict:
         assets = state.get("assets", [])
-        observations = state.get("observations", [])
+        observations = list(state.get("observations", []))
+        # A partial manifest is ingested, never discarded. Its captured surface
+        # rides the normal path with one reduced-coverage observation so the
+        # graph knows the evidence is real but incomplete.
+        partial = _partial_reason(state.get("crawl_error"))
+        if partial is not None:
+            observations.append(
+                _coverage_observation(state.get("input_asset") or {}, partial)
+            )
         # Thread the SAME registrable-domain scope the crawl frontier used as the
         # curator's `scope_domain`, so the agnostic noise filter (D14/D15) drops
         # out-of-scope BaseURLs (js.stripe.com, *.auth0.com, api.us.svix.com,

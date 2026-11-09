@@ -193,11 +193,15 @@ class FakeGraph:
         self.navigations[(source, element_id)] = urljoin(source, target)
 
     def open_root(
-        self, url: str = ROOT, elements: Iterable[Element] = ()
+        self,
+        url: str = ROOT,
+        elements: Iterable[Element] = (),
+        *,
+        page_visit_id: str = "page_root",
     ) -> PageInstance:
         page = self.add(FakePage(url=url, elements=tuple(elements)))
         return self.state.open_page(
-            page_visit_id="page_root",
+            page_visit_id=page_visit_id,
             url=url,
             final_url=url,
             title=page.title,
@@ -773,6 +777,64 @@ def test_a_navigation_without_a_page_instance_stops_with_a_typed_error():
     assert result.stop_reason == "error"
     assert result.error == "the navigation result carries no page instance"
     assert [visit.page.url for visit in result.page_visits] == [ROOT]
+
+
+ADMIN = "https://example.test/admin/"
+
+
+def test_run_many_traverses_the_authenticated_seed_before_the_public_root():
+    """The admin console is a known seed, not a link on the public root.
+
+    Iteration E proved the admin dashboard in the auth oracle but never rendered
+    it, because the frontier had only the public root. A multi-seed run explores
+    the authenticated entry first and keeps both surfaces in one result.
+    """
+    graph = FakeGraph()
+    public = graph.open_root(elements=(link("e-public", "A", "/a"),))
+    admin = graph.open_root(
+        ADMIN,
+        elements=(link("e-admin", "Users", "/admin/users"),),
+        page_visit_id="page_admin",
+    )
+    graph.add(FakePage(url="https://example.test/a"))
+    graph.add(FakePage(url="https://example.test/admin/users"))
+    graph.nav(ROOT, "e-public", "/a")
+    graph.nav(ADMIN, "e-admin", "/admin/users")
+
+    result = graph.frontier().run_many((admin, public))
+
+    assert [visit.page.url for visit in result.page_visits] == [
+        ADMIN,
+        "https://example.test/admin/users",
+        ROOT,
+        "https://example.test/a",
+    ]
+    assert result.stop_reason == "frontier_empty"
+    assert graph.executed == [
+        (ADMIN, "e-admin"),
+        (ROOT, "e-public"),
+    ]
+    # The browser moved to the admin seed; the public seed must be restored
+    # before it projects or executes its first candidate.
+    assert graph.events.index(("restore", ROOT)) < graph.events.index(
+        ("execute", ROOT, "e-public")
+    )
+
+
+def test_run_many_stops_before_the_next_seed_on_a_session_deadline():
+    graph = FakeGraph()
+    public = graph.open_root(elements=(link("e-public", "A", "/a"),))
+    admin = graph.open_root(
+        ADMIN,
+        elements=(link("e-admin", "Users", "/admin/users"),),
+        page_visit_id="page_admin",
+    )
+
+    result = graph.frontier(deadline=lambda: True).run_many((admin, public))
+
+    assert result.stop_reason == "session_deadline"
+    assert [visit.page.url for visit in result.page_visits] == [ADMIN]
+    assert graph.executed == []
 
 
 def test_an_out_of_scope_navigation_without_a_page_is_still_recorded():

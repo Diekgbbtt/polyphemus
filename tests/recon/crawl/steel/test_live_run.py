@@ -1,7 +1,7 @@
 """Seam under test: the live run context and the pod's production wiring.
 
 The browser is never started here. The tests pin the pool URL, the stable
-session name, the 600-second budget, and the removal of the action cap.
+session name, the 1800-second budget, and the removal of the action cap.
 """
 from __future__ import annotations
 
@@ -13,13 +13,14 @@ from polymerhus.recon.crawl.steel.live import (
     LiveCrawlError,
     LiveRunContext,
     LiveRunResult,
+    crawl_seed_urls,
     run_live_crawl,
 )
 from polymerhus.recon.crawl.steel.manifest import RunBlock, build_manifest
 
 
-def test_the_crawl_budget_is_six_hundred_seconds():
-    assert MAX_DURATION_S_DEFAULT == 600
+def test_the_crawl_budget_is_eighteen_hundred_seconds():
+    assert MAX_DURATION_S_DEFAULT == 1800
     context = LiveRunContext(
         project_id="proj-1",
         run_id="run-1",
@@ -29,9 +30,26 @@ def test_the_crawl_budget_is_six_hundred_seconds():
         data_root="/tmp",
     )
 
-    assert context.max_duration_s == 600
+    assert context.max_duration_s == 1800
     assert not hasattr(context, "max_actions")
     assert context.browser_mcp_url == ""
+
+
+def test_the_auth_probe_is_the_first_seed_and_the_public_root_follows():
+    """The admin console is a known entry, not a link on the public root."""
+    assert crawl_seed_urls(
+        "https://app.test/", "/index.php/admin/Index/index.html"
+    ) == (
+        "https://app.test/index.php/admin/Index/index.html",
+        "https://app.test/",
+    )
+
+
+def test_a_missing_or_same_root_probe_does_not_duplicate_the_seed():
+    assert crawl_seed_urls("https://app.test/", None) == ("https://app.test/",)
+    assert crawl_seed_urls("https://app.test/", "https://app.test/") == (
+        "https://app.test/",
+    )
 
 
 def test_run_live_crawl_requires_the_browser_mcp_url(tmp_path):
@@ -80,7 +98,7 @@ def test_the_pod_passes_the_pool_url_stable_name_and_budget(monkeypatch):
         "polymerhus.recon.crawl.steel.live.run_live_crawl", fake_run
     )
     monkeypatch.setenv("KALI_BROWSER_MCP_URL", "http://kali:8003/mcp")
-    monkeypatch.setenv("STEEL_CRAWL_MAX_DURATION_S", "600")
+    monkeypatch.setenv("STEEL_CRAWL_MAX_DURATION_S", "1800")
     monkeypatch.delenv("STEEL_CRAWL_CLI", raising=False)
     monkeypatch.delenv("STEEL_CRAWL_MAX_ACTIONS", raising=False)
 
@@ -102,7 +120,7 @@ def test_the_pod_passes_the_pool_url_stable_name_and_budget(monkeypatch):
         "steel-proj-1-alice-first_authn_bootstrap-crawl-run-1"
     )
     assert context.browser_context_ref == "steel-auth-proj-1-alice"
-    assert context.max_duration_s == 600
+    assert context.max_duration_s == 1800
     assert not hasattr(context, "max_actions")
     assert not hasattr(context, "cli_prefix")
 

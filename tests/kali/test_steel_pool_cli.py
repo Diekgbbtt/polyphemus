@@ -707,6 +707,37 @@ def test_stop_waits_for_the_worker_to_settle(fake_cli):
     ]
 
 
+def test_stop_waits_past_the_old_five_second_window(fake_cli, monkeypatch):
+    """The worker marks the session released before its end handler finishes.
+
+    Iteration E saw `released` at the five-second bound and treated the stop as
+    a failure. The default window must cover the end-handler tail, so a worker
+    that settles at six seconds still stops cleanly.
+    """
+    binary, calls = fake_cli
+    mid_teardown = {"sessions": [_session_row("steel-1", "released")]}
+
+    class Clock:
+        now = 0.0
+
+        def monotonic(self):
+            return self.now
+
+        def sleep(self, seconds):
+            self.now += 1.0
+
+    clock = Clock()
+    monkeypatch.setattr("kali.steel_pool.cli.time", clock)
+    with _api_server(
+        bodies=[mid_teardown] * 6 + [_settled()]
+    ) as (url, _):
+        cli = SteelCli(url, binary=binary, env=_env(calls), settle_poll_s=0.01)
+
+        cli.stop(_session())
+
+    assert clock.now >= 6.0
+
+
 def test_stop_accepts_an_already_settled_worker(fake_cli):
     binary, calls = fake_cli
     with _api_server(body=_settled()) as (url, requests):
