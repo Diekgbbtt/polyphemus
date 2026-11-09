@@ -89,7 +89,8 @@ def _schema_surface() -> str:
         f"{sys_rels}.\n"
         "Identity: Service business_function_slug; System kind+discriminator; "
         "Endpoint path/method/baseurl (full URL in url); Parameter "
-        "name/position."
+        "name/position. Every identity is scoped to the run's project; the "
+        "view binds that scope as `$project_id`."
     )
 
 

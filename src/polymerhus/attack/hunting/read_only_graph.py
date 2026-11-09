@@ -51,11 +51,17 @@ class ReadOnlyGraphView:
 
     def read(self, cypher: str, params: dict | None = None) -> list[dict]:
         self._guard(cypher)
+        # The view owns the run's project scope: bind it symbolically and drop
+        # any caller-supplied `project_id`, so a graph_view caller can never
+        # scope the read to a slug or another project.
+        from polymerhus.analysis.graph_scope import bind_project_scope
+
+        scoped = bind_project_scope(self.project_id, params)
         if self._read_fn is not None:
-            return self._read_fn(cypher, params or {})
+            return self._read_fn(cypher, scoped)
         from polymerhus.app.clients import neo4j_client
 
-        return neo4j_client.read(cypher, params or {})
+        return neo4j_client.read(cypher, scoped)
 
     def merge(self, *args: Any, **kwargs: Any) -> Any:
         raise ReadOnlyGraphViewError(
