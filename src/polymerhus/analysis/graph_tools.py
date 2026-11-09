@@ -251,10 +251,9 @@ ANALYSIS_EXEC_CONTRACT = (
     "response header the recon pass did not record. One endpoint often embeds "
     "several features, and a rendered body is a witness a path noun cannot give. "
     "READ-ONLY means read-only: a `curl` of a known endpoint, never a scan, a "
-    "mutation, or an exploitation step. A handful of probes is the working "
-    "discipline; the execution-wide token budget and the per-call timeout are "
-    "the bounds. The mapped graph is the substrate you reason over and the "
-    "probe is the exception."
+    "mutation, or an exploitation step. The execution-wide token budget and the "
+    "per-call timeout are the bounds. The mapped graph is the substrate you "
+    "reason over and the probe is the exception."
 )
 
 
