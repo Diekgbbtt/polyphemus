@@ -97,7 +97,10 @@ _SCHEMA = (
 _QUERY_PRIMITIVES = (
     "QUERY LANGUAGE (read-only Cypher) - use MATCH, OPTIONAL MATCH, WHERE, "
     "RETURN, ORDER BY, LIMIT, DISTINCT, count(), collect(), labels(), type(). "
-    "Scope every query with {project_id: $project_id}. Write-shaped tokens "
+    "Scope every query with {project_id: $project_id}. The tool injects the "
+    "bound project scope for you: never guess it from the domain name (the "
+    "domain slug is not the project id), and any project_id you pass is replaced "
+    "by the bound scope. Write-shaped tokens "
     "(MERGE / CREATE / DELETE / SET / REMOVE / FOREACH / LOAD CSV) are refused. "
     "Text inside a string literal is DATA, not Cypher: a path filter that "
     "happens to contain a write word is legal and always allowed "
@@ -185,7 +188,18 @@ def build_analysis_graph_view_tool(project_id: str, *, read_fn: GraphReadFn | No
                 "the graph view is read-only: refusing write-shaped cypher "
                 f"{cypher[:120]!r}"
             )
-        merged = {"project_id": project_id, **(params or {})}
+        # The bound project scope is AUTHORITATIVE: a caller-supplied
+        # `project_id` must never override it. The proposers see the domain slug
+        # in the overview, so `params={"project_id": "siyucms"}` is a natural
+        # mistake; letting it through silently returns zero rows and makes the
+        # model reason over a false-empty graph. Keep every other caller param.
+        caller_params = dict(params or {})
+        supplied = caller_params.get("project_id")
+        if supplied is not None and supplied != project_id:
+            logger.warning(
+                "graph_view: caller project_id %r overridden by the bound "
+                "scope %r", supplied, project_id)
+        merged = {**caller_params, "project_id": project_id}
         try:
             rows = read(cypher, merged)
             if not isinstance(rows, list):

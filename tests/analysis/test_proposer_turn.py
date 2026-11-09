@@ -921,6 +921,21 @@ def test_a_roles_tool_set_is_constant_across_reflection_and_extraction(monkeypat
         convert_to_openai_tool(t) for t in extract_tools]
 
 
+def test_the_reflection_turn_tool_message_names_the_gate_and_stops_retries(monkeypatch):
+    """The inert structured tool is bound on the reflection turn for cache-shape
+    stability, but live sessions retried it 1-3 times per chunk before inferring
+    the gate. The tool result must name the turn and the required next action."""
+    from polymerhus.analysis.proposer_turn import _prose_tools
+
+    _force_voluntary_rung(monkeypatch)
+    tools = _prose_tools("mechanism_typist", tools_bound=True)
+    assert len(tools) == 1
+    message = tools[0].func()
+    assert "Reflection turn" in message
+    assert "Do not call this tool again" in message
+    assert "Finish the reflection with prose" in message
+
+
 def test_the_constant_shape_covers_the_whole_mechanism_typist_chain(monkeypatch):
     """The same rule over the typist's 3-call chain (P,S,S): all three turns bind
     the same tool set, so the S,S pair keeps caching AND the P->S transition now
