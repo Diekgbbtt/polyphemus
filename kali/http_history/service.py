@@ -183,16 +183,19 @@ class HttpHistoryService:
         }
 
     def get(self, project_id: str, artifact_id: str, include_body: bool = False) -> dict:
+        """One sanitized artifact with its bounded, redacted body view.
+
+        `include_body` is retained for wire compatibility and is a no-op: the
+        body view is always part of the model-facing record (text bodies render
+        up to `BODY_TEXT_MAX`; binary or uncaptured bodies carry a note). Raw
+        body bytes are only read through the store's loader, never returned.
+        """
         self._guard_project(project_id)
-        if include_body:
-            raise ValueError(
-                "include_body is not available on the model-facing surface; "
-                "raw bodies are used only by the deterministic replay path"
-            )
-        artifact = self.store(project_id).get_raw(artifact_id)
+        store = self.store(project_id)
+        artifact = store.get_raw(artifact_id)
         if artifact is None:
             raise NotFoundError(f"artifact {artifact_id!r} not found in project {project_id!r}")
-        return sanitize_artifact(artifact)
+        return sanitize_artifact(artifact, body_loader=store.get_body)
 
     # --- replay ----------------------------------------------------------------
 

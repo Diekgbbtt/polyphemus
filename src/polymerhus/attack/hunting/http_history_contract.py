@@ -90,15 +90,18 @@ SEARCH_HTTP_HISTORY_DESCRIPTION: str = (
 
 GET_HTTP_ARTIFACT_DESCRIPTION: str = (
     "Fetch ONE recorded transaction by `artifact_id`. Use it before naming a "
-    "candidate as `provenance.baseline_ref`. Read "
-    "`request.body.capture_state`: only `captured` is replayable; "
+    "candidate as `provenance.baseline_ref`. The record carries a bounded, "
+    "redacted `body.text` for captured textual bodies (HTML, JSON, XML, form, "
+    "JavaScript); `body.truncated` marks the 16 KiB cap, and a binary or "
+    "uncaptured body returns `body.text: null` with `capture_state` and "
+    "`note`. Read `request.body.capture_state`: only `captured` is replayable; "
     "`omitted`/`truncated` means the bytes are not stored, and a bodyless "
     "replay is refused unless an explicit `body` override is declared. Lineage "
     "is `derived_from`/`replay_kind`. Header names and non-sensitive values are "
-    "visible; secrets are `[redacted]` and body content is never shown. "
-    "`capture_context` joins the run, spec, and variant. Missing or "
-    "cross-project id -> `not_found`; unreadable record -> `corrupt_artifact`; "
-    "failures are in-band."
+    "visible; secret headers, cookies, query/form values and body key-values "
+    "are `[redacted]`. `capture_context` joins the run, spec, and variant. "
+    "Missing or cross-project id -> `not_found`; unreadable record -> "
+    "`corrupt_artifact`; failures are in-band."
 )
 
 REPLAY_HTTP_REQUEST_DESCRIPTION: str = (

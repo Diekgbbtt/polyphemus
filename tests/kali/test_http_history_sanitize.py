@@ -12,6 +12,7 @@ from kali.http_history.models import (
     ResponseRecord,
 )
 from kali.http_history.sanitize import (
+    BODY_TEXT_MAX,
     SUMMARY_HEADER_VALUE_MAX,
     sanitize_artifact,
     sanitize_summary,
@@ -214,6 +215,109 @@ def test_sanitized_summary_omits_empty_sizes():
 def test_sanitize_never_exposes_body_identity_or_content():
     view = sanitize_artifact(_artifact())
     assert "body_ref" not in json.dumps(view)
+
+
+def _captured_artifact() -> HttpArtifact:
+    return HttpArtifact(
+        artifact_id="http_01J0000000000000000000000B",
+        project_id="proj-1",
+        capture_context=CaptureContext(exec_id="e1"),
+        request=RequestRecord(
+            method="POST",
+            url="https://target.example/login",
+            headers=[["content-type", "application/x-www-form-urlencoded"]],
+            body_ref="sha256:req",
+            body_size=42,
+            body_encoding="utf-8",
+            capture_state="captured",
+        ),
+        response=ResponseRecord(
+            status=200,
+            headers=[["content-type", "text/html; charset=utf-8"]],
+            body_ref="sha256:res",
+            body_size=50,
+            body_encoding="utf-8",
+            capture_state="captured",
+        ),
+    )
+
+
+def test_a_captured_text_body_is_rendered_and_redacted():
+    bodies = {
+        "sha256:req": b"username=admin&password=" + _SECRET.encode(),
+        "sha256:res": (
+            b"<html><title>Welcome</title>"
+            b"<script>var token=\"" + _SECRET.encode() + b"\";</script></html>"
+        ),
+    }
+    view = sanitize_artifact(_captured_artifact(), body_loader=bodies.get)
+
+    assert "username=admin" in view["request"]["body"]["text"]
+    assert "password=[redacted]" in view["request"]["body"]["text"]
+    assert "Welcome" in view["response"]["body"]["text"]
+    assert "token=\"[redacted]\"" in view["response"]["body"]["text"]
+    assert _SECRET not in json.dumps(view)
+    assert view["response"]["body"]["truncated"] is False
+
+
+def test_a_gzip_response_body_is_decompressed_before_rendering():
+    import gzip
+
+    raw = gzip.compress(b"<html><body>compressed welcome</body></html>")
+    artifact = _captured_artifact().model_copy(update={
+        "response": _captured_artifact().response.model_copy(update={
+            "headers": [
+                ["content-type", "text/html; charset=utf-8"],
+                ["content-encoding", "gzip"],
+            ],
+            "body_ref": "sha256:gz",
+            "body_size": len(raw),
+            "body_encoding": "binary",
+        }),
+    })
+    view = sanitize_artifact(artifact, body_loader={"sha256:gz": raw}.get)
+    assert "compressed welcome" in view["response"]["body"]["text"]
+
+
+def test_a_large_body_is_capped_and_marked_truncated():
+    raw = b"a" * (BODY_TEXT_MAX + 100)
+    artifact = _captured_artifact().model_copy(update={
+        "response": _captured_artifact().response.model_copy(update={
+            "headers": [["content-type", "text/plain; charset=utf-8"]],
+            "body_ref": "sha256:big",
+            "body_size": len(raw),
+        }),
+    })
+    view = sanitize_artifact(artifact, body_loader={"sha256:big": raw}.get)
+    assert len(view["response"]["body"]["text"]) == BODY_TEXT_MAX
+    assert view["response"]["body"]["truncated"] is True
+
+
+def test_a_binary_body_is_not_rendered():
+    artifact = _captured_artifact().model_copy(update={
+        "response": _captured_artifact().response.model_copy(update={
+            "body_ref": "sha256:bin",
+            "body_size": 3,
+            "body_encoding": "binary",
+        }),
+    })
+    view = sanitize_artifact(
+        artifact, body_loader={"sha256:bin": b"\x00\x01\x02"}.get)
+    assert view["response"]["body"]["text"] is None
+    assert "binary" in (view["response"]["body"].get("note") or "").lower()
+
+
+def test_an_omitted_body_is_not_rendered():
+    artifact = _captured_artifact().model_copy(update={
+        "response": _captured_artifact().response.model_copy(update={
+            "capture_state": "omitted",
+            "capture_reason": "body exceeds capture limit",
+            "body_ref": None,
+        }),
+    })
+    view = sanitize_artifact(artifact, body_loader=lambda ref: b"never")
+    assert view["response"]["body"]["text"] is None
+    assert "omitted" in (view["response"]["body"].get("note") or "").lower()
 
 
 from kali.http_history.models import CaptureContext, HttpArtifact
