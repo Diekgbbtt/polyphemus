@@ -84,7 +84,7 @@ _REFLECTION_STEPS = [
     "minting a synonym and a committed edge is not duplicated. When a hypothesis hinges on "
     "what a response ACTUALLY contains, read the recorded transaction with "
     "`search_http_history` then `get_http_artifact`; when it hinges on what a page RENDERS "
-    "(embedded iframes, menu entries, tabs the path noun cannot show), run ONE bounded "
+    "(embedded iframes, menu entries, tabs the path noun cannot show), run ONE "
     "READ-ONLY `exec` fetch of a known endpoint. A tool-call observation is a witness; say "
     "where it came from.",
     "INTEGRATE the adversarial observation insight into the surviving System's "
