@@ -32,6 +32,55 @@ def test_every_observed_envelope_is_listed() -> None:
     assert missing == [], f"not allow-listed: {missing}"
 
 
+def test_the_component_envelopes_round_trip() -> None:
+    from polymerhus.analysis.analyser_types import (
+        Aggregation,
+        AssignerDelta,
+        BaseURLWitness,
+        CertificateWitness,
+        EndpointRef,
+        EndpointWitness,
+        HeaderWitness,
+        SystemAttributes,
+        SystemDefinition,
+        SystemExtraction,
+        SystemLink,
+        SystemLinking,
+        TechnologyWitness,
+    )
+
+    objects = [
+        Aggregation(
+            service="checkout",
+            endpoints=[EndpointRef(method="GET", path="/x", baseurl="https://a")],
+            evidence="path segment /x",
+        ),
+        AssignerDelta(aggregations=[]),
+        SystemAttributes(description="a mechanism"),
+        SystemDefinition(
+            kind="ReverseProxy",
+            attributes=SystemAttributes(description="nginx"),
+            evidence=[
+                EndpointWitness(method="GET", path="/", baseurl="https://a"),
+                HeaderWitness(name="Server", endpoint="/", baseurl="https://a"),
+                TechnologyWitness(name="nginx", version="1.31.6"),
+                CertificateWitness(subject_cn="a.example"),
+                BaseURLWitness(url="https://a"),
+            ],
+        ),
+        SystemExtraction(systems=[]),
+        SystemLink(service="checkout", kind="ReverseProxy", relation="FRONTED_BY"),
+        SystemLinking(links=[]),
+    ]
+    serde = C.checkpoint_serde()
+    for obj in objects:
+        loaded = serde.loads_typed(serde.dumps_typed(obj))
+        assert isinstance(loaded, type(obj)), (
+            f"{type(obj).__name__} loaded as {type(loaded).__name__}; "
+            f"the allow-list is missing it"
+        )
+
+
 @pytest.mark.parametrize("module,name", ENVELOPES)
 def test_each_envelope_round_trips_through_the_one_serde(module: str, name: str) -> None:
     cls = getattr(importlib.import_module(module), name)
