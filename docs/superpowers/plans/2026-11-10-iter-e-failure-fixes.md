@@ -1,5 +1,14 @@
 # Iteration E Failure-Mode Fixes Implementation Plan
 
+## Execution status (2026-11-10)
+
+Tasks 1-12 are implemented, tested, and committed on `fix/iter-e-failure-modes`.
+The branch is merged to `dev` (delivery commit `080eb12c`).
+Both adversarial-review passes are closed: the first found the initial blockers, the second verified the corrections and the remaining residuals.
+The rerun is running on the fresh project `fb865e52-719d-4637-ae7f-e6856f571166` under `eval/runs-iteration-e-20261110`.
+The steel crawl finished and the analysis/hunting drain is in progress.
+The checkpoint-serde allowlist fix is on `dev` but not in the running image; it applies to the next resume or run.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Remove the iteration-E failure modes at their most upstream seam, then rerun the trial.
