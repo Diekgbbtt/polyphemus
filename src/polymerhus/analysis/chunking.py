@@ -46,12 +46,16 @@ from polymerhus.recon.domain.types import AssetDelta, JobSpec, Observation
 logger = logging.getLogger(__name__)
 
 # The per-chunk packing threshold (#13's asset budget, reshaped 2026-10-21 by the
-# F-013 correction). The builder stacks COHERENT endpoint MICRO-FAMILIES (one
-# endpoint plus the headers and parameters that target it) until adding the next
-# micro-family would exceed this count. The default is 300 because a 300-asset
-# prompt stayed inside the analysis role's 200K compaction budget in the canary;
-# the 1,128-endpoint katana bucket that defeated compaction cannot form here.
-CHUNK_MAX_ASSETS = 300
+# F-013 correction, retuned 2026-11-10 from the iteration-E capacity read). The
+# builder stacks COHERENT endpoint MICRO-FAMILIES (one endpoint plus the headers
+# and parameters that target it) until adding the next micro-family would exceed
+# this count. The cap is evaluated AFTER the stream filter, the `(type, identity)`
+# collapse, and the micro-family grouping, and it counts EVERY streamed asset
+# type: Endpoint, Parameter, Header, Secret, and every other type the stream
+# carries. 120 is the operating point: large enough to keep a recon job's
+# coherent family set in one dispatch, small enough that a malformed tool call
+# cannot hide a whole job's judgments in one generation.
+CHUNK_MAX_ASSETS = 120
 
 # The family-internal order: the ANCHOR first, then what it owns (the operator's
 # "parent endpoint -> its headers, parameters, secrets, technologies"). A type

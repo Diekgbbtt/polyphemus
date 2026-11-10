@@ -109,16 +109,19 @@ def test_C5b_only_connectivity_assets_queue_no_chunk():
 
 def test_C6_overflow_ordered_tail_kept():
     assets = [_asset("Technology", name=f"t{i}") for i in range(250)]
-    (chunk,) = chunks_for_job(JOB, assets)
-    assert len(chunk.assets) == 250                       # one 250-asset chunk, cap 300
-    assert chunk.batch_index == 0 and chunk.batch_total == 1
+    chunks = chunks_for_job(JOB, assets)
+    assert len(chunks) == 3
+    assert [c.batch_index for c in chunks] == [0, 1, 2]
+    assert all(c.batch_total == 3 for c in chunks)
+    assert [len(c.assets) for c in chunks] == [120, 120, 10]
+    assert len([a for c in chunks for a in c.assets]) == 250
     # A surface above the cap splits only at the cap, and the tail is kept.
     assets = [_asset("Technology", name=f"t{i}") for i in range(400)]
     chunks = chunks_for_job(JOB, assets)
-    assert len(chunks) == 2
-    assert [c.batch_index for c in chunks] == [0, 1]
-    assert all(c.batch_total == 2 for c in chunks)
-    assert [len(c.assets) for c in chunks] == [300, 100]
+    assert len(chunks) == 4
+    assert [c.batch_index for c in chunks] == [0, 1, 2, 3]
+    assert all(c.batch_total == 4 for c in chunks)
+    assert [len(c.assets) for c in chunks] == [120, 120, 120, 40]
     assert len([a for c in chunks for a in c.assets]) == 400
 
 
@@ -420,15 +423,17 @@ def test_D2_endpoint_micro_family_keeps_its_headers_and_parameters_together():
         path = f"/q{i}"
         many += [_ep(path), _hdr(f"h{i}", endpoint=path), _param_on(f"q{i}", path)]
     chunks = chunks_for_job(JOB, many)
-    assert [len(c.assets) for c in chunks] == [300, 60]
+    assert [len(c.assets) for c in chunks] == [120, 120, 120]
     assert [len({a.identity["path"] for a in c.assets if a.type == "Endpoint"})
-            for c in chunks] == [100, 20]
+            for c in chunks] == [40, 40, 40]
 
 
 def test_D3_a_small_endpoint_surface_is_one_chunk():
-    """A surface below the 300-asset cap is ONE chunk, not a 100+50 slice."""
+    """A surface below the 120-asset cap is ONE chunk, not a 60+60 slice."""
+    (chunk,) = chunks_for_job(JOB, [_ep(f"/pg{i}") for i in range(150)][:120])
+    assert len(chunk.assets) == 120
     chunks = chunks_for_job(JOB, [_ep(f"/pg{i}") for i in range(150)])
-    assert [len(c.assets) for c in chunks] == [150]
+    assert [len(c.assets) for c in chunks] == [120, 30]
 
 
 def test_D4_endpoint_micro_families_are_endpoint_scoped_not_bucket_scoped():
@@ -521,3 +526,44 @@ def test_D3b_a_family_above_the_hard_cap_splits():
     }
     assert [c.batch_index for c in chunks] == [0, 1]
     assert [c.batch_total for c in chunks] == [2, 2]
+
+
+def test_the_default_cap_is_120_and_counts_every_streamed_asset_type():
+    assets = []
+    for index in range(121):
+        path = f"/api/orders/{index}"
+        assets.append(_ep(path))
+        assets.append(_param_on(f"p{index}", path))
+        assets.append(_hdr("X-Trace", endpoint=path))
+    chunks = chunks_for_job(JOB, assets)
+    assert chunks
+    assert max(len(chunk.assets) for chunk in chunks) <= 120
+    for chunk in chunks:
+        identities = {
+            (asset.type, tuple(sorted(asset.identity.items())))
+            for asset in chunk.assets
+        }
+        assert len(identities) == len(chunk.assets)
+    assert sum(len(chunk.assets) for chunk in chunks) == len(assets)
+
+
+def test_assigner_and_typist_receive_the_same_chunk_object():
+    from polymerhus.analysis.supervisor import build_schedule
+
+    assets = [_ep("/api/orders/1"), _param_on("page", "/api/orders/1")]
+    chunks = chunks_for_job(JOB, assets)
+    schedule = build_schedule(
+        chunks, "run-1", roles=("assigner", "mechanism_typist")
+    )
+    by_role = {dispatch.role: dispatch for dispatch in schedule}
+    assert by_role["assigner"].chunk is by_role["mechanism_typist"].chunk
+    assert (
+        by_role["assigner"].chunk.chunk_id
+        == by_role["mechanism_typist"].chunk.chunk_id
+    )
+    assigner_view = admit_for_role(by_role["assigner"].chunk, "assigner")
+    typist_view = admit_for_role(
+        by_role["mechanism_typist"].chunk, "mechanism_typist"
+    )
+    assert [asset.type for asset in assigner_view] == ["Endpoint"]
+    assert {asset.type for asset in typist_view} == {"Endpoint", "Parameter"}
