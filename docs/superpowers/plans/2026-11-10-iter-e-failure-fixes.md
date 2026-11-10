@@ -9,6 +9,16 @@ The rerun is running on the fresh project `fb865e52-719d-4637-ae7f-e6856f571166`
 The steel crawl finished and the analysis/hunting drain is in progress.
 The checkpoint-serde allowlist fix is on `dev` but not in the running image; it applies to the next resume or run.
 
+## Pre-existing failures observed (not introduced by this branch)
+
+These fail at the base revision or require an absent live service.
+They are reported as work items, not repaired in this branch.
+
+- `tests/integration/test_assigner_eval_live.py` needs a live Neo4j and a seeded project.
+- `tests/integration/test_postgres_schema.py` needs a PostgreSQL DSN.
+- `tests/integration/test_gateway_config_contracts.py::test_c1_agent_env_carries_gateway_contract` expects `8080:8080`; the compose file publishes `127.0.0.1:${AGENT_PORT:-8080}:8080`.
+- `tests/attack/test_cortex.py` and `tests/attack/test_threat_modeller_prompt.py` read prompt documents already out of sync at `a1cac1d9`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Remove the iteration-E failure modes at their most upstream seam, then rerun the trial.
