@@ -45,7 +45,13 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 
-from polymerhus.analysis.analyser_types import L1DeltaBatch
+from polymerhus.analysis.analyser_types import (
+    L1DeltaBatch,
+    SystemExtraction,
+    SystemLinking,
+    system_extraction_to_batch,
+    system_linking_to_batch,
+)
 from polymerhus.analysis.chunking import Chunk
 from polymerhus.analysis.overview import overview_message
 from polymerhus.analysis.proposer_reasoning import cot_scaffold, role_header
@@ -459,36 +465,38 @@ def _systems_prompt(inventory: dict | None) -> str:
         "TASK - EXTRACT SYSTEMS FROM YOUR REFLECTION. The assistant message "
         "immediately above is your reflection: use it - do not ask for it again and "
         "do not restate it. Propose ONE `systems` entry for EACH mechanism you "
-        "identified: a known `kind` (+ `discriminator`, default __singleton__) with a "
-        "`description` prop in `props` - a brief adversarially-oriented NL characterisation "
+        "identified: a known `kind` (+ `discriminator`, default __singleton__) with "
+        "`attributes.description` - a brief adversarially-oriented NL characterisation "
         "of that mechanism. You MUST return at least one system whenever your reflection "
         "named a mechanism; an empty `systems` list is a wrong answer here. For a System "
         "already listed above, REUSE its exact key and output that System's FULL rewritten "
         "description: fold your new insight into the existing text and restate the whole "
         "mechanism. Your emission REPLACES the stored description - the stored value is not "
-        "merged into it, so the new text must stand alone - and it MAY also overwrite other "
-        "attributes (e.g. `pages`, `rendering_model`) with updated values. Never emit an "
-        "empty description. "
-        # WITNESS (#354): the EVIDENCED_BY writer's input contract. The witness is an
-        # L0 NODE (label + identity), not a prose note - the writer MATCHes it, so a
-        # ref the graph does not hold writes no edge.
+        "merged into it, so the new text must stand alone - and you MAY also overwrite "
+        "`attributes.pages` or `attributes.rendering_model` with updated values. Never emit "
+        "an empty description. "
+        # WITNESS (#354): the EVIDENCED_BY writer's input contract. The witness is a
+        # TYPED L0 node, not a prose note - the writer MATCHes it, so a ref the graph
+        # does not hold writes no edge.
         "WITNESS EVERY SYSTEM (`evidence`). Each `systems` entry carries an `evidence` "
         "list naming the L0 node(s) whose observation actually witness that mechanism - "
-        "the header, technology, certificate or endpoint you read it on - each as "
-        "`{label, identity}`. Use ONLY these labels, with the identity keys the write "
-        f"MATCHes on: {_witness_guide()}. Give the identity keys the node ACTUALLY "
-        "carries (omit one you cannot read - never send null or blank) and enough of "
-        "them to name ONE node. Each witness becomes one `EVIDENCED_BY` edge from the "
-        "System to that L0 node; a witness the graph does not hold writes NO edge, so "
-        "never invent a node, and NEVER drop a System for lack of one - a claim with no "
-        "witness in the slice is still emitted, with an empty `evidence` list. "
+        "the header, technology, certificate or endpoint you read it on. Each witness is "
+        "ONE typed object: an endpoint is `{method, path, baseurl}`; a header is "
+        "`{name, endpoint, baseurl}`; a technology is `{name, version}`; a certificate is "
+        "`{subject_cn}`. Give the identity keys the node ACTUALLY carries (omit one you "
+        "cannot read - never send null or blank) and enough of them to name ONE node. Each "
+        "witness becomes one `EVIDENCED_BY` edge from the System to that L0 node; a witness "
+        "the graph does not hold writes NO edge, so never invent a node, and NEVER drop a "
+        "System for lack of one - a claim with no witness in the slice is still emitted, "
+        "with an empty `evidence` list. "
         # WebPresentation is PER (service, page-cluster), not a singleton (#53): the
         # downstream agent must locate the exact page a service is exposed on.
         "SPECIAL CASE - WebPresentation: emit ONE per (owning service, page cluster) from the "
         "CLUSTER PAGES step - set `discriminator` to '<service_slug>::<cluster>' (a short "
         "stable cluster slug, e.g. 'product-detail', 'category-listing', 'checkout', "
-        "'not-found') and put the cluster's member text/html page paths in a `pages` list in "
-        "`props`. Never emit a __singleton__ WebPresentation and never one per raw URL. "
+        "'not-found') and put the cluster's member text/html page paths in "
+        "`attributes.pages`. Never emit a __singleton__ WebPresentation and never one per "
+        "raw URL. "
         "Do not link edges here."
     )
 
@@ -511,14 +519,16 @@ def _linking_prompt(systems_batch: L1DeltaBatch, primary: list[str],
         "PRIMARY services (they aggregate this chunk's assets - link Systems to THESE first):\n"
         f"{prim_lines}\n"
         f"SECONDARY services (other asset-bearing services): {secondary or '(none)'}\n\n"
-        "TASK - LINK SERVICES (system_edges ONLY). Connect each System above to the "
-        "Service(s) it overlays, choosing the exact edge label "
-        "(EXPOSED_VIA a REST/GraphQL API OR a WebPresentation page-cluster - copy its "
-        "'<service>::<cluster>' discriminator VERBATIM so the edge hits the right node; "
-        "FRONTED_BY / PROTECTED_BY / ROUTED_BY a perimeter; "
-        "IDENTIFIED_BY / AUTHENTICATED_BY / AUTHORIZED_BY the identity Systems). Copy each "
-        "service_slug VERBATIM from the lists above; prefer PRIMARY services. Leave every "
-        "other list EMPTY."
+        "TASK - LINK SERVICES. Emit ONE `links` entry per evidenced (Service, System) "
+        "pair. Each entry is `{service, kind, discriminator, relation}` - plus optional "
+        "`role`, `realm`, `order` for a sub-granularity the evidence shows. `service` "
+        "copies the exact slug from the lists above; `kind` and `discriminator` name the "
+        "System; `relation` is the one edge label: EXPOSED_VIA a REST/GraphQL API OR a "
+        "WebPresentation page-cluster (copy its '<service>::<cluster>' discriminator "
+        "VERBATIM so the edge hits the right node); FRONTED_BY / PROTECTED_BY / "
+        "ROUTED_BY a perimeter; IDENTIFIED_BY / AUTHENTICATED_BY / AUTHORIZED_BY the "
+        "identity Systems. prefer PRIMARY services, but link every Service the evidence "
+        "supports."
     )
 
 
@@ -602,15 +612,18 @@ def type_mechanisms(
     aggregations: list[dict] | None = None,
     run_id: str | None = None,
     tags: list | None = None,
+    failure_fn=None,
 ) -> L1DeltaBatch:
     """The A.1 mechanism-typist body (grilled #9): the reflection -> systems-extraction
     -> services-linking chain over a `service` chunk, returning a narrowed
     `L1DeltaBatch{systems, system_edges}`.
 
-    `invoke_fn(messages, *, schema) -> str | L1DeltaBatch | None` is injected (unit-
-    testable). FAIL-CLOSED on reflection exhaustion (empty batch); SOFT pass-through on
-    a later step's exhaustion (write what earlier steps produced). Fail-open on any
-    exception - never crashes the caller."""
+    `invoke_fn(messages, *, schema) -> str | SystemExtraction | SystemLinking |
+    L1DeltaBatch | None` is injected (unit-testable). FAIL-CLOSED on reflection
+    exhaustion (empty batch); SOFT pass-through on a later step's exhaustion, but
+    a structured turn that fails after its ONE repair is a NAMED generation
+    failure reported through `failure_fn`. Fail-open on any exception - never
+    crashes the caller."""
     from langchain_core.messages import HumanMessage
 
     if not chunk.assets:  # empty delta -> nothing to type (valid empty)
@@ -625,7 +638,7 @@ def type_mechanisms(
     # (the batch scope), so the reflection's reasoning is the extraction's
     # context; the seam resets the session at the next chunk. The scope is
     # inert for the one-shot legacy seam.
-    from polymerhus.analysis.proposer_turn import proposer_batch
+    from polymerhus.analysis.proposer_turn import proposer_batch, structured_turn
 
     with proposer_batch(chunk.chunk_id):
         # Call 1 - REFLECTION (reason). Exhaustion => fail-closed (whole step empty).
@@ -653,22 +666,49 @@ def type_mechanisms(
         from polymerhus.app.observability import trace_reasoning
         trace_reasoning(prose, call="typist-reflection", run_id=run_id, tags=tags)
 
-        # Call 2 - SYSTEMS EXTRACTION (extract). Soft pass-through on exhaustion.
-        # The skill is omitted here (and on the linking call): the seam defaults
-        # `system_prompt` to `_load_skill()` - the exact same memoized string - so
-        # the request is byte-identical while the call site stops restating it.
-        systems_batch = invoke_fn(
+        # Call 2 - SYSTEMS EXTRACTION (extract). One bounded repair, then a NAMED
+        # generation failure. The skill is omitted here (and on the linking call):
+        # the seam defaults `system_prompt` to `_load_skill()` - the exact same
+        # memoized string - so the request is byte-identical while the call site
+        # stops restating it.
+        extraction, extraction_failed = structured_turn(
+            invoke_fn,
             [HumanMessage(content=_systems_prompt(inventory))],
-            schema=L1DeltaBatch,
-        ) or L1DeltaBatch()
+            schema=SystemExtraction,
+            system_prompt=None,
+            tool_name="SystemExtraction",
+            role="mechanism_typist",
+            chunk_id=chunk.chunk_id,
+        )
+        if extraction_failed and failure_fn is not None:
+            failure_fn("mechanism_typist", chunk.chunk_id, 0)
+        if isinstance(extraction, L1DeltaBatch):
+            systems_batch = extraction
+        elif extraction is not None:
+            systems_batch = system_extraction_to_batch(extraction)
+        else:
+            systems_batch = L1DeltaBatch()
 
         # Call 3 - SERVICES LINKING (extract). Soft pass-through on exhaustion.
         all_services = frozenset((inventory or {}).get("services") or [])
         primary, secondary, owned = partition_services(chunk.assets, aggregations or [], all_services)
-        link_batch = invoke_fn(
+        linking, linking_failed = structured_turn(
+            invoke_fn,
             [HumanMessage(content=_linking_prompt(systems_batch, primary, secondary, owned, inventory))],
-            schema=L1DeltaBatch,
-        ) or L1DeltaBatch()
+            schema=SystemLinking,
+            system_prompt=None,
+            tool_name="SystemLinking",
+            role="mechanism_typist",
+            chunk_id=chunk.chunk_id,
+        )
+        if linking_failed and failure_fn is not None:
+            failure_fn("mechanism_typist", chunk.chunk_id, 0)
+        if isinstance(linking, L1DeltaBatch):
+            link_batch = linking
+        elif linking is not None:
+            link_batch = system_linking_to_batch(linking)
+        else:
+            link_batch = L1DeltaBatch()
 
     # arm M E4: the extraction call may already carry System edges; the linking
     # call is a second chance, not the only source. Union both before the
@@ -718,6 +758,7 @@ def mechanism_typist_body(
     invoke_fn=None,
     read_inventory=None,
     read_aggregations=None,
+    failure_fn=None,
 ) -> L1DeltaBatch | None:
     """The supervisor proposer BODY - matches `supervisor.ProposerBody` EXACTLY, like
     the Assigner (grilled #9 wiring caveat): route the A.1 create phase to
@@ -750,4 +791,4 @@ def mechanism_typist_body(
     tags = ["analysis", getattr(dispatch, "role", "mechanism_typist")]
     return type_mechanisms(chunk, invoke_fn=invoke_fn, inventory=inventory,
                            aggregations=aggregations, run_id=run_id or None,
-                           tags=tags)
+                           tags=tags, failure_fn=failure_fn)

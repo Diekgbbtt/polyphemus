@@ -32,9 +32,9 @@ A tool-call observation is a witness: say in the System's description where it c
 ## Name the witness (`evidence`) - the claim is anchored, not just described
 
 A description says WHAT you judged; the `evidence` list says WHAT THE GRAPH HOLDS that witnesses it.
-Every `systems` entry carries an `evidence` list of L0 node references - the header, technology, certificate, or endpoint you actually read the mechanism on - so the write can create one `EVIDENCED_BY` edge from the System to each witness.
+Every `systems` entry carries an `evidence` list of TYPED L0 witnesses - the header, technology, certificate, or endpoint you actually read the mechanism on - so the write can create one `EVIDENCED_BY` edge from the System to each witness.
 
-- A witness is a NODE, not a sentence: `{label: <the L0 label>, identity: {<the node's own identity keys>}}` - a reference the graph can be MATCHed on, never free text.
+- A witness is a NODE, not a sentence, and it is typed by the L0 kind: an endpoint is `{method, path, baseurl}`; a header is `{name, endpoint, baseurl}`; a technology is `{name, version}`; a certificate is `{subject_cn}`. A reference the graph can be MATCHed on, never free text.
 - Name nodes the graph holds. The reference is `MATCH`ed as you write it: a witness that is not in the graph writes **no edge**, and the system is never fabricated to receive one.
 - Give the identity keys the node ACTUALLY carries - omit one you cannot read, never a null or blank - and give enough of them to name ONE node (a Header's `name` alone matches every endpoint's header of that name).
 - A claim with no witness in the slice is STILL emitted, with an empty `evidence` list: withholding a System you cannot ground is your judgment at hypothesise-time, never a reason to drop it here, and never a reason to invent a node.
@@ -42,11 +42,11 @@ Every `systems` entry carries an `evidence` list of L0 node references - the hea
 
 ## Link each System to its Services
 
-A description says WHAT the System is; the `system_edges` say WHERE the hunter can reach it.
+A description says WHAT the System is; the `links` say WHERE the hunter can reach it.
 A System with no Service edge is unusable: the hunter can see the mechanism, but it cannot reach the surface.
 Link each System to the exact Services the evidence supports - the exact `service_slug`, the exact `rel`, and the System's kind.
 
-- Emit one edge per (service, System) pair as a `system_edges` entry: `service_slug` copies the Service slug verbatim, `kind` and `discriminator` name the System, and `rel` is the one label this mechanism owns.
+- Emit one entry per (service, System) pair as a `links` entry: `service` copies the Service slug verbatim, `kind` and `discriminator` name the System, and `relation` is the one label this mechanism owns.
 - Never duplicate a pair. Two entries with the same `service_slug`, `kind`, and `discriminator` are one edge; the second is a defect, not extra signal.
 - Link every Service the evidence supports, not only the chunk's PRIMARY Service. `prefer PRIMARY` orders the links; it does not restrict them.
 - An authorization System's gate filters every route its chain covers, including anonymous-allowed routes. A public presentation route still sits behind the gate when the same Service's protected routes do, so it is evidence for the link, not against it.
@@ -67,10 +67,11 @@ If you still withhold the link, name the exact status code and request shape tha
 
 ## Output contract
 
-- Deliver the payload below by CALLING the `L1DeltaBatch` tool with the JSON as its arguments - never by writing the JSON in your message text; the tool call is the only channel the workflow reads.
-- Emit typed proposals only: `systems` (a known `kind` + `discriminator` default `__singleton__`, with a `description` in `props` and the witness nodes in `evidence`) and `system_edges` (service_slug + System kind + the exact `rel`). A `systems` entry whose key already exists UPDATES that System: the `props` you emit REPLACE the stored values, so re-emit every attribute you want kept. Leave `services`, `aggregates`, and all data lists EMPTY - dedicated proposers own those.
-- Edge labels are exactly: `EXPOSED_VIA` (REST/GraphQL API), `FRONTED_BY` / `PROTECTED_BY` / `ROUTED_BY` (perimeter: CDN / WAF / reverse proxy / gateway), `IDENTIFIED_BY` (session/cookie identification), `AUTHENTICATED_BY` (authentication mechanism), `AUTHORIZED_BY` (authorization system), `SHAPES_DATA_OF` (CSP/CORS integration). Copy each `service_slug` verbatim; prefer the PRIMARY services (those that already aggregate this chunk's assets), but never drop an evidenced link: `prefer PRIMARY` orders the links, it never restricts them - emit a link for every Service the evidence supports, including a SECONDARY Service whose route carries the evidence.
-- You never set provenance or write status; those are stamped by the system. Return empty lists if the slice supports no confident System - an honest empty result is correct; a fabricated one is a defect.
+- The chain has TWO structured tools. Call `SystemExtraction` with the `systems` payload after the reflection; call `SystemLinking` with the `links` payload after the extraction. Never write the JSON in your message text; the tool call is the only channel the workflow reads.
+- `SystemExtraction` emits `systems`: each entry is `{kind, discriminator, attributes, evidence}`. `kind` is a known System kind, `discriminator` defaults to `__singleton__`, `attributes` is `{description, pages, rendering_model}`, and `evidence` is the typed witness list above. A `systems` entry whose key already exists UPDATES that System: the `attributes` you emit REPLACE the stored values, so re-emit every attribute you want kept.
+- `SystemLinking` emits `links`: each entry is `{service, kind, discriminator, relation, role?, realm?, order?}`. Copy each `service` slug verbatim; `relation` is the exact edge label. Prefer the PRIMARY services (those that already aggregate this chunk's assets), but never drop an evidenced link: `prefer PRIMARY` orders the links, it never restricts them - emit a link for every Service the evidence supports, including a SECONDARY Service whose route carries the evidence.
+- Edge labels are exactly: `EXPOSED_VIA` (REST/GraphQL API), `FRONTED_BY` / `PROTECTED_BY` / `ROUTED_BY` (perimeter: CDN / WAF / reverse proxy / gateway), `IDENTIFIED_BY` (session/cookie identification), `AUTHENTICATED_BY` (authentication mechanism), `AUTHORIZED_BY` (authorization system), `SHAPES_DATA_OF` (CSP/CORS integration).
+- You never set provenance or write status; those are stamped by the system. Return an empty `systems` list or an empty `links` list if the slice supports no confident claim - an honest empty result is correct; a fabricated one is a defect.
 
 ## Worked examples - imitate the REASONING SHAPE, never the domain
 
@@ -89,15 +90,15 @@ Technical Systems are ubiquitous across application domains, so these span *asse
 **Example 6 - a role-gated response (define AuthorizationSystem, carry the authorization primitives, then link every Service its gate covers).** Asset: `GET /api/admin/users` answers 302 to a dead-looking path for an unauthenticated caller and 403 for an authenticated non-admin, while the SPA shell `GET /admin` answers anonymously. Observation: "role-gated administration surface with a redirect-shaped refusal." Hypothesise an authorization System overlaying the admin area. Verify: the 302 and the 403 witness enforcement; the anonymous shell is the same Service's presentation route, not a second Service; one READ-ONLY request to a second admin route shows whether the filter applies per-route. Type: new `AuthorizationSystem`, description "Role-gated administration surface: the gate keys on an authenticated principal, not on mere cookie presence (the login request carries the account name (`username`) in its payload, the session cookie names the principal, and the observed roles are `admin` and `user`), and enforcement is per-route over `/api/admin/*`, so `GET /api/admin/users` carries the payload, a route that omits the filter is directly reachable, and the refusal is a 302 redirect to a dead-looking path, not a 401/403 challenge. The accounts the filter authorizes are minted by the self-service registration route, so the gate reads a trust boundary the registration Service writes, and the deny path logs the attacker-controlled principal from the `username` request parameter by concatenation." The full route chain is `GET /admin` (shell, anonymous) -> `GET /api/admin/users` (302 or 403): the gate filters every route its chain covers, including anonymous-allowed routes, so the shell is evidence for the link. The account-registration Service is the second link: its `POST /api/register` answers anonymously, but it mints the accounts the gate authorizes, so it sits inside the authorization chain. Emit both edges:
 
 ```yaml
-system_edges:
-  - service_slug: admin
+links:
+  - service: admin
     kind: AuthorizationSystem
     discriminator: __singleton__
-    rel: AUTHORIZED_BY
-  - service_slug: account-registration
+    relation: AUTHORIZED_BY
+  - service: account-registration
     kind: AuthorizationSystem
     discriminator: __singleton__
-    rel: AUTHORIZED_BY
+    relation: AUTHORIZED_BY
 ```
 
 `evidence` names the 403 `Endpoint` node - `{label: Endpoint, identity: {method: GET, path: /api/admin/users, baseurl: <the host>}}` - the anonymous `POST /api/register` `Endpoint` - `{label: Endpoint, identity: {method: POST, path: /api/register, baseurl: <the host>}}` - and the shell `Endpoint` when the graph holds it. Do not reverse-engineer the role hierarchy (that is deep profiling, a later phase). Stop at existence + linkage.

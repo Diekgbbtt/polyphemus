@@ -627,7 +627,11 @@ async def analyse_chunked(
     # share one injected callable; `typist_invoke_fn` is its own seam, defaulting
     # (None) to the role's live `_default_invoke_fn`. Every read inside a body is
     # guarded, so it is fail-open regardless.
-    typist_inner = partial(mechanism_typist_body, invoke_fn=typist_invoke_fn)
+    typist_inner = partial(
+        mechanism_typist_body,
+        invoke_fn=typist_invoke_fn,
+        failure_fn=_record_failure,
+    )
     proposer_bodies = {
         "assigner": _counted(assigner_inner),
         "mechanism_typist": _counted(typist_inner),

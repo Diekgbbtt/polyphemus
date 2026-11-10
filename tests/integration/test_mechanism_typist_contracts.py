@@ -11,9 +11,15 @@ recomputed the way the code computes them. Verifier-gated; not selected by the t
 import inspect
 
 from polymerhus.analysis.analyser_types import (
+    EndpointWitness,
     L1DeltaBatch,
     ServiceProposal,
+    SystemAttributes,
+    SystemDefinition,
     SystemEdgeProposal,
+    SystemExtraction,
+    SystemLink,
+    SystemLinking,
     SystemProposal,
 )
 from polymerhus.analysis.chunking import Chunk
@@ -121,7 +127,7 @@ def test_N2_three_call_sequence_reflection_then_extract_then_link():
     inv = ScriptedInvoke(systems=L1DeltaBatch(systems=[_sys("WAF")]),
                          linking=L1DeltaBatch(system_edges=[_edge("checkout", "WAF", "FRONTED_BY")]))
     type_mechanisms(_service_chunk(), invoke_fn=inv)
-    assert inv.schemas == [None, L1DeltaBatch, L1DeltaBatch]      # reflect -> extract -> link
+    assert inv.schemas == [None, SystemExtraction, SystemLinking]  # reflect -> extract -> link
     assert _SYSTEMS_MARKER in inv.calls[1][1]
     assert _LINKING_MARKER in inv.calls[2][1]
 
@@ -356,3 +362,80 @@ def test_N12_reemitted_system_props_reach_the_curator_cypher():
     assert "SET n += $props" in cypher                       # replaces props on every write
     assert params["props"]["description"].startswith("rewritten full text")
     assert params["props"]["pages"] == ["/items"]
+
+
+def test_N13_typist_uses_component_schemas():
+    inv = ScriptedInvoke(
+        systems=SystemExtraction(systems=[
+            SystemDefinition(
+                kind="ReverseProxy",
+                discriminator="__singleton__",
+                attributes=SystemAttributes(description="nginx fronts the origin."),
+                evidence=[EndpointWitness(method="GET", path="/", baseurl="https://a")],
+            )
+        ]),
+        linking=SystemLinking(links=[
+            SystemLink(
+                service="checkout",
+                kind="ReverseProxy",
+                discriminator="__singleton__",
+                relation="FRONTED_BY",
+            )
+        ]),
+    )
+    out = type_mechanisms(
+        _service_chunk(), invoke_fn=inv, inventory={"services": ["checkout"]}
+    )
+    assert inv.schemas == [None, SystemExtraction, SystemLinking]
+    assert [s.kind for s in out.systems] == ["ReverseProxy"]
+    assert out.systems[0].props["description"] == "nginx fronts the origin."
+    assert out.systems[0].evidence[0].label == "Endpoint"
+    assert out.systems[0].evidence[0].identity == {
+        "path": "/", "method": "GET", "baseurl": "https://a"
+    }
+    assert [(e.service_slug, e.rel) for e in out.system_edges] == [
+        ("checkout", "FRONTED_BY")
+    ]
+
+
+def test_N14_typist_repair_reasks_each_structured_call_once():
+    calls = []
+
+    def invoke(messages, *, schema=None, system_prompt=None):
+        calls.append(schema)
+        if schema is None:
+            return "reflected"
+        if schema is SystemExtraction:
+            if calls.count(SystemExtraction) == 1:
+                return None
+            return SystemExtraction(systems=[])
+        return SystemLinking(links=[])
+
+    type_mechanisms(_service_chunk(), invoke_fn=invoke, inventory={"services": []})
+    assert calls.count(SystemExtraction) == 2
+    assert calls.count(SystemLinking) == 1
+
+
+def test_N15_typist_repair_exhaustion_is_a_named_failure():
+    calls = []
+    failures = []
+
+    def invoke(messages, *, schema=None, system_prompt=None):
+        calls.append(schema)
+        if schema is None:
+            return "reflected"
+        if schema is SystemExtraction:
+            return None
+        return SystemLinking(links=[])
+
+    out = type_mechanisms(
+        _service_chunk(),
+        invoke_fn=invoke,
+        inventory={"services": []},
+        failure_fn=lambda role, chunk_id, admitted: failures.append(
+            (role, chunk_id, admitted)
+        ),
+    )
+    assert out.systems == []
+    assert calls.count(SystemExtraction) == 2
+    assert failures == [("mechanism_typist", "katana:service:0", 0)]

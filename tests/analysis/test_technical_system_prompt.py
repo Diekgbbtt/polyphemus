@@ -12,11 +12,11 @@ def test_prompt_links_each_system_to_its_services() -> None:
     prompt = _load_skill()
 
     assert "## Link each System to its Services" in prompt
-    assert "system_edges:" in prompt
-    assert "service_slug: admin" in prompt
+    assert "links:" in prompt
+    assert "service: admin" in prompt
     assert "anonymous-allowed routes" in prompt
     assert "account-creation Service" in prompt
-    assert "one edge per (service, System) pair" in prompt
+    assert "one entry per (service, System) pair" in prompt
     assert "never duplicate" in prompt.lower()
 
 
@@ -27,7 +27,7 @@ def test_example_six_shows_the_full_route_chain_and_the_edge() -> None:
     assert "GET /api/admin/users" in prompt
     assert "403" in prompt
     assert "AUTHORIZED_BY" in prompt
-    assert "service_slug: account-registration" in prompt
+    assert "service: account-registration" in prompt
     assert "mints the accounts" in prompt
     assert "Stop at existence + linkage" in prompt
 
@@ -107,7 +107,7 @@ def test_prefer_primary_orders_links_without_restricting_them() -> None:
     prompt = _load_skill()
 
     assert (
-        "prefer the PRIMARY services (those that already aggregate this chunk's assets), "
+        "Prefer the PRIMARY services (those that already aggregate this chunk's assets), "
         "but never drop an evidenced link"
     ) in prompt
     assert (
