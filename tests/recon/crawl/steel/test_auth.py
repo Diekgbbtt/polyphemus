@@ -451,3 +451,16 @@ def test_the_oracle_never_navigates_and_never_fetches_twice():
         "sessions",
         "eval",
     ]
+
+
+def test_the_oracle_carries_the_source_it_was_given():
+    verdict = AuthOracle(
+        fetch_fn=FakeFetch(
+            {"status": 200, "redirected": False, "url": PROBE_URL}
+        ),
+        page_url=PAGE_URL,
+        probe_url=PROBE_PATH,
+        probe_source="session.auth_probe",
+    ).check()
+
+    assert verdict.probe_source == "session.auth_probe"

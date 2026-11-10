@@ -144,3 +144,18 @@ The full suite collects 8,099 tests; it did not finish inside the 20-minute comm
 The earlier 300-second live smoke proved the auth context and the partial/budget/settle fixes.
 It used the removed admin-probe seed, so it is not evidence for this fan-out.
 The next live run validates one lifecycle per valid account.
+
+## Probe source label (2026-11-10)
+
+The auth verdict's `probe_source` names the source that actually supplied the probe:
+
+- `session.auth_probe` when the loaded session carries its own oracle;
+- `account.auth_probe` when the account's configured probe supplies it;
+- `session.root_url` when the root URL is the fallback;
+- `overview.auth_probe.url` when the legacy overview probe supplies it;
+- `legacy_surface_gate` when the surface gate is the last resort;
+- `anonymous` for an anonymous session.
+
+A probe resolved from the loaded session is never labelled as an overview probe.
+The resolver is `crawl_session_probe_with_source`; the `AuthOracle` carries the label into the manifest and the trace.
+
