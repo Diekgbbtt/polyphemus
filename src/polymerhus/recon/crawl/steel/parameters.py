@@ -324,7 +324,10 @@ def extract_parameters(flow: Mapping[str, Any]) -> tuple[ObservedParameter, ...]
     """
     method = _flow_text(flow, "method").upper()
     url = _flow_text(flow, "url")
-    path, baseurl = split_url(url)
+    split = split_url(url)
+    if split is None:
+        return ()
+    path, baseurl = split
     identifiers = _path_identifiers(path)
     key = endpoint_key(method, path, baseurl)
     source_flow_id = _flow_text(flow, "flow_id")
@@ -587,13 +590,17 @@ def _dedupe(
     return tuple(unique)
 
 
-def split_url(url: str) -> tuple[str, str]:
-    """The URL path without its query, and the baseurl `scheme://netloc` (8.4).
+def split_url(url: str) -> tuple[str, str] | None:
+    """The URL path without its query, and the baseurl `scheme://netloc`.
 
     Both halves come from `state.normalize_url`, so a trailing slash, a duplicate
     slash, or a differently cased host never mints a second endpoint identity.
+    Only an absolute HTTP(S) URL has a graph endpoint: a `data:` URI, a
+    `javascript:` URI, or any other scheme returns `None` and never mints one.
     """
     parts = urlsplit(normalize_url(url))
+    if parts.scheme not in {"http", "https"} or not parts.netloc:
+        return None
     return parts.path or "/", f"{parts.scheme}://{parts.netloc}"
 
 
@@ -682,13 +689,18 @@ class DeclaredField(BaseModel):
 
 def declared_endpoint(
     form: FormContract, *, source_page_id: str, action_id: str | None = None
-) -> DeclaredEndpoint:
+) -> DeclaredEndpoint | None:
     """The declared endpoint one collected form contract produces (spec 8.4).
 
     The endpoint id is the contract's own fingerprint prefix, so two collections
     of one form are the same record and two different forms never collide.
+    A form action that is not an absolute HTTP(S) URL has no graph endpoint and
+    returns `None` (a `data:` or `javascript:` action never becomes a node).
     """
-    path, baseurl = split_url(form.action)
+    split = split_url(form.action)
+    if split is None:
+        return None
+    path, baseurl = split
     return DeclaredEndpoint(
         endpoint_id=f"ep_declared_{form.fingerprint[:16]}",
         method=form.method,

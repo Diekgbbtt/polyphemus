@@ -94,9 +94,21 @@ def test_image_under_drop_path_drops(ext):
     "/gallery/pic.png",        # non-drop, non-preserve -> kept
     "/upload/user123.jpg",     # user-content -> kept (surface)
     "/media/clip.gif",         # user-content -> kept (surface)
+    "/uploads/20181224/10ba9f34431727269dbeadae6dc786f8.jpg",  # user upload -> kept
 ])
 def test_user_controllable_images_kept(path):
     assert classify_endpoint(path) != "static"
+
+
+@pytest.mark.parametrize("path", [
+    "/template/default/index/img/banner/1.jpg",  # rendered theme image
+    "/theme/skin/logo.png",                      # rendered theme image
+    "/skins/admin/icon.gif",                     # rendered theme image
+    "/cdn-cgi/image/width=100/logo.png",         # verified CDN image transform
+    "/_next/static/media/logo.png",              # framework static tree
+])
+def test_confidently_static_image_base_paths_drop(path):
+    assert classify_endpoint(path) == "static"
 
 
 # --- media / archive recall bias (AMV-8 category 1) ------------------------

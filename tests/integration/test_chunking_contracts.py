@@ -567,3 +567,21 @@ def test_assigner_and_typist_receive_the_same_chunk_object():
     )
     assert [asset.type for asset in assigner_view] == ["Endpoint"]
     assert {asset.type for asset in typist_view} == {"Endpoint", "Parameter"}
+
+
+def test_chunk_stream_filters_static_image_base_paths_and_keeps_uploads():
+    assets = [
+        _ep("/template/default/index/img/banner/1.jpg"),
+        _ep("/uploads/20181224/abc.jpg"),
+        _ep("/api/orders"),
+    ]
+    chunks = chunks_for_job(JOB, assets)
+    paths = {
+        asset.identity["path"]
+        for chunk in chunks
+        for asset in chunk.assets
+        if asset.type == "Endpoint"
+    }
+    assert "/template/default/index/img/banner/1.jpg" not in paths
+    assert "/uploads/20181224/abc.jpg" in paths
+    assert "/api/orders" in paths

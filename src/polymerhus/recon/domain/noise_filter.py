@@ -99,7 +99,18 @@ Classification = Literal["static", "surface", "ambiguous"]
 DROP_SEGMENTS = frozenset({
     "assets", "static", "styles", "css", "fonts",
     "dist", "build", "node_modules", "vendor",
-    "_next", "chunks", "bower_components",
+    "chunks", "bower_components",
+    # Verified CDN/base-path trees (2026-11-10 iteration-E amendment): a CDN
+    # image transform or edge asset is presentational with high confidence.
+    "cdn", "cdn-cgi",
+})
+
+# Rendered theme/template image trees (2026-11-10 iteration-E amendment). The
+# Steel crawl observes these images as the page's own theme assets. The rule is
+# scoped to image/media extensions only: a template-rendered HTML/PHP route is
+# real surface and stays.
+TEMPLATE_IMAGE_SEGMENTS = frozenset({
+    "template", "templates", "theme", "themes", "skin", "skins",
 })
 
 # Extensions that are NEVER user-controllable surface (stylesheets, fonts,
@@ -310,20 +321,45 @@ def _is_generated_js(filename: str, seg_set: set[str]) -> bool:
                for p in VENDOR_JS_PREFIXES)
 
 
+def is_static_base_path(path: str, *, extension: str = "") -> bool:
+    """True when `path` sits under a confidently static base path.
+
+    The check is on whole path segments, never substrings. The template/theme/
+    skin rule applies to image and media extensions only: a template-rendered
+    HTML/PHP route is real surface and stays. The classification is deliberately
+    fail-open: an image under `/uploads/`, `/downloads/`, or an unknown base
+    path stays, because user media can carry executable SVG or witness SSRF /
+    path traversal.
+    """
+    segments = set(_path_segments(path or "/"))
+    if segments & DROP_SEGMENTS:
+        return True
+    # `_next` alone is not noise (`/_next/data/...` can be real API surface);
+    # the framework's static tree is the `_next/static` pair.
+    if {"_next", "static"} <= segments:
+        return True
+    return (
+        extension.lower() in (IMAGE_EXTS | MEDIA_EXTS)
+        and bool(segments & TEMPLATE_IMAGE_SEGMENTS)
+    )
+
+
 def classify_endpoint(path: str, *, has_params: bool = False) -> Classification:
     """Classify an endpoint path as static noise, user-controllable surface, or
     ambiguous (kept by recall bias).
 
-    Precedence (PRESERVE beats DROP so the recall bias always wins):
+    Precedence (PRESERVE beats DROP for the ambiguous media families, while a
+    CONFIDENT static base path beats PRESERVE):
       1. a query parameter present            -> "surface"
-      2. a user-content path segment          -> "surface"
-      3. a browser well-known / analytics path -> "static" (never app surface)
-      4. a JavaScript extension (.js/.mjs)     -> "surface" unless generated
-      5. a never-surface extension            -> "static"
-      6. a fingerprinted / bundler filename   -> "static"
-      7. an image / media / archive extension -> "static" iff under a drop-path,
-                                                 else "ambiguous" (recall bias)
-      8. any static-render path segment       -> "static"
+      2. a browser well-known / analytics path -> "static" (never app surface)
+      3. a JavaScript extension (.js/.mjs)     -> "surface" unless generated
+      4. a never-surface extension            -> "static"
+      5. a fingerprinted / bundler filename   -> "static"
+      6. a confident static base path          -> "static"
+         (`/static/`, `/assets/`, `/_next/static/`, a verified CDN tree, or a
+         template/theme/skin image)
+      7. a user-content path segment          -> "surface"
+      8. an image / media / archive extension -> "ambiguous" (recall bias)
       9. otherwise                            -> "ambiguous"
     """
     if has_params:
@@ -332,18 +368,13 @@ def classify_endpoint(path: str, *, has_params: bool = False) -> Classification:
     segments = _path_segments(path or "/")
     seg_set = set(segments)
 
-    if seg_set & PRESERVE_SEGMENTS:
-        return "surface"
-
     filename = segments[-1] if segments else ""
+    ext = _extension(filename)
 
     # Browser well-known files and analytics/telemetry paths are never
     # application surface - drop before the JS exemption so `/gtag/js` drops.
     if filename in BROWSER_BASENAMES or (seg_set & ANALYTICS_SEGMENTS):
         return "static"
-
-    ext = _extension(filename)
-    under_drop_path = bool(seg_set & DROP_SEGMENTS)
 
     # JavaScript is attack surface for D17 (jsluice): a PRIMARY bundle is kept
     # even when fingerprinted or under a presentational drop-path. GENERATED JS
@@ -356,10 +387,16 @@ def classify_endpoint(path: str, *, has_params: bool = False) -> Classification:
         return "static"
     if _is_fingerprinted_bundle(filename):
         return "static"
-    if ext in IMAGE_EXTS or ext in MEDIA_EXTS:
-        return "static" if under_drop_path else "ambiguous"
-    if under_drop_path:
+
+    # A confident static base path wins over the preserve segment: a theme
+    # image under `_next/static/media` is presentational, not user content.
+    if is_static_base_path(path, extension=ext):
         return "static"
+
+    # The recall-biased families: user-content paths and ambiguous roots stay.
+    if seg_set & PRESERVE_SEGMENTS:
+        return "surface"
+
     return "ambiguous"
 
 
