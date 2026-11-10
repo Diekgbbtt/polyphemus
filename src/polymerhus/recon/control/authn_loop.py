@@ -661,7 +661,7 @@ class GatewayVerdict(BaseModel):
 
 # --- the branch pruning rule ----------------------------------------------------------
 
-BROWSER_ONLY_KEEP = frozenset({"steel_crawl"})
+BROWSER_ONLY_KEEP = frozenset({"steel_crawl", "js_analysis"})
 """The browser-only branch keeps exactly the Steel crawl path: every
 request-based job is pruned (D223-11, implemented literally)."""
 
@@ -672,6 +672,8 @@ def prune_plan(plan: list[list[str]], branch: VerdictBranch) -> list[list[str]]:
     everything. Returns a NEW plan, never mutates."""
     if branch != "browser_only":
         return [list(phase) for phase in plan]
+    if not any("steel_crawl" in phase for phase in plan):
+        return []
     return [[job for job in phase if job in BROWSER_ONLY_KEEP]
             for phase in plan if any(job in BROWSER_ONLY_KEEP for job in phase)]
 

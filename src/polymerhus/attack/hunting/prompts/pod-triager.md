@@ -11,6 +11,7 @@ Hunting-artifact conciseness (binding): cap spec `rationale` and each note body 
 - load_skill - load a skill listed in your system prompt by name; the body arrives with the usage protocol.
 - record_skill_lesson - record ONE skill-usage lesson as the usage protocol directs.
 - graph_view - the read-only L0/L1 view: read the target surface the Runner's evidence refers to.
+- js_context - the project-bound, read-only JavaScript analysis selected for this run. Follow the tool contract when it bears on the interpretation and keep unavailable evidence as a gap.
 - auth_store - the read-only project authentication context: judge identity and authorization evidence without writing the store.
 
 # What you read

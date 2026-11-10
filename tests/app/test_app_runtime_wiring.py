@@ -63,6 +63,11 @@ def _stub_startup(monkeypatch, events=None):
     monkeypatch.setattr(pg, "ensure_checkpoint_tables", rec_async("ensure-checkpoint-tables"))
     monkeypatch.setattr(pg, "ensure_recon_schema", rec("ensure-recon-schema"))
     monkeypatch.setattr(pg, "ensure_hunting_schema", rec("ensure-hunting-schema"))
+    monkeypatch.setattr(
+        pg,
+        "ensure_js_retention_schema",
+        rec("ensure-js-retention-schema"),
+    )
     monkeypatch.setattr(neo4j_client, "ensure_schema", rec("ensure-schema"))
     monkeypatch.setattr(neo4j_client, "ensure_l1_schema", rec("ensure-l1-schema"))
     monkeypatch.setattr(main_mod, "validate_llm_config", rec("validate-llm-config"))
@@ -112,6 +117,7 @@ def test_startup_constructs_manager_registers_modules_and_starts_reaper(monkeypa
             "ensure-checkpoint-tables",
             "ensure-recon-schema",
             "ensure-hunting-schema",
+            "ensure-js-retention-schema",
             "ensure-schema",
             "ensure-l1-schema",
             "validate-llm-config",

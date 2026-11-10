@@ -459,9 +459,9 @@ def test_scripted_model_sees_system_skill_first_through_the_real_session():
 def _raw_error_hunt(tmp_path, exc):
     """Drive the REAL harness turn seam with `model_factory` raising `exc`.
 
-    The store, the five-tool surface, the compiled graph, and the live session
-    edge all ride; only the model raises. Returns the dispatch result when the
-    harness swallows the raise, or raises whatever escapes."""
+    The store, the project-bound hunter surface, the compiled graph, and the
+    live session edge all ride; only the model raises. Returns the dispatch
+    result when the harness swallows the raise, or raises whatever escapes."""
     from langgraph.checkpoint.memory import InMemorySaver  # noqa: PLC0415
 
     from tests.hunting_fixtures import (  # noqa: PLC0415

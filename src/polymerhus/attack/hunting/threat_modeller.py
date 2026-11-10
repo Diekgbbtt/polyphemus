@@ -39,7 +39,8 @@ The tool surface (S1 5) is built by
 read/write), `assess_impact` (the sole writer of one assessment row),
 `notes` (the shared notes tool with the bound `<unit_name>:<note_name>` key),
 the HTTP-history read pair, the Kali `exec` probe, and the web-vulnerability
-suite pair (`skill_list` / `skill_load`). The
+suite pair (`skill_list` / `skill_load`), plus the shared read-only
+`js_context` reader. The
 auth store and the project skill arrive through the role's `load_skill` binding
 (the recon-orchestrator coupling). Deliberately NOT bound: `graph_view` (the
 unit projection and the L1 application-surface overview reach the turn through
@@ -92,7 +93,8 @@ MODELLER_MODEL_KEY = "LLM_HUNTING_THREAT_MODELLER"
 # copied from an outside repository.
 TOOL_SURFACE: tuple[str, ...] = (
     "hunts_store", "assess_impact", "notes", "search_http_history",
-    "get_http_artifact", "exec", "browser", "skill_list", "skill_load",
+    "get_http_artifact", "exec", "browser", "js_context", "skill_list",
+    "skill_load",
 )
 
 # The gate hints (S1 9.3): module constants injected in the gate write's tool

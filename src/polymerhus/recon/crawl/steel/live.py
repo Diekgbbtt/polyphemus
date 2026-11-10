@@ -392,6 +392,9 @@ class LiveRunResult:
     artifact_count: int
     duration_s: float
     verdict: AuthVerdict | None = None
+    # The already-observed CDP flows, exposed so a downstream consumer can
+    # reuse the one capture rather than starting a second HTTP engine.
+    flows: tuple[Any, ...] = ()
 
 
 class LivePageFactory:
@@ -830,6 +833,7 @@ def run_live_crawl(ctx: LiveRunContext) -> LiveRunResult:
         artifact_count=len(ledger.artifacts()),
         duration_s=duration_s,
         verdict=holder.get("verdict"),
+        flows=tuple(sidecar.flows),
     )
 
 

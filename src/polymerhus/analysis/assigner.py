@@ -38,6 +38,7 @@ from polymerhus.analysis.analyser_types import L1DeltaBatch
 from polymerhus.analysis.chunking import Chunk, admit_for_role
 from polymerhus.analysis.l1_types import L0Ref
 from polymerhus.analysis.overview import overview_message
+from polymerhus.app.js_context.selection import analysis_steering
 
 logger = logging.getLogger(__name__)
 
@@ -428,7 +429,13 @@ _ASSIGN_CHAIN = (
 )
 
 
-def _user_prompt(l0_slice: dict, inventory: dict | None, *, chained: bool = False) -> str:
+def _user_prompt(
+    l0_slice: dict,
+    inventory: dict | None,
+    *,
+    chained: bool = False,
+    js_context_input=None,
+) -> str:
     """The VOLATILE half of the prompt (#34): the un-truncated L1 GRAPH block FIRST
     (the FR-INVENTORY discipline plus the L1-graph posting, operator ruling
     2026-10-16: Services with contracts, Systems with descriptions and attributes,
@@ -452,7 +459,7 @@ def _user_prompt(l0_slice: dict, inventory: dict | None, *, chained: bool = Fals
     from polymerhus.analysis.pod import _slice_repr, l1_graph_block
 
     lead = f"{_ASSIGN_CHAIN}\n\n" if chained else ""
-    return (
+    prompt = (
         f"{lead}{l1_graph_block(inventory)}\n\n{_slice_repr(l0_slice)}\n\n"
         "TASK: judge the Endpoints above. The slice above is the chunk recon most "
         "recently collected - it is your primary subject. The L1 graph block "
@@ -462,6 +469,12 @@ def _user_prompt(l0_slice: dict, inventory: dict | None, *, chained: bool = Fals
         "stale pool. Assign each Endpoint to the Service(s) that own it, each "
         "aggregate carrying its `evidence_refs`."
     )
+    if js_context_input is not None:
+        prompt = (
+            f"{prompt}\n\n"
+            f"{analysis_steering(js_context_input, role='assigner')}"
+        )
+    return prompt
 
 
 def assign(
@@ -487,7 +500,8 @@ def assign(
 
     admitted = admit_for_role(chunk, ROLE)
     l0_slice = _chunk_slice(chunk)
-    if not l0_slice["nodes"]:  # nothing this role can act on -> valid empty
+    if not l0_slice["nodes"] and chunk.js_context_input is None:
+        # Nothing ordinary this role can act on and no JS integration pass.
         return AssignmentOutcome()
     # The STABLE half of the prompt (#34) rides the stateful seam's `system_prompt=`
     # binding as the agent's leading block (the converged seam), so the provider's
@@ -507,7 +521,11 @@ def assign(
             raw = invoke_fn(
                 ([HumanMessage(content=overview)] if overview else [])
                 + [HumanMessage(content=_user_prompt(
-                    l0_slice, inventory, chained=bool(overview)))],
+                    l0_slice,
+                    inventory,
+                    chained=bool(overview),
+                    js_context_input=chunk.js_context_input,
+                ))],
                 schema=L1DeltaBatch, system_prompt=system_prompt,
             )
     except Exception:  # LLM error -> fail-open to no assignment, never crash
@@ -561,8 +579,15 @@ def default_invoke_fn():
     return invoke
 
 
-def stateful_invoke_fn(run_id: str, checkpointer, project_id: str | None = None,
-                       auth_store=None):
+def stateful_invoke_fn(
+    run_id: str,
+    checkpointer,
+    project_id: str | None = None,
+    auth_store=None,
+    *,
+    js_context_selection=None,
+    js_context_tracker=None,
+):
     """The STATEFUL Assigner call (#94): the `assigner` role runs as a session on its
     own per-run thread (`AnalysisSession(run_id, "assigner")`, distinct from every
     other agent's thread), reset at each chunk boundary. Structured output is
@@ -589,7 +614,15 @@ def stateful_invoke_fn(run_id: str, checkpointer, project_id: str | None = None,
     config degrades the profile/window, never the session."""
     from polymerhus.analysis.proposer_turn import session_invoke_fn
 
-    return session_invoke_fn("assigner", run_id, checkpointer, project_id, auth_store)
+    return session_invoke_fn(
+        "assigner",
+        run_id,
+        checkpointer,
+        project_id,
+        auth_store,
+        js_context_selection=js_context_selection,
+        js_context_tracker=js_context_tracker,
+    )
 
 
 def make_assigner_body(*, invoke_fn, inventory_fn):

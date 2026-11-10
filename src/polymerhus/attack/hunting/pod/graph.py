@@ -483,6 +483,7 @@ def _harness_ctx(state: PodState, *, exec_fn, memory_store,
         spec_id=mem_key, log=state.get("log"),
         variant_ref=state.get("current_variant_ref", "v0"),
         model_factory=model_factory, cap=HUNT_POD_MAX_TOOL_CALLS,
+        project_id=project_id or "",
         graph_view_fn=graph_view_fn, capture_context=capture_context,
         replay_fn=replay_fn, task_skills=_spec_task_skills(state),
         browser_tool=browser_tool)

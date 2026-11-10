@@ -1,0 +1,13 @@
+{
+  "source_files_verified": 203,
+  "python_syntax_verified": 161,
+  "node_syntax": "checked separately for both helpers",
+  "artifact_hashes_verified": 8,
+  "local_design_links": "valid",
+  "credential_pattern_scan": "no matches",
+  "errors": [],
+  "unit_collection": "blocked: test_service import collision",
+  "merge_ready": false,
+  "new_llm_requests": 0,
+  "new_evaluations": 0
+}

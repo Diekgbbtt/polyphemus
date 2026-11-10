@@ -6,7 +6,8 @@ module owns the tool surface built over those seams: `hunts_store` (the
 threat-model read/write), `assess_impact` (the sole writer of one schema-5
 assessment row, ticket #407), `notes` (the shared notes tool with the bound
 `<unit_name>:<note_name>` key), the HTTP-history read pair, the Kali `exec`
-probe, and the web-vulnerability suite pair (`skill_list` / `skill_load`). The
+probe, the web-vulnerability suite pair (`skill_list` / `skill_load`), and the
+project-bound read-only `js_context` reader when a frozen JS selection exists. The
 auth store and the project skill arrive through the role's `load_skill` binding
 (the recon-orchestrator coupling). Deliberately NOT bound here: `graph_view`
 (the unit projection reaches the turn through the pass's context seam),
@@ -1359,6 +1360,8 @@ class ModellerTools:
     seam_gaps: ToolSeamGaps | None = None
     # The one agent-facing browser tool, bound by the actor for its run.
     browser_tool: Any = None
+    # The project-bound read-only JS context selected for the hunting run.
+    js_context_tool: Any = None
     # The project's free-text posture statement (#438). The run reads it ONCE
     # at its start (`runtime._run_intake`) from `settings.hunting` and stamps
     # it here; the pass copies it verbatim onto every turn prompt. It never
@@ -1433,6 +1436,8 @@ def build_modeller_tool_surface(
     ]
     if tools.browser_tool is not None:
         surface.append(tools.browser_tool)
+    if tools.js_context_tool is not None:
+        surface.append(tools.js_context_tool)
     if tools.suite_tools:
         surface.extend(tools.suite_tools)
         if tools.suite is None:

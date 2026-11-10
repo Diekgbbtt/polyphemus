@@ -114,6 +114,7 @@ class ConsumptionOptions(BaseModel):
     already-profiled skip), restapi-first ordering, then pack into pod inputs.
     All False / `pack="none"` is the plain-job no-op (raw 1:1 assets).
     """
+    source: Literal["graph", "js_intake"] = "graph"
     route_dedup: bool = False
     # `materialise_root` / `skip_profiled` ride the `route_dedup` stage: set
     # alone (without `route_dedup`) they are inert - the seam never materialises
@@ -141,6 +142,7 @@ class ConsumptionOptions(BaseModel):
 
 
 class JobSpec(BaseModel):
+    executor: Literal["pod", "js_specialist"] = "pod"
     tool: str
     skill: str
     command_template: str

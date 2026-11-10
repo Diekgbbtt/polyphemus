@@ -6,6 +6,7 @@ import pytest
 
 from polymerhus.recon.domain.parsers import PARSERS
 from polymerhus.recon.control.jobs import (
+    JS_INTAKE_PRODUCERS,
     JOBS,
     PHASES,
     REPROFILE_PROBE_FLAGS,
@@ -63,6 +64,10 @@ def katana_depth_knob():
 def test_every_job_tool_has_a_parser():
     for name, job in JOBS.items():
         assert job.tool == name
+        if job.executor:
+            # A native executor returns PodExports directly; no stdout parser
+            # participates in that path.
+            continue
         assert job.tool in PARSERS, f"{job.tool} has no parser"
 
 
@@ -230,6 +235,8 @@ def test_consumes_deps_respected_across_full_plan():
             )
         for job_name in phase:
             available.update(JOBS[job_name].produces)
+            if job_name in JS_INTAKE_PRODUCERS:
+                available.add("JSInventory")
 
 
 def test_validate_job_subset_httpx_alone_passes():
@@ -313,23 +320,17 @@ def test_build_phase_plan_steel_crawl_alone_is_one_phase():
     assert build_phase_plan(["steel_crawl"]) == [["steel_crawl"]]
 
 
-def test_jsluice_consumes_js_endpoints_via_path_selector_and_is_batched():
-    job = JOBS["jsluice"]
-    assert job.consumes == "Endpoint"
-    assert job.batch is True
-    assert job.command_template == ""  # batched: command built per-pod, not filled
-    assert job.consumes_where is not None
-    assert job.consumes_where.field == "path"
-    assert job.consumes_where.op == "ends_with"
-    assert set(job.consumes_where.values) == {".js", ".mjs"}
+def test_jsluice_is_retired_as_a_scheduled_job():
+    assert "jsluice" not in JOBS
+    assert not any("jsluice" in phase for phase in PHASES)
 
 
-def test_jsluice_runs_after_the_endpoint_producing_crawlers():
-    # jsluice must sit in a LATER phase than katana (which mints the `.js`
-    # Endpoints it consumes) or the phase barrier feeds it nothing (D17).
-    jsluice_idx = next(i for i, p in enumerate(PHASES) if "jsluice" in p)
+def test_js_analysis_runs_after_the_js_inventory_producers():
+    js_idx = next(i for i, p in enumerate(PHASES) if "js_analysis" in p)
     katana_idx = next(i for i, p in enumerate(PHASES) if "katana" in p)
-    assert jsluice_idx > katana_idx
+    steel_idx = next(i for i, p in enumerate(PHASES) if "steel_crawl" in p)
+    assert js_idx > katana_idx
+    assert js_idx > steel_idx
 
 
 def test_gau_is_not_a_scheduled_job():
@@ -338,10 +339,10 @@ def test_gau_is_not_a_scheduled_job():
     assert not any("gau" in phase for phase in PHASES)
 
 
-def test_arjun_runs_after_jsluice_so_recovered_endpoints_reach_it():
+def test_arjun_runs_after_js_analysis_so_recovered_endpoints_reach_it():
     arjun_idx = next(i for i, p in enumerate(PHASES) if "arjun" in p)
-    jsluice_idx = next(i for i, p in enumerate(PHASES) if "jsluice" in p)
-    assert arjun_idx > jsluice_idx
+    js_idx = next(i for i, p in enumerate(PHASES) if "js_analysis" in p)
+    assert arjun_idx > js_idx
 
 
 def test_kiterunner_is_an_authenticated_job():
@@ -449,15 +450,15 @@ def test_httpx_reprofile_shares_one_probe_flag_set_with_the_write_probes():
         assert flag in REPROFILE_PROBE_FLAGS
 
 
-def test_httpx_reprofile_runs_after_jsluice_and_before_the_api_phases():
-    # It must sit after jsluice (the last BaseURL producer, minting JS-derived
+def test_httpx_reprofile_runs_after_js_analysis_and_before_the_api_phases():
+    # It must sit after JS analysis (minting JS-derived
     # API hosts) and before kiterunner/graphql-cop, so those gate on the
     # reprofiled surface, not just httpx's originally-probed hosts.
-    jsluice_idx = next(i for i, p in enumerate(PHASES) if "jsluice" in p)
+    js_idx = next(i for i, p in enumerate(PHASES) if "js_analysis" in p)
     reprofile_idx = next(i for i, p in enumerate(PHASES) if "httpx_reprofile" in p)
     kite_idx = next(i for i, p in enumerate(PHASES) if "kiterunner" in p)
     gql_idx = next(i for i, p in enumerate(PHASES) if "graphql-cop" in p)
-    assert reprofile_idx > jsluice_idx
+    assert reprofile_idx > js_idx
     assert kite_idx > reprofile_idx
     assert gql_idx > reprofile_idx
 
@@ -483,12 +484,12 @@ def test_kiterunner_and_graphql_cop_are_two_separate_phases():
 
 def test_arjun_runs_after_api_enumeration():
     # D27/GP4-a: arjun repositioned after kiterunner so it discovers Parameters
-    # on the routes api enumeration just found (still after jsluice too).
+    # on the routes api enumeration just found (still after JS analysis too).
     arjun_idx = next(i for i, p in enumerate(PHASES) if "arjun" in p)
     kite_idx = next(i for i, p in enumerate(PHASES) if "kiterunner" in p)
-    jsluice_idx = next(i for i, p in enumerate(PHASES) if "jsluice" in p)
+    js_idx = next(i for i, p in enumerate(PHASES) if "js_analysis" in p)
     assert arjun_idx > kite_idx
-    assert arjun_idx > jsluice_idx
+    assert arjun_idx > js_idx
 
 
 def test_full_plan_still_validates_with_the_reprofile_and_api_phases():
@@ -505,33 +506,6 @@ def test_validate_job_subset_httpx_reprofile_needs_a_baseurl_producer():
     validate_job_subset(["subfinder", "httpx", "httpx_reprofile"])
 
 
-# --- #185: webpack code-splitting chunk-map resolver ------------------------
-
-def test_webpack_chunks_consumes_js_endpoints_and_is_batched():
-    # #185: the resolver fetches the crawled JS bundles, extracts the webpack
-    # runtime's chunk map, and mints the resolved chunk URLs as Endpoints. It
-    # rides the same batch seam and path selector as jsluice (bundles are the
-    # input), with an empty command_template because the per-pod command is
-    # built from the batch by build_batch_command.
-    job = JOBS["webpack_chunks"]
-    assert job.tool == "webpack_chunks"
-    assert job.consumes == "Endpoint"
-    assert job.command_template == ""
-    assert job.batch is True
-    assert job.consumes_where is not None
-    assert job.consumes_where.field == "path"
-    assert job.consumes_where.op == "ends_with"
-    assert set(job.consumes_where.values) == {".js", ".mjs"}
-
-
-def test_webpack_chunks_runs_after_the_crawlers_and_before_jsluice():
-    # jsluice must scan the chunk Endpoints the resolver mints, so the resolver
-    # sits in a LATER phase than the crawler that mints the `.js` bundles it
-    # consumes, and an EARLIER phase than jsluice (the phase barrier resolves
-    # each job's inputs before it runs).
-    webpack_idx = next(i for i, p in enumerate(PHASES) if "webpack_chunks" in p)
-    katana_idx = next(i for i, p in enumerate(PHASES) if "katana" in p)
-    jsluice_idx = next(i for i, p in enumerate(PHASES) if "jsluice" in p)
-    assert webpack_idx > katana_idx
-    assert jsluice_idx > webpack_idx
-    assert "webpack_chunks" in JOBS
+def test_webpack_chunks_is_retired_as_a_scheduled_job():
+    assert "webpack_chunks" not in JOBS
+    assert not any("webpack_chunks" in phase for phase in PHASES)

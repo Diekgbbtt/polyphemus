@@ -1,0 +1,243 @@
+{
+  "v3_embedded": {
+    "kind": "map",
+    "map": {
+      "version": 3,
+      "file": "bundle.js",
+      "sources": ["src/app.js", "src/lib/util.js"],
+      "sourcesContent": [
+        "export const app = 'v3-embedded';\n",
+        "export const util = 42;\n"
+      ],
+      "names": [],
+      "mappings": ""
+    },
+    "expected": {
+      "src/app.js": "export const app = 'v3-embedded';\n",
+      "src/lib/util.js": "export const util = 42;\n"
+    }
+  },
+  "inline_base64": {
+    "kind": "inline",
+    "encoding": "base64",
+    "map": {
+      "version": 3,
+      "file": "inline-base64.js",
+      "sources": ["src/base64.js"],
+      "sourcesContent": ["export const inlineMode = 'base64';\n"],
+      "names": [],
+      "mappings": ""
+    },
+    "expected": {
+      "src/base64.js": "export const inlineMode = 'base64';\n"
+    }
+  },
+  "inline_urlencoded": {
+    "kind": "inline",
+    "encoding": "urlencoded",
+    "map": {
+      "version": 3,
+      "file": "inline-url.js",
+      "sources": ["src/urlencoded.js"],
+      "sourcesContent": ["export const inlineMode = 'urlencoded';\n"],
+      "names": [],
+      "mappings": ""
+    },
+    "expected": {
+      "src/urlencoded.js": "export const inlineMode = 'urlencoded';\n"
+    }
+  },
+  "index_sections": {
+    "kind": "map",
+    "map": {
+      "version": 3,
+      "file": "indexed.js",
+      "sections": [
+        {
+          "offset": {"line": 0, "column": 0},
+          "map": {
+            "version": 3,
+            "sources": ["one/duplicate.js", "one/only.js"],
+            "sourcesContent": ["section-one\n", "one-only\n"],
+            "names": [],
+            "mappings": ""
+          }
+        },
+        {
+          "offset": {"line": 10, "column": 0},
+          "map": {
+            "version": 3,
+            "sources": ["two/duplicate.js", "two/only.js"],
+            "sourcesContent": ["section-two\n", "two-only\n"],
+            "names": [],
+            "mappings": ""
+          }
+        }
+      ]
+    },
+    "expected": {
+      "one/duplicate.js": "section-one\n",
+      "one/only.js": "one-only\n",
+      "two/duplicate.js": "section-two\n",
+      "two/only.js": "two-only\n"
+    }
+  },
+  "section_same_name": {
+    "kind": "map",
+    "map": {
+      "version": 3,
+      "file": "same-name.js",
+      "sections": [
+        {
+          "offset": {"line": 0, "column": 0},
+          "map": {
+            "version": 3,
+            "sources": ["shared.js"],
+            "sourcesContent": ["section-zero-shared\n"],
+            "names": [],
+            "mappings": ""
+          }
+        },
+        {
+          "offset": {"line": 5, "column": 0},
+          "map": {
+            "version": 3,
+            "sources": ["shared.js"],
+            "sourcesContent": ["section-one-shared\n"],
+            "names": [],
+            "mappings": ""
+          }
+        }
+      ]
+    },
+    "expected": {
+      "section[0]:shared.js": "section-zero-shared\n",
+      "section[1]:shared.js": "section-one-shared\n"
+    }
+  },
+  "source_root_relative": {
+    "kind": "map",
+    "map": {
+      "version": 3,
+      "file": "root-relative.js",
+      "sourceRoot": "src",
+      "sources": ["app.js", "webpack:///virtual/widget.js"],
+      "sourcesContent": ["relative-root-app\n", "webpack-virtual-widget\n"],
+      "names": [],
+      "mappings": ""
+    },
+    "expected": {
+      "src/app.js": "relative-root-app\n",
+      "webpack:///virtual/widget.js": "webpack-virtual-widget\n"
+    }
+  },
+  "source_root_absolute": {
+    "kind": "map",
+    "map": {
+      "version": 3,
+      "file": "root-absolute.js",
+      "sourceRoot": "/root/absolute",
+      "sources": ["abs.js"],
+      "sourcesContent": ["absolute-root-abs\n"],
+      "names": [],
+      "mappings": ""
+    },
+    "expected": {
+      "/root/absolute/abs.js": "absolute-root-abs\n"
+    }
+  },
+  "content_edge_cases": {
+    "kind": "map",
+    "map": {
+      "version": 3,
+      "file": "content-edge.js",
+      "sources": ["null.js", "empty.js", "missing.js", "also-missing.js"],
+      "sourcesContent": [null, ""],
+      "names": [],
+      "mappings": ""
+    },
+    "expected": {
+      "null.js": null,
+      "empty.js": "",
+      "missing.js": null,
+      "also-missing.js": null
+    }
+  },
+  "basename_collision": {
+    "kind": "map",
+    "map": {
+      "version": 3,
+      "file": "collision.js",
+      "sources": ["a/app.js", "b/app.js"],
+      "sourcesContent": ["basename-from-a\n", "basename-from-b\n"],
+      "names": [],
+      "mappings": ""
+    },
+    "expected": {
+      "a/app.js": "basename-from-a\n",
+      "b/app.js": "basename-from-b\n"
+    }
+  },
+  "dangerous_paths": {
+    "kind": "map",
+    "map": {
+      "version": 3,
+      "file": "dangerous.js",
+      "sources": [
+        "/absolute/root.js",
+        "../../escape.js",
+        "safe/../normalized.js",
+        "normalized.js",
+        "C:\\temp\\windows.js"
+      ],
+      "sourcesContent": [
+        "absolute-path-content\n",
+        "traversal-content\n",
+        "normalized-first\n",
+        "normalized-second\n",
+        "windows-path-content\n"
+      ],
+      "names": [],
+      "mappings": ""
+    },
+    "expected": {
+      "/absolute/root.js": "absolute-path-content\n",
+      "../../escape.js": "traversal-content\n",
+      "safe/../normalized.js": "normalized-first\n",
+      "normalized.js": "normalized-second\n",
+      "C:\\temp\\windows.js": "windows-path-content\n"
+    }
+  },
+  "invalid_json": {
+    "kind": "raw_map",
+    "raw": "{\"version\":3,\"sources\":[\"broken.js\"],",
+    "expected": {}
+  },
+  "inconsistent_types": {
+    "kind": "map",
+    "map": {
+      "version": 3,
+      "sources": ["ok.js", 42],
+      "sourcesContent": ["type-ok\n", "type-bad\n"],
+      "names": [],
+      "mappings": ""
+    },
+    "expected": {
+      "ok.js": "type-ok\n"
+    }
+  },
+  "inconsistent_lengths": {
+    "kind": "map",
+    "map": {
+      "version": 3,
+      "sources": ["first.js", "second.js"],
+      "sourcesContent": ["only-first\n"],
+      "names": [],
+      "mappings": ""
+    },
+    "expected": {
+      "first.js": "only-first\n",
+      "second.js": null
+    }
+  }
+}

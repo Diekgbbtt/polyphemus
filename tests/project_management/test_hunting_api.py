@@ -6,6 +6,7 @@ real surface while `polymerhus.app.runtime` has not landed."""
 from __future__ import annotations
 
 import asyncio
+import pytest
 from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
@@ -17,6 +18,14 @@ from polymerhus.attack.hunting.resume import PAUSE_STATS_KEYS
 client = TestClient(app)
 
 RUN_ID = "rt-hunt-0001"
+
+
+@pytest.fixture(autouse=True)
+def legacy_workflow(monkeypatch):
+    """These legacy control-plane cases have no selected recon JS workflow."""
+    monkeypatch.setattr(pg, "list_active_js_context_producers", lambda _: [])
+    monkeypatch.setattr(pg, "list_hunting_runs", lambda _: [])
+    monkeypatch.setattr("polymerhus.project_management.api._ensure_project_evolver", lambda _: None)
 
 
 def _row(status: str = "running"):
@@ -169,7 +178,11 @@ def test_a_caller_supplied_candidate_body_is_ignored_not_a_launch_input(
     ]})
 
     assert resp.status_code == 201
-    assert scheduled == [(RUN_ID, {})]
+    assert scheduled == [(RUN_ID, {
+        "producing_run_id": None,
+        "js_context_selection": None,
+        "js_context_admission": None,
+    })]
 
 
 def test_launch_unknown_project_404(monkeypatch):

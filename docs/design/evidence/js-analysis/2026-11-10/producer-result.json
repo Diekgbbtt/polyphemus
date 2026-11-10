@@ -1,0 +1,206 @@
+{
+  "schema_version": 1,
+  "trial": "2026-11-10-js-comfyui-unmetered-quality",
+  "candidate": {
+    "head": "b905cb96cc75eb693fb64f6b7223bc87598ec39c",
+    "branch": "feat/js-analysis-mvp-eval",
+    "source_archive_sha256": "ac1d9d9d8b985e4a655c184f58db65395012c0edef2b701a353c50ac77987b83"
+  },
+  "target": {
+    "label": "ComfyUI",
+    "url": "http://comfyui-manager:8288/",
+    "container": "web_comfyui-comfyui-manager-1",
+    "image": "pentestbench-comfyui:v0.3.76-isolated",
+    "image_id": "sha256:1f2968d539811ff09c98c2df62fe7cb7dd64ff84c1912975c3b9baf471b548a3",
+    "restart_count": 0,
+    "root_http_status": 200,
+    "manager_frontend_http_status": 200,
+    "manager_version_api_http_status": 200
+  },
+  "isolated_task_images": {
+    "agent": "sha256:2562a0663a9065afd624c80dd7bde773999ae93c87aa9f3602ee1cc31efaf8a3",
+    "kali": "sha256:194d25714c806c10b4964c0a9b80c6a103f6bbc61f3d9e8377523b9d84af8481",
+    "steel": "sha256:bef9eb7512b4e5479701310cc581340eb2601728dc7930ee6ca76d6f98747dee",
+    "neo4j": "sha256:d9cfe82983d27f5a75b3aaae8f316d04f9a698a3b7f6103a508f7caf8362f255",
+    "postgres": "sha256:7b822b0aac60967beb1ea5e576b8602c94c300a157d187f385ae3e0da199b90a"
+  },
+  "structure_runtime": {
+    "node": "v22.23.1",
+    "babel_parser": "8.0.8",
+    "babel_traverse": "8.0.7",
+    "steel_cli": "0.5.0-preview.6"
+  },
+  "identity": {
+    "project_id": "js-current-comfyui-af39fe95",
+    "run_id": "current-native-af39fe95",
+    "js_input_id": "jsinput_6c51b606e44493468df3362a67239005ba385a31",
+    "thread_id": "recon:current-native-af39fe95:87c1f00512bce59819b5b31907d6b6fa041f8ed4394cb5649c8dd1108efb2a91:js_specialist",
+    "auth_ref": ""
+  },
+  "jobs": {
+    "httpx": {
+      "status": "success",
+      "seconds": 3.335,
+      "produced_assets": 12
+    },
+    "steel_crawl": {
+      "status": "success",
+      "seconds": 103.655,
+      "produced_assets": 1471,
+      "produced_observations": 2
+    },
+    "js_analysis": {
+      "status": "success",
+      "job_seconds": 231.399,
+      "specialist_invocations": 1,
+      "lead_count": 480,
+      "saved_behaviors": 2,
+      "retained_evidence": 0,
+      "coverage": "partial"
+    }
+  },
+  "specialist": {
+    "model": "opencode-go:deepseek-v4.1-flash",
+    "sessions": 1,
+    "tool_roster": [
+      "exec"
+    ],
+    "tool_messages": 62,
+    "exec_attempts": 62,
+    "exec_completed": 59,
+    "rejections": 3,
+    "rejection_gap": "output_budget_exhausted",
+    "max_attempts": null,
+    "triage_budget": null,
+    "native_wall_limit_seconds": 1200
+  },
+  "provider": {
+    "actual_source": "LiteLLM_SpendLogs",
+    "requests": 39,
+    "prompt_tokens": 1161961,
+    "completion_tokens": 20482,
+    "total_tokens": 1182443,
+    "cost_usd": 0.02834079,
+    "observer_estimate_only": {
+      "input_tokens": 802397,
+      "output_tokens": 46800,
+      "usage_unknown_settlements": 78
+    },
+    "shared_deadline_seconds": 1200,
+    "remaining_at_collection_seconds": 966.9331295139855
+  },
+  "js_context": {
+    "publication_state": "pending",
+    "error": "context_publication_failed",
+    "context_id": null,
+    "document_id": null,
+    "snapshot_present": false,
+    "yaml_present": false,
+    "current_present": false,
+    "feed_assets": 2,
+    "feed_dispatches_entered": 6,
+    "analysis_l0_assets_read": 1485,
+    "analysis_status": "drained"
+  },
+  "graph": {
+    "proposal_id": "23c728821c36ad4ef0d8ea70eb6004c71af5852c305974854a01b4a280157a64",
+    "curator_status": "confirmed",
+    "assets_merged": 2,
+    "counts_are_new_nodes": false,
+    "unconfirmed_proposal_assets": 1,
+    "accepted_assets": [
+      {
+        "type": "BaseURL",
+        "identity": "http://comfyui-manager:8288"
+      },
+      {
+        "type": "Endpoint",
+        "method": "GET",
+        "path": "/assets/index--PH2IHOc.js"
+      }
+    ],
+    "project_graph_counts": {
+      "Domain": 1,
+      "BaseURL": 1,
+      "Endpoint": 474,
+      "Header": 9,
+      "Technology": 1,
+      "Observation": 2
+    }
+  },
+  "hunting": {
+    "launched": true,
+    "status": "complete",
+    "js_context_status": "pending",
+    "js_context_gaps": [
+      "context_publication_failed"
+    ],
+    "model_sums": [],
+    "intake_order": [],
+    "interpretation": "The hunting lifecycle completed without exercising a downstream model or reading JS behavior content."
+  },
+  "downstream_matrix": {
+    "assigner": {
+      "status": "settled_gap",
+      "receipts": 1,
+      "metadata_reads": 0,
+      "delivered_behavior_reads": 0,
+      "concrete_content_used": false
+    },
+    "mechanism_typist": {
+      "status": "settled_gap",
+      "receipts": 1,
+      "metadata_reads": 0,
+      "delivered_behavior_reads": 0,
+      "concrete_content_used": false
+    },
+    "threat_modeller": {
+      "status": "not_exercised",
+      "reason": "No downstream model session or js_context ToolMessage was recorded."
+    },
+    "hunting_hunter": {
+      "status": "not_exercised",
+      "reason": "The hunting run completed with an empty intake order and no model sums."
+    },
+    "pod_runner": {
+      "status": "not_exercised",
+      "reason": "No hunting pod was dispatched."
+    },
+    "pod_triager": {
+      "status": "not_exercised",
+      "reason": "No hunting pod was dispatched."
+    }
+  },
+  "retention": {
+    "artifacts": 0,
+    "evidence_links": 0,
+    "behavior_reported_gaps": [
+      "retention_reservation_uncertain",
+      "retention_links_missing"
+    ]
+  },
+  "cleanup": {
+    "verified": true,
+    "removed_containers": [
+      "js-current-af39fe95-agent",
+      "js-current-af39fe95-kali",
+      "js-current-af39fe95-steel",
+      "js-current-af39fe95-neo",
+      "js-current-af39fe95-pg"
+    ],
+    "removed_network": "js-current-af39fe95-net",
+    "removed_volume": "fdb1c6b6308aede5296cc3ac27c676746283039a719a4f4b830c2e54ae769646",
+    "removed_images": [
+      "ph-js-current-agent:af39fe95",
+      "ph-js-current-kali:af39fe95"
+    ],
+    "relay_pid_terminated": 1215635,
+    "target_after": {
+      "container_id": "aad5e170b9fe8128a27f72c96adc320cdeeafe151767c54b2848ef8df03a6987",
+      "image_id": "sha256:1f2968d539811ff09c98c2df62fe7cb7dd64ff84c1912975c3b9baf471b548a3",
+      "restart_count": 0,
+      "status": "running"
+    },
+    "shared_postgresql_listener_after": "127.0.0.1:5432"
+  }
+}

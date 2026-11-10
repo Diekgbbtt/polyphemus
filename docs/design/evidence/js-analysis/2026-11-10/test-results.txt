@@ -1,0 +1,32 @@
+dev baseline
+66 passed in 1.75s
+
+focused publication
+131 passed in 7.70s
+
+scaffold
+FAILED tests/test_data_root.py::test_scaffold_carries_the_js_intake_bucket - ...
+FAILED tests/test_data_root.py::test_scaffold_carries_the_js_analysis_bucket
+FAILED tests/test_data_root.py::test_scaffold_carries_the_js_retained_artifact_bucket
+FAILED tests/test_data_root.py::test_scaffold_carries_the_js_client_side_publication_bucket
+4 failed, 65 passed in 1.80s
+
+parsers and retention
+FAILED tests/recon/js_retention/test_blobs.py::test_existing_corrupt_blob_is_not_replaced_silently
+1 failed, 52 passed in 5.73s
+
+runner binding cortex
+FAILED tests/recon/test_js_specialist_runner.py::test_dispatch_uses_shared_session_exec_only_and_renews_finite_scope
+FAILED tests/attack/test_cortex.py::test_cortex_is_a_non_empty_single_source
+FAILED tests/attack/test_cortex.py::test_cortex_lists_the_six_data_domains - ...
+FAILED tests/attack/test_cortex.py::test_cortex_carries_the_trust_boundary_rule
+FAILED tests/attack/test_cortex.py::test_cortex_carries_the_bounded_read_rule
+FAILED tests/attack/test_cortex.py::test_cortex_carries_the_grounded_conclusion_rule
+6 failed, 89 passed, 4 warnings in 9.89s
+
+unit collection
+import file mismatch:
+imported module 'test_service' has this __file__ attribute:
+HINT: remove __pycache__ / .pyc files and/or use a unique basename for your test file modules
+ERROR tests/recon/js_retention/test_service.py
+8171 tests collected, 1 error in 25.88s

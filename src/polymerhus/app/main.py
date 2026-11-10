@@ -9,6 +9,9 @@ from polymerhus.app.data_root import ensure_data_root
 from polymerhus.app.llm import validate_llm_config
 from polymerhus.app.observability import disabled_reason, get_langfuse_callbacks
 from polymerhus.project_management.api import router as recon_router
+from polymerhus.recon.js_intake.api import router as js_intake_router
+from polymerhus.recon.js_acquisition.api import router as js_acquisition_router
+from polymerhus.recon.js_specialist.bridge import build_router as build_js_specialist_router
 from polymerhus.ingestion.routes import router as ingestion_router
 from lightrag.api import router as lightrag_router
 
@@ -20,6 +23,9 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="polymerhus-agent")
 app.include_router(recon_router)
+app.include_router(js_intake_router)
+app.include_router(js_acquisition_router)
+app.include_router(build_js_specialist_router())
 app.include_router(ingestion_router)
 app.include_router(lightrag_router)
 
@@ -87,6 +93,7 @@ async def _startup():
     await pg.ensure_checkpoint_tables()
     pg.ensure_recon_schema()  # additive interface-B columns; idempotent, self-healing
     pg.ensure_hunting_schema()  # #110: hunting-run lifecycle status table
+    pg.ensure_js_retention_schema()  # JS retained evidence files and links
     neo4j_client.ensure_schema()
     neo4j_client.ensure_l1_schema()  # L1 substrate constraints (FR-LCUR)
     validate_llm_config()

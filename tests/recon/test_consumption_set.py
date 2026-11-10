@@ -1,3 +1,4 @@
+from tests.recon.js_legacy_fixtures import legacy_js_job
 """Consumption-set derivation (unified) for #37 - arjun's naive input set.
 
 The recon job agent maps each job's input assets into pod inputs through ONE
@@ -59,8 +60,8 @@ def test_consumption_defaults_are_noop():
 
 
 def test_legacy_dispatch_flags_are_views_of_consumption():
-    assert JOBS["jsluice"].batch is True
-    assert JOBS["jsluice"].endpoint_profiling is False
+    assert legacy_js_job().batch is True
+    assert legacy_js_job().endpoint_profiling is False
     assert JOBS["arjun"].batch is True  # #37: arjun rides the batches seam
     assert JOBS["httpx_reprofile"].endpoint_profiling is True
     assert JOBS["httpx_reprofile"].batch is False
@@ -265,7 +266,7 @@ def test_derive_batches_variant_matches_legacy_build_batch_assets():
     assets = [{"path": f"/b{i}.js", "url": f"https://a.houseofhr.com/b{i}.js"}
               for i in range(60)]
     assert batching.derive_consumption_set(
-        assets, consumption=JOBS["jsluice"].consumption,
+        assets, consumption=legacy_js_job().consumption,
         apex_registrable="houseofhr.com", max_pods=8, set_cap=500,
     ) == batching.build_batch_assets(
         assets, apex_registrable="houseofhr.com", max_pods=8)
@@ -379,7 +380,7 @@ def test_preprocess_fallback_packs_batch_shape(monkeypatch):
     monkeypatch.setattr(ja, "MAX_JOB_ASSETS", 500)
     assets = [{"url": "https://a.houseofhr.com/x.js", "path": "/x.js"}]
     pod_inputs = ja.default_preprocess_fn(
-        assets, JOBS["jsluice"], {"apex_registrable": "houseofhr.com"}, "")
+        assets, legacy_js_job(), {"apex_registrable": "houseofhr.com"}, "")
     assert len(pod_inputs) == 1
     assert pod_inputs[0]["input_asset"]["batch"] == [
         "https://a.houseofhr.com/x.js"]
@@ -402,7 +403,7 @@ def test_independent_oracle_jsluice_batching():
         {"url": b_main, "path": "/main.js"},  # generic: kept per host
     ]
     out = batching.derive_consumption_set(
-        assets, consumption=JOBS["jsluice"].consumption,
+        assets, consumption=legacy_js_job().consumption,
         apex_registrable="houseofhr.com", max_pods=2, set_cap=500,
     )
     # Origin grouping (2026-10-16 baseURL chaining): each origin's bundles

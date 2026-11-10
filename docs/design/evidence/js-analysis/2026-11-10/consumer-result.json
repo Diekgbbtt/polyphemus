@@ -1,0 +1,177 @@
+{
+  "schema_version": 1,
+  "mode": "consumer_fixture",
+  "project_id": "js-current-comfyui-af39fe95",
+  "producing_run_id": "current-native-af39fe95",
+  "context": {
+    "auth_ref": "",
+    "context_id": "jsctx_84add79b3039f9e08f49b3db794b186a81237abc",
+    "document_id": "fb00804ded4d6c77979d15004db2521d6c0913fb3e12d4606c1cfd25cbac5128",
+    "document_sha256": "9251a411db72716a0b5fe17cead786ff55bf7cb3dc2596f2671d60c772997623",
+    "input_id": "jsinput_fb1579ecc099c74ddc1d40756aafab427354a3db",
+    "origin": {
+      "status": "known",
+      "value": "http://comfyui-manager:8288"
+    },
+    "yaml_coverage": "partial",
+    "behaviors": 2,
+    "evidence": 3,
+    "evidence_availability": "receipt_only",
+    "retention_gap_present": true
+  },
+  "analysis": {
+    "status": "drained",
+    "analysis_run_id": "current-native-af39fe95:348b666b",
+    "pass_seconds": 181.917,
+    "dispatches_entered": 2,
+    "l0_assets_read": 0,
+    "js_context_status": "settled_gap",
+    "graph_before": {
+      "Domain": 1,
+      "BaseURL": 1,
+      "Endpoint": 1,
+      "L1Service": 0,
+      "L1System": 0
+    },
+    "graph_after": {
+      "Domain": 1,
+      "BaseURL": 1,
+      "Endpoint": 1,
+      "L1Service": 0,
+      "L1System": 3
+    },
+    "receipts": {
+      "assigner": {
+        "status": "empty",
+        "aggregates": 0,
+        "systems": 0
+      },
+      "mechanism_typist": {
+        "status": "written",
+        "aggregates": 0,
+        "systems": 3,
+        "enrichment": 6
+      }
+    }
+  },
+  "hunting": {
+    "admission": "accepted",
+    "hunting_run_id": "855d3530-9640-42e9-a7fa-e182895692b5",
+    "status": "stopped",
+    "stopped_by": "shared harness deadline",
+    "started_at_utc": "2026-11-10T10:31:01.468873+00:00",
+    "finished_at_utc": "2026-11-10T10:48:01.661424+00:00",
+    "run_record": {},
+    "intake_order": [],
+    "model_sums": [],
+    "threat_artifacts": 0,
+    "hunter_artifacts": 0,
+    "pod_artifacts": 0,
+    "confirmed_limit": "The process stopped before the first hunting run-record write. No persisted evidence distinguishes tool construction, intake read, or freeze as the exact stall point."
+  },
+  "provider": {
+    "actual_source": "LiteLLM_SpendLogs",
+    "requests": 13,
+    "input_tokens": 216605,
+    "output_tokens": 10345,
+    "total_tokens": 226950,
+    "cost_usd": 0.012148374,
+    "observer_estimate_only": {
+      "input_tokens": 131171,
+      "output_tokens": 15600,
+      "unknown_settlements": 26
+    },
+    "shared_deadline_seconds": 1200,
+    "remaining_at_finish_seconds": 0
+  },
+  "isolation": {
+    "network_internal": true,
+    "agent_egress_for_gateway": "bridge",
+    "target_connected": false,
+    "target_mentions_in_kali_log": 0,
+    "relay_paths": [
+      "GET /health/liveliness",
+      "GET /model/info",
+      "POST /chat/completions"
+    ],
+    "specialist_invocations": 0,
+    "crawl_invocations": 0
+  },
+  "roles": {
+    "assigner": {
+      "tool_available": true,
+      "tool_attempted": true,
+      "metadata_read": true,
+      "behaviors_delivered": false,
+      "evidence_delivered": false,
+      "receipt": "empty",
+      "supported_use": false,
+      "reason": "Only metadata was read; no behavior or evidence ToolMessage was delivered."
+    },
+    "mechanism_typist": {
+      "tool_available": true,
+      "tool_attempted": true,
+      "metadata_read": true,
+      "behaviors_delivered": true,
+      "evidence_delivered": true,
+      "delivered_behavior_ids": [
+        "behavior_9c0864d3473abd9a2936c2e1d9ff46e6",
+        "behavior_cda85e07330ca54ca965c4dc52ce2451"
+      ],
+      "delivered_read_ids": [
+        "read_30c0d2ee53870ddd3548130e5e9ac1c4",
+        "read_c60d1c60e593ecb4c9c234e682adaf92",
+        "read_d49881b2e46a8e1833548a16e5fcbf52"
+      ],
+      "receipt": "written",
+      "systems_written": 3,
+      "enrichments_written": 6,
+      "supported_use": true,
+      "reason": "The transcript names the delivered behavior IDs and reuses upload, fetchApi/header and client-identity details in the emitted Systems."
+    },
+    "threat_modeller": {
+      "tool_available": "not_observed",
+      "tool_attempted": false,
+      "metadata_read": false,
+      "behaviors_delivered": false,
+      "evidence_delivered": false,
+      "receipt": null,
+      "supported_use": false,
+      "status": "not_exercised",
+      "reason": "Hunting stopped before the first run-record write and produced no model turn or artifact."
+    },
+    "hunter": {
+      "tool_available": "not_observed",
+      "tool_attempted": false,
+      "metadata_read": false,
+      "behaviors_delivered": false,
+      "evidence_delivered": false,
+      "receipt": null,
+      "supported_use": false,
+      "status": "not_exercised",
+      "reason": "No threat model was produced and no hunter session started."
+    },
+    "pod_runner": {
+      "tool_available": "not_observed",
+      "tool_attempted": false,
+      "metadata_read": false,
+      "behaviors_delivered": false,
+      "evidence_delivered": false,
+      "receipt": null,
+      "supported_use": false,
+      "status": "not_exercised",
+      "reason": "No hunter spec or pod was dispatched."
+    },
+    "pod_triager": {
+      "tool_available": "not_observed",
+      "tool_attempted": false,
+      "metadata_read": false,
+      "behaviors_delivered": false,
+      "evidence_delivered": false,
+      "receipt": null,
+      "supported_use": false,
+      "status": "not_exercised",
+      "reason": "No pod was dispatched."
+    }
+  }
+}

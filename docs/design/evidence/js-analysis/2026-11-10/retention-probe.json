@@ -1,0 +1,71 @@
+{
+  "blob": {
+    "present": true,
+    "sha256": "4a0068680b69a7c4c44260a387b536dc510a5ee427f808d1773d9105f4274c1a"
+  },
+  "fixture": {
+    "bytes": 280,
+    "delivery_status": "delivered",
+    "read_id": "read_f702882a9bd7891f2a310cff3e0aab95",
+    "sha256": "4a0068680b69a7c4c44260a387b536dc510a5ee427f808d1773d9105f4274c1a"
+  },
+  "historical_cause": "unknown",
+  "idempotent_retry": {
+    "gap_count": 0,
+    "pending_count": 0,
+    "retained_count": 1,
+    "status": "complete"
+  },
+  "initial_retention": {
+    "gap_count": 0,
+    "pending_count": 0,
+    "retained_count": 1,
+    "status": "complete"
+  },
+  "metadata_operations": [
+    [
+      "reserve",
+      "reserved"
+    ],
+    [
+      "confirm",
+      "retained"
+    ],
+    [
+      "link",
+      "retained"
+    ],
+    [
+      "reserve",
+      "already_retained"
+    ],
+    [
+      "link",
+      "retained"
+    ]
+  ],
+  "postgres": {
+    "artifacts": 1,
+    "gap_count": 0,
+    "links": 1,
+    "pending_count": 0,
+    "retained_count": 1
+  },
+  "quota_bytes": 33554432,
+  "reconcile": {
+    "behaviors_seen": 1,
+    "gaps": [],
+    "pending_behaviors": 0,
+    "recovered_behaviors": 0,
+    "retry_attempts": 0,
+    "skipped_complete": 1,
+    "status": "complete"
+  },
+  "schema_version": 1,
+  "scope": {
+    "auth_ref": "",
+    "project_id_sha256": "a1da077fc13d32974eb93500235a9ca123f7d7734352cdd673dd04aa7d4b6be0",
+    "run_id": "run-retention-probe"
+  },
+  "status": "passed"
+}

@@ -185,6 +185,24 @@ class ThreatModellerSession:
 
 
 @dataclass(frozen=True)
+class JsSpecialistSession:
+    """One JS acquisition conversation per project/run/auth context."""
+
+    project_id: str
+    run_id: str
+    auth_context_ref: str
+    role_id: str = "js_specialist"
+
+    @property
+    def thread_id(self) -> str:
+        # Hash the tuple without lossy segment escaping or anonymous sentinels.
+        identity = hashlib.sha256(repr((
+            self.project_id, self.run_id, self.auth_context_ref
+        )).encode()).hexdigest()
+        return _compose_module_scoped("recon", self.run_id, identity, role_id=self.role_id)
+
+
+@dataclass(frozen=True)
 class SessionContext:
     """A per-instance session binding an owning node sets for a seam that cannot carry
     the address through its OWN contract (the recon `triage_fn`, the hunting

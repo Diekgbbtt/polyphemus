@@ -88,6 +88,48 @@ CREATE TABLE IF NOT EXISTS hunting_runs (
     stats          JSONB NOT NULL DEFAULT '{}'::jsonb
 );
 CREATE INDEX IF NOT EXISTS hunting_runs_project_idx ON hunting_runs (project_id);
+
+-- JS retained evidence: content-addressed project blobs and evidence links.
+-- Additive runtime mirror: app/clients/pg.py::_JS_RETENTION_SCHEMA_MIGRATIONS.
+CREATE TABLE IF NOT EXISTS js_artifacts (
+    project_id     TEXT NOT NULL,
+    sha256         TEXT NOT NULL,
+    size_bytes     BIGINT NOT NULL CHECK (size_bytes >= 0),
+    archive_ref    TEXT NOT NULL,
+    state          TEXT NOT NULL CHECK (state IN ('reserved', 'retained', 'gap')),
+    failure_reason TEXT,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    retained_at    TIMESTAMPTZ,
+    PRIMARY KEY (project_id, sha256)
+);
+CREATE INDEX IF NOT EXISTS js_artifacts_project_state_idx
+    ON js_artifacts (project_id, state);
+CREATE TABLE IF NOT EXISTS js_evidence_links (
+    link_id           TEXT PRIMARY KEY,
+    project_id        TEXT NOT NULL,
+    sha256            TEXT NOT NULL,
+    run_id            TEXT NOT NULL,
+    origin            TEXT NOT NULL,
+    auth_context_ref  TEXT NOT NULL DEFAULT '',
+    lead_id           TEXT NOT NULL DEFAULT '',
+    selector_type     TEXT NOT NULL DEFAULT '',
+    selector_id       TEXT NOT NULL DEFAULT '',
+    read_id           TEXT NOT NULL DEFAULT '',
+    start_byte        BIGINT,
+    end_byte          BIGINT,
+    behavior_id       TEXT NOT NULL,
+    behavior_revision INTEGER NOT NULL,
+    rationale         TEXT NOT NULL DEFAULT '',
+    status            TEXT NOT NULL CHECK (status IN ('pending', 'retained', 'gap')),
+    failure_reason    TEXT,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    FOREIGN KEY (project_id, sha256)
+        REFERENCES js_artifacts(project_id, sha256)
+);
+CREATE INDEX IF NOT EXISTS js_evidence_links_behavior_idx
+    ON js_evidence_links (project_id, run_id, behavior_id, behavior_revision);
 ALTER TABLE recon_runs ADD COLUMN IF NOT EXISTS last_heartbeat_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS recon_runs_status_idx ON recon_runs (status);
 -- Interface agreement B (L1D-26): a targeted AnalyserReconRequest job carries a

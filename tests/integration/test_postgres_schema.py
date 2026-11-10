@@ -27,6 +27,8 @@ def test_postgres_schema():
             "settings",
             "recon_runs",
             "recon_jobs",
+            "js_artifacts",
+            "js_evidence_links",
             "ingest_runs",
             "doc_chunks",
             "methodology_bundles",

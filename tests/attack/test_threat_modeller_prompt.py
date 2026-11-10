@@ -124,7 +124,7 @@ def test_the_prompt_names_every_bound_tool_including_the_lesson_tool():
     tool the prompt never names is a hidden capability."""
     prompt = _modeller_skill()
     for name in ("hunts_store", "assess_impact", "notes", "search_http_history",
-                 "get_http_artifact", "exec", "skill_list", "skill_load",
+                 "get_http_artifact", "js_context", "exec", "skill_list", "skill_load",
                  "load_skill", "record_skill_lesson", "auth_store"):
         assert name in prompt, name
 

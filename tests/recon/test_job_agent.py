@@ -1,3 +1,4 @@
+from tests.recon.js_legacy_fixtures import legacy_js_job
 # tests/recon/test_job_agent.py
 """Per-job orchestrator agent: LLM-preprocess + Send fan-out to pods.
 
@@ -306,7 +307,7 @@ def test_batched_job_preprocess_reduces_and_packs_into_max_pods(monkeypatch):
     # pods) is the job agent's concern, done in default_preprocess_fn. It reads
     # apex_registrable from extra and never leaks it to the pod.
     monkeypatch.setattr(ja, "MAX_PODS", 8)
-    job = JOBS["jsluice"]
+    job = legacy_js_job()
     assert job.batch is True
     assets = [{"path": f"/b{i}.js", "url": f"https://a.houseofhr.com/b{i}.js"} for i in range(60)]
     pod_inputs = ja.default_preprocess_fn(assets, job, {"apex_registrable": "houseofhr.com"}, "")

@@ -667,7 +667,13 @@ SKILL_INDEX_HEADER = (
 )
 
 
-def render_skill_index(names, project_id: str | None = None, store=None) -> str:
+def render_skill_index(
+    names,
+    project_id: str | None = None,
+    store=None,
+    *,
+    access: str | None = None,
+) -> str:
     """Render the L1 index for the bound skill names: the header plus one
     `- name: description` line per skill that resolves (sorted). Unknown names
     are skipped fail-open - a stale binding never breaks the render.
@@ -682,7 +688,11 @@ def render_skill_index(names, project_id: str | None = None, store=None) -> str:
     itself as available. Without a `project_id` the render is catalogue-only
     (every pre-existing site unchanged)."""
     seam = store if store is not None else SkillStore()
-    lines = [SKILL_INDEX_HEADER]
+    lines = [
+        SKILL_INDEX_HEADER
+        if access is None
+        else f"Skills available through Exec ({access}):"
+    ]
     for name in sorted(set(names)):
         meta = seam.meta(name, project_id=project_id)
         description = meta.get("description") if isinstance(meta, dict) else None
@@ -738,6 +748,14 @@ ROLE_SKILLS: dict[str, tuple[str, ...]] = {
     # the browser skill is its optional mechanics surface. The write-capable
     # auth arming still rides `with_write_skill` at the binding.
     "job_orchestrator": ("steel-browser",),
+    "js_specialist": (
+        "js-inventory-intake",
+        "js-code-acquisition",
+        "js-sourcemap-recovery",
+        "js-bundle-structure",
+        "js-evidence-triage",
+        "js-behavior-reconstruction",
+    ),
     # -- analysis --------------------------------------------------------------
     # The assigner reasons over the published L0/L1 substrate into typed model
     # deltas and stays local-context only. The mechanism typist may render a
@@ -904,6 +922,7 @@ def skill_agent_binding(
     store: "SkillStore | None" = None,
     lesson_store: "LessonStore | None" = None,
     task_skills=None,
+    exec_access: str | None = None,
 ) -> SkillAgentBinding:
     """Build the ONE per-agent skill binding (the `skill_agent_seams` successor,
     Q3 -> #221): every tool-calling agent binds its whole skill surface through
@@ -987,14 +1006,22 @@ def skill_agent_binding(
     return SkillAgentBinding(
         role_id=role_id,
         middleware=[skill_index_middleware(store=store)],
-        tools=build_skill_tools(
-            project_id,
-            with_write_skill=with_write_skill,
-            store=store,
-            lesson_store=lesson_store,
-            role_id=role_id,
+        tools=(
+            []
+            if exec_access
+            else build_skill_tools(
+                project_id,
+                with_write_skill=with_write_skill,
+                store=store,
+                lesson_store=lesson_store,
+                role_id=role_id,
+            )
         ),
-        context={"skills": union, "project_id": project_id},
+        context={
+            "skills": union,
+            "project_id": project_id,
+            **({"skill_exec_access": exec_access} if exec_access else {}),
+        },
     )
 
 
@@ -1050,7 +1077,14 @@ def skill_index_middleware(store=None):
         if not names:
             return base
         index = render_skill_index(
-            names, project_id=_context_project_id(context), store=store
+            names,
+            project_id=_context_project_id(context),
+            store=store,
+            access=(
+                context.get("skill_exec_access")
+                if isinstance(context, dict)
+                else None
+            ),
         )
         return f"{base}\n\n{index}" if base else index
 
@@ -1569,6 +1603,36 @@ class SkillStore:
                     return {}
                 return meta if meta is not None else {}
         return skill_meta(name)
+
+    def read_reference(
+        self,
+        name: str,
+        target: str,
+        project_id: str | None = None,
+    ) -> str:
+        """Read one safe skill reference, project bundle first."""
+        validate_path_component(name, "skill")
+        if not _REFERENCE_NAME_RE.fullmatch(target):
+            raise SkillTargetError("invalid reference name")
+        if project_id is not None:
+            try:
+                paths = list(self._project_bundle_paths(project_id, name))
+            except (OSError, ValueError):
+                paths = []
+            for bundle in paths:
+                path = Path(bundle).parent / "references" / f"{target}.md"
+                try:
+                    return path.read_text(encoding="utf-8")
+                except (OSError, UnicodeError):
+                    continue
+        catalogue = _live_catalogue()
+        path = catalogue.bundle_path(name, f"references/{target}.md")
+        if path is None:
+            return ""
+        try:
+            return path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            return ""
 
     # -- writes: validate, then one atomic whole-file rewrite ------------------
 

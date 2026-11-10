@@ -243,8 +243,27 @@ async def _chain_hunting_on_drained(
         return
     try:
         from polymerhus.project_management.api import HuntingLaunch, launch_hunting
+        from polymerhus.app.clients import pg
 
-        await launch_hunting(project_id, HuntingLaunch())
+        try:
+            has_js_analysis = await asyncio.to_thread(
+                pg.run_has_js_analysis,
+                run_id,
+            )
+        except Exception:
+            logger.warning(
+                "analysis %s drained but JS-plan detection failed; "
+                "hunting not auto-launched",
+                run_id,
+                exc_info=True,
+            )
+            return
+        await launch_hunting(
+            project_id,
+            HuntingLaunch(
+                producing_run_id=run_id if has_js_analysis else None
+            ),
+        )
     except Exception:  # noqa: BLE001 - fail-open: the drained analysis must settle
         logger.warning(
             "analysis %s drained but the hunting launch failed (fail-open); "

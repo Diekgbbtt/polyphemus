@@ -35,6 +35,8 @@ from polymerhus.recon.domain.parsers import graphql_parser, takeover_parser
 from polymerhus.recon.domain.findings import finding_to_observation
 from polymerhus.recon.domain.curator import curate
 from polymerhus.recon.config import MAX_POD_ITERS, EXEC_TIMEOUT_S, POD_HTTP_CAPTURE
+from polymerhus.recon.js_intake import JsIntakeStore
+from polymerhus.recon.js_intake.context import auth_scope, input_context_ref
 
 # The per-pod session context for the triager's STATEFUL turn (#94): (thread_id,
 # checkpointer). The triager NODE (which alone knows the concurrent pod instance) sets
@@ -300,7 +302,7 @@ def _best_effort_triage(triage_fn, exec_result, assets, job) -> list:
         return []
 
 
-def build_pod_graph(*, exec_fn, curate_fn, triage_fn):
+def build_pod_graph(*, exec_fn, curate_fn, triage_fn, intake_store=None):
     """Build the compiled recon-pod subgraph, injecting the side-effecting
     collaborators: exec_fn(command, session_id, timeout_s) -> ExecResult,
     curate_fn(assets, observations, project_id) -> (int, int),
@@ -314,6 +316,43 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn):
     # #196: resolved ONCE per graph - the seam either can carry a capture context
     # or it cannot, and that does not change between this pod's executions.
     capture_aware = _accepts_capture_context(exec_fn)
+
+    def record_js_intake(state: PodState) -> None:
+        job = state.get("job")
+        run_id = state.get("run_id")
+        session_id = state.get("session_id")
+        exec_result = state.get("exec_result")
+        if (
+            intake_store is None
+            or job is None
+            or job.tool not in {"katana", "ffuf"}
+            or not run_id
+            or not session_id
+            or exec_result is None
+        ):
+            return
+        extra = state.get("extra") or {}
+        auth_label, auth_ref = auth_scope(extra)
+        try:
+            intake_store.record_exec_result(
+                project_id=state.get("project_id") or run_id,
+                run_id=run_id,
+                pod_id=session_id,
+                producer=job.tool,
+                input_context_ref=input_context_ref(
+                    state.get("input_asset") or {},
+                    state.get("asset_context") or "",
+                ),
+                exec_result=exec_result,
+                auth_context_label=auth_label,
+                auth_context_ref=auth_ref,
+            )
+        except Exception:  # noqa: BLE001 - the graph path must remain unchanged
+            logger.warning(
+                "JavaScript intake side output failed for pod %s; continuing graph path",
+                session_id,
+                exc_info=True,
+            )
 
     def capture_context_for(state: PodState) -> CaptureContext | None:
         """The context to send with this pod's terminal call, or None."""
@@ -434,6 +473,7 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn):
     def parser(state: PodState) -> dict:
         job = state["job"]
         exec_result = state["exec_result"]
+        record_js_intake(state)
         parse_fn = get_parser(job.tool)
         target_url = _input_asset_url(state["input_asset"])
         assets = _call_with_optional_target_url(parse_fn, exec_result.stdout, target_url)
@@ -528,6 +568,7 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn):
 
     def fail(state: PodState) -> dict:
         exec_result = state.get("exec_result")
+        record_js_intake(state)
         error = exec_result.stderr if exec_result is not None else "unknown error"
         invocation = state.get("invocation")
         stats: dict = {"command": invocation.command} if invocation is not None else {}
@@ -853,5 +894,8 @@ def default_triage_fn(exec_result: ExecResult, assets: list[AssetDelta], job: Jo
 
 
 pod_graph = build_pod_graph(
-    exec_fn=default_exec_fn, curate_fn=curate, triage_fn=default_triage_fn,
+    exec_fn=default_exec_fn,
+    curate_fn=curate,
+    triage_fn=default_triage_fn,
+    intake_store=JsIntakeStore(),
 )

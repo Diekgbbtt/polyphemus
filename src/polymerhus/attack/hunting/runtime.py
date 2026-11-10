@@ -63,6 +63,7 @@ import logging
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+
 from typing import TYPE_CHECKING
 
 from collections.abc import Mapping
@@ -80,6 +81,10 @@ if TYPE_CHECKING:
     )
 
 logger = logging.getLogger(__name__)
+
+# Explicit None is an API-admitted legacy outcome; omission is a direct entry
+# that still needs its first admission. Both are revalidated before execution.
+_UNSET_JS_ADMISSION = object()
 
 
 @asynccontextmanager
@@ -693,6 +698,24 @@ def _default_modeller_tools(
         context_provider=build_grounding_provider(project_id, read_fn=graph_read_fn),
     )
     try:
+        from polymerhus.attack.hunting.js_context_admission import (  # noqa: PLC0415
+            current_js_context_selection,
+        )
+        from polymerhus.app.js_context.tool import build_js_context_tool  # noqa: PLC0415
+
+        selection = current_js_context_selection()
+        if selection is not None:
+            tools.js_context_tool = build_js_context_tool(
+                project_id=project_id,
+                selection=selection,
+            )
+    except Exception:  # noqa: BLE001 - the JS reader is additive
+        logger.warning(
+            "start_hunting: js_context reader unavailable; preserving the "
+            "rest of the modeller surface",
+            exc_info=True,
+        )
+    try:
         from polymerhus.app.llm.skills import (  # noqa: PLC0415
             list_suite_leaves,
             list_suite_parents,
@@ -839,6 +862,49 @@ def _produced_threat_count(
 
 
 async def launch_modeller(
+    project_id: str,
+    *,
+    run_id: str,
+    producing_run_id: str | None = None,
+    js_context_admission: Any = _UNSET_JS_ADMISSION,
+    intake_units: Sequence[IntakeUnit] | None = None,
+    intake_read_fn: L1ReadFn | None = None,
+    tools: Any = None,
+    threat_store: Any = None,
+    graph_read_fn: L1ReadFn | None = None,
+    modeller_pass_fn: Callable[..., Awaitable[Any]] | None = None,
+    modeller_kwargs: Mapping[str, Any] | None = None,
+) -> Any:
+    """Admit the same frozen JS workflow as a full hunting launch."""
+    from polymerhus.attack.hunting.js_context_admission import (
+        js_context_selection_scope,
+        resolve_js_context_admission,
+    )
+
+    admission_checked = js_context_admission is not _UNSET_JS_ADMISSION
+    previous = js_context_admission if admission_checked else None
+    admission = await asyncio.to_thread(
+        resolve_js_context_admission,
+        project_id,
+        producing_run_id or (
+            previous.selection.producing_run_id if previous is not None else None
+        ),
+        expected_input_id=(previous.selection.input_id if previous is not None else None),
+    )
+    if admission_checked and previous is None and admission is not None:
+        from polymerhus.attack.hunting.js_context_admission import JsContextAdmissionError
+
+        raise JsContextAdmissionError("js_context_application_changed")
+    with js_context_selection_scope(admission.selection if admission is not None else None):
+        return await _launch_modeller_under_context(
+            project_id, run_id=run_id, intake_units=intake_units,
+            intake_read_fn=intake_read_fn, tools=tools, threat_store=threat_store,
+            graph_read_fn=graph_read_fn, modeller_pass_fn=modeller_pass_fn,
+            modeller_kwargs=modeller_kwargs,
+        )
+
+
+async def _launch_modeller_under_context(
     project_id: str,
     *,
     run_id: str,
@@ -1132,6 +1198,128 @@ async def start_hunting(
     modeller_kwargs: Mapping[str, Any] | None = None,
     threat_store: Any = None,
     graph_read_fn: L1ReadFn | None = None,
+    producing_run_id: str | None = None,
+    js_context_selection: Any = None,
+    js_context_admission: Any = _UNSET_JS_ADMISSION,
+    resume: bool = False,
+) -> str | None:
+    """Resolve the JS workflow gate, then enter its frozen selection scope."""
+    from polymerhus.attack.hunting.js_context_admission import (
+        JsContextAdmissionError,
+        js_context_selection_scope,
+        resolve_js_context_admission,
+    )
+
+    admission_checked = js_context_admission is not _UNSET_JS_ADMISSION
+    admission = js_context_admission if admission_checked else None
+    legacy_admitted = admission_checked and admission is None
+    try:
+        hunting_run = None
+        if run_id is not None:
+            from polymerhus.app.clients import pg  # noqa: PLC0415
+
+            row = await asyncio.to_thread(pg.get_hunting_run, run_id)
+            if resume and row is None:
+                raise JsContextAdmissionError("hunting_run_not_found")
+            if row is not None:
+                stats = row.get("stats") or {}
+                if (
+                    resume
+                    or row.get("project_id") != project_id
+                    or not isinstance(stats, dict)
+                    or "js_context_selection" in stats
+                    or stats.get("intake_order")
+                    or row.get("status") in {"stopped", "halted", "interrupted"}
+                ):
+                    hunting_run = row
+        expected_input_id = (
+            admission.selection.input_id
+            if admission is not None
+            else js_context_selection.input_id if js_context_selection is not None else None
+        )
+        selected_run = (
+            producing_run_id
+            or (
+                admission.selection.producing_run_id
+                if admission is not None
+                else js_context_selection.producing_run_id if js_context_selection is not None else None
+            )
+        )
+        resume_kwargs = {"hunting_run": hunting_run} if hunting_run is not None else {}
+        admission = await asyncio.to_thread(
+            resolve_js_context_admission,
+            project_id,
+            selected_run,
+            expected_input_id=expected_input_id,
+            **resume_kwargs,
+        )
+        if legacy_admitted and admission is not None:
+            raise JsContextAdmissionError("js_context_application_changed")
+    except JsContextAdmissionError as exc:
+        logger.error(
+            "hunting run %s refused by JS context admission: %s (%s)",
+            run_id,
+            exc.code,
+            ", ".join(exc.gaps) or "no gaps",
+        )
+        if run_id is not None:
+            from polymerhus.app.clients import pg
+
+            await asyncio.to_thread(
+                pg.set_hunting_run_status,
+                run_id,
+                "failed",
+                stats={"js_context_admission_error": exc.as_dict()},
+            )
+        return None
+    selection = (
+        admission.selection
+        if admission is not None
+        else None
+    )
+    with js_context_selection_scope(selection):
+        return await _start_hunting_under_context(
+            project_id,
+            run_id=run_id,
+            intake_units=intake_units,
+            intake_read_fn=intake_read_fn,
+            tools=tools,
+            control=control,
+            gate=gate,
+            tick_interval=tick_interval,
+            hunter_store=hunter_store,
+            pod_store=pod_store,
+            pod_export_store=pod_export_store,
+            hunter_builder=hunter_builder,
+            pod_builder=pod_builder,
+            modeller_pass_fn=modeller_pass_fn,
+            modeller_kwargs=modeller_kwargs,
+            threat_store=threat_store,
+            graph_read_fn=graph_read_fn,
+            js_context_admission=admission,
+        )
+
+
+async def _start_hunting_under_context(
+    project_id: str,
+    *,
+    run_id: str | None = None,
+    intake_units: Sequence[IntakeUnit] | None = None,
+    intake_read_fn: L1ReadFn | None = None,
+    tools: Any = None,
+    control: Any = None,
+    gate: Any = None,
+    tick_interval: float | None = None,
+    hunter_store: Any = None,
+    pod_store: Any = None,
+    pod_export_store: Any = None,
+    hunter_builder: Callable[..., Any] | None = None,
+    pod_builder: Callable[..., Awaitable[Any]] | None = None,
+    modeller_pass_fn: Callable[..., Awaitable[Any]] | None = None,
+    modeller_kwargs: Mapping[str, Any] | None = None,
+    threat_store: Any = None,
+    graph_read_fn: L1ReadFn | None = None,
+    js_context_admission: Any = None,
 ) -> str | None:
     """The hunting bootstrap entry point (seam 3.1) - rewired by T4 (#173),
     then by T2b (#386), then by T3 (#376): the run's pass is the MODELLER's, over
@@ -1438,6 +1626,10 @@ async def start_hunting(
                 "pod_batch_size": pod_batch_size,
                 "promotion_risk_threshold": promotion_risk_threshold,
             }
+            if js_context_admission is not None:
+                payload["js_context_selection"] = (
+                    js_context_admission.selection.as_dict()
+                )
             try:
                 await asyncio.to_thread(
                     pg.set_hunting_run_stats, hunting_run_id, payload)

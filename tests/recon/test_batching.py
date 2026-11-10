@@ -1,3 +1,4 @@
+from tests.recon.js_legacy_fixtures import legacy_js_job
 import base64
 
 from polymerhus.recon.control.batching import (
@@ -209,7 +210,7 @@ def test_build_jsluice_command_embeds_runner_and_quoted_urls():
 
 
 def test_build_batch_command_dispatches_jsluice():
-    cmd = build_batch_command(JOBS["jsluice"], ["https://h/a.js"])
+    cmd = build_batch_command(legacy_js_job(), ["https://h/a.js"])
     assert "python3 -" in cmd
 
 
@@ -245,7 +246,7 @@ def test_build_batch_command_dispatches_arjun():
 
 def test_build_webpack_chunks_command_embeds_runner_and_quoted_urls():
     urls = ["https://h/static/js/manifest.847c.js", "https://h/a b.js"]
-    cmd = build_batch_command(JOBS["webpack_chunks"], urls)
+    cmd = build_batch_command(legacy_js_job("webpack_chunks"), urls)
     assert cmd.startswith("echo ")
     assert "| base64 -d | python3 - " in cmd
     blob = cmd.split("echo ", 1)[1].split(" |", 1)[0]

@@ -1,3 +1,4 @@
+from tests.recon.js_legacy_fixtures import legacy_js_job
 import re
 
 from polymerhus.recon.domain.types import JobSpec, ExecResult, Observation
@@ -277,6 +278,8 @@ def test_no_job_command_template_leaves_a_residual_placeholder():
     a lowercase/underscore identifier in braces."""
     placeholder = re.compile(r"\{[a-z_]+\}")
     for name, job in JOBS.items():
+        if job.executor != "pod":
+            continue
         asset = _REPRESENTATIVE_ASSETS[job.consumes]
         extra = {"_use_auth": job.use_auth}
         if job.use_auth:
@@ -513,7 +516,7 @@ def test_batched_jsluice_configurator_builds_batch_command_and_reaches_curator()
     g = pod.build_pod_graph(exec_fn=exec_fn, curate_fn=lambda a, o, p: (len(a), len(o), a, o), triage_fn=triage_fn)
     batch = ["https://h.example.com/static/app.js", "https://h.example.com/static/vendor.js"]
     out = g.invoke({
-        "job": JOBS["jsluice"],
+        "job": legacy_js_job(),
         "input_asset": {"batch": batch},
         "asset_context": "", "extra": {}, "session_id": "run-js1",
         "iteration": 0, "project_id": "proj1",

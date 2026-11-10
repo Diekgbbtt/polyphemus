@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "method": "Manual comparison of the two Analysis transcripts and three emitted L1 Systems with the exact behaviors/evidence delivered by js_context and the earlier source-grounded behavior review.",
+  "claims": [
+    {
+      "role": "mechanism_typist",
+      "claim": "fetchApi copies caller headers and injects Comfy-User = this.user.",
+      "status": "supported",
+      "evidence": "behavior_cda85e07330ca54ca965c4dc52ce2451 / read_30c0d2ee53870ddd3548130e5e9ac1c4"
+    },
+    {
+      "role": "mechanism_typist",
+      "claim": "api.user is client-selected and persisted in localStorage Comfy.userId/userName, then populated only when the server user config exposes users.",
+      "status": "supported",
+      "evidence": "read_c60d1c60e593ecb4c9c234e682adaf92 and read_30c0d2ee53870ddd3548130e5e9ac1c4"
+    },
+    {
+      "role": "mechanism_typist",
+      "claim": "The Comfy-User identity rides /prompt, /extensions and POST /upload/image.",
+      "status": "ambiguous",
+      "evidence": "/prompt and /upload/image are supported by the delivered ranges; /extensions remains insufficient evidence in the earlier manual source review."
+    },
+    {
+      "role": "mechanism_typist",
+      "claim": "Header/localStorage identity is client-asserted and server-side validation is unverified.",
+      "status": "supported",
+      "evidence": "The model copied the unverified assumption rather than claiming server authorization."
+    },
+    {
+      "role": "mechanism_typist",
+      "claim": "All client traffic funnels through one fetchApi wrapper using api_base + /api + path.",
+      "status": "supported",
+      "evidence": "read_30c0d2ee53870ddd3548130e5e9ac1c4"
+    },
+    {
+      "role": "mechanism_typist",
+      "claim": "fetchApi uses cache no-cache.",
+      "status": "ambiguous",
+      "evidence": "no-cache is the default, but a caller-supplied cache in the later spread can override it."
+    },
+    {
+      "role": "mechanism_typist",
+      "claim": "The wrapper handles multipart and JSON bodies.",
+      "status": "ambiguous",
+      "evidence": "The delivered evidence proves a multipart FormData upload and JSON response parsing, not generic request-body handling."
+    },
+    {
+      "role": "mechanism_typist",
+      "claim": "The fetchApi wrapper accepts only HTTP 200 and otherwise emits a toast and throws.",
+      "status": "incorrect",
+      "evidence": "That behavior belongs to convertBlobToFileAndSubmit in audioService; the delivered fetchApi wrapper simply returns fetch and contains no status check."
+    },
+    {
+      "role": "mechanism_typist",
+      "claim": "The wrapper itself adds Comfy-User and no CSRF header.",
+      "status": "supported",
+      "evidence": "The wrapper adds Comfy-User to caller headers. The observation does not prove that callers never supply another header."
+    },
+    {
+      "role": "mechanism_typist",
+      "claim": "The hashed index chunk is the single SPA presentation asset and no HTML shell is mapped.",
+      "status": "ambiguous",
+      "evidence": "This is true of the deliberately minimal replay graph, not a complete census of the historical target graph."
+    },
+    {
+      "role": "mechanism_typist",
+      "claim": "No L1Service exists, so no system_edges can be emitted.",
+      "status": "supported",
+      "evidence": "Preflight and graph census both showed zero L1Service nodes; the model did not invent one."
+    },
+    {
+      "role": "mechanism_typist",
+      "claim": "Client-side identity is not proof of server-side authorization.",
+      "status": "supported",
+      "evidence": "The transcript explicitly preserves the server validation gap."
+    }
+  ],
+  "summary": {
+    "supported": 7,
+    "ambiguous": 4,
+    "incorrect": 1
+  },
+  "assessment": "The mechanism typist used the delivered behaviors in concrete L1 output and preserved several important uncertainty boundaries. It also inherited two weaknesses from the YAML and introduced one wrapper-wide overgeneralization about HTTP 200 handling. The output is useful as a refinement signal, not a fully source-correct architecture model."
+}

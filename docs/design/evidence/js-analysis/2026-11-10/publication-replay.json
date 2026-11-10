@@ -1,0 +1,123 @@
+{
+  "behaviors": [
+    {
+      "behavior_id": "behavior_9c0864d3473abd9a2936c2e1d9ff46e6",
+      "record_sha256": "409bab4d6223f9ec6edfed04c07d55187c55438e3ebb02dbb07a4d5b294f042b",
+      "revision": 1
+    },
+    {
+      "behavior_id": "behavior_cda85e07330ca54ca965c4dc52ce2451",
+      "record_sha256": "7d3ea89eff19e214649b07fc86e65e80d84f68ca4c72f29bcb2c540249ab4e2c",
+      "revision": 1
+    }
+  ],
+  "constraints": {
+    "curator_invocations": 0,
+    "graph_receipt_reused": true,
+    "historical_retention_rows": 0,
+    "llm_requests": 0,
+    "specialist_invocations": 0,
+    "target_requests": 0
+  },
+  "evidence": [
+    {
+      "availability": "receipt_only",
+      "content_sha256": "b38db679c4df5f132c05a04081cf45269c7b796c760a81abcc1ccbd19e5aa022",
+      "delivery_status": "delivered",
+      "limitations": [
+        "retention_metadata_missing"
+      ],
+      "range": {
+        "end": 17824,
+        "start": 13728
+      },
+      "read_id": "read_30c0d2ee53870ddd3548130e5e9ac1c4",
+      "retention_status": "missing"
+    },
+    {
+      "availability": "receipt_only",
+      "content_sha256": "b38db679c4df5f132c05a04081cf45269c7b796c760a81abcc1ccbd19e5aa022",
+      "delivery_status": "delivered",
+      "limitations": [
+        "retention_metadata_missing"
+      ],
+      "range": {
+        "end": 1511268,
+        "start": 1507172
+      },
+      "read_id": "read_c60d1c60e593ecb4c9c234e682adaf92",
+      "retention_status": "missing"
+    },
+    {
+      "availability": "receipt_only",
+      "content_sha256": "0fa19be4ffc1dbf667c2e62ddfce3f80a684a41033a90dd6a1592f128037723c",
+      "delivery_status": "delivered",
+      "limitations": [
+        "retention_metadata_missing"
+      ],
+      "range": {
+        "end": 2153,
+        "start": 0
+      },
+      "read_id": "read_d49881b2e46a8e1833548a16e5fcbf52",
+      "retention_status": "missing"
+    }
+  ],
+  "files": {
+    "current_sha256": "4569c8466f7eeb79022f5ca1ec0efc5e373c04ac1b5e55151aacee485c8c7592",
+    "document_identity_sha256": "fb00804ded4d6c77979d15004db2521d6c0913fb3e12d4606c1cfd25cbac5128",
+    "snapshot_sha256": "c67b395e944bb07101d732dab10b062fe2149b204e8271fe97fff32efd015246",
+    "yaml_sha256": "9251a411db72716a0b5fe17cead786ff55bf7cb3dc2596f2671d60c772997623"
+  },
+  "graph": {
+    "assets_merged": 2,
+    "observations_merged": 0
+  },
+  "js_context_tool": {
+    "behavior_count": 2,
+    "behavior_messages": [
+      "832add03d1b69afcc4f0b2bf1220bfdb0780a4b8a126cefdefe027498fc020b3",
+      "d86727373e9bf4b8637bd15d111dee30f914e6f095b6ee9dad587d1b774a2953"
+    ],
+    "evidence_count": 3,
+    "evidence_messages": [
+      "c1cc3f381ae23ce2d67fad1f9d15d432d9da12a0e7953e950646916e19832d70",
+      "331aacc2f4cdc76fa9c043b5c7cdfd659cf032fdd1f5e2506c34fe0f81a22fc2"
+    ],
+    "list_message_sha256": "966756ad31497e632a8cb1bfd684f62b523bddcf4f71ae3cfd12ce99baab9047"
+  },
+  "replay": {
+    "auth_ref": "",
+    "context_id": "jsctx_84add79b3039f9e08f49b3db794b186a81237abc",
+    "coverage": "partial",
+    "document_id": "fb00804ded4d6c77979d15004db2521d6c0913fb3e12d4606c1cfd25cbac5128",
+    "document_sha256": "9251a411db72716a0b5fe17cead786ff55bf7cb3dc2596f2671d60c772997623",
+    "gaps": [
+      "analysis_completed",
+      "behavior_candidate_links_unavailable",
+      "behavior_retention_partial_or_gap",
+      "command_rejected",
+      "command_returned_nonzero",
+      "invalid_specialist_request",
+      "inventory_pages_remaining",
+      "map_not_found",
+      "output_budget_exhausted",
+      "recovery_partial_or_failed",
+      "relative_operation_unknown",
+      "retention_metadata_missing:read_30c0d2ee53870ddd3548130e5e9ac1c4",
+      "retention_metadata_missing:read_c60d1c60e593ecb4c9c234e682adaf92",
+      "retention_metadata_missing:read_d49881b2e46a8e1833548a16e5fcbf52",
+      "structure_index_unsupported",
+      "structure_partial_or_failed",
+      "triage_pending_spans",
+      "unsupported_format"
+    ],
+    "origin": {
+      "status": "known",
+      "value": "http://comfyui-manager:8288"
+    },
+    "project_id": "js-current-comfyui-af39fe95",
+    "run_id": "current-native-af39fe95"
+  },
+  "schema_version": 1
+}

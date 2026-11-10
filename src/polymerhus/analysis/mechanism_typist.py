@@ -49,6 +49,7 @@ from polymerhus.analysis.analyser_types import L1DeltaBatch
 from polymerhus.analysis.chunking import Chunk
 from polymerhus.analysis.overview import overview_message
 from polymerhus.analysis.proposer_reasoning import cot_scaffold, role_header
+from polymerhus.app.js_context.selection import analysis_steering
 
 logger = logging.getLogger(__name__)
 
@@ -414,7 +415,7 @@ def _reflection_prompt(chunk: Chunk, inventory: dict | None, *,
     from polymerhus.analysis.l1_curator import vocabulary_prompt
 
     lead = f"{_TYPIST_CHAIN}\n\n" if chained else ""
-    return (
+    prompt = (
         f"{lead}"
         f"{role_header('the TechnicalSystem mechanism-typist', 'reconstruct, at breadth, the cross-cutting technical Systems this streamed surface evidences and how they overlay the Services')}\n\n"
         f"{_defined_systems_block(inventory)}\n\n"
@@ -428,6 +429,12 @@ def _reflection_prompt(chunk: Chunk, inventory: dict | None, *,
         "Do NOT emit the structured `systems` / `system_edges` output in this step; "
         "that is the next call."
     )
+    if chunk.js_context_input is not None:
+        prompt = (
+            f"{prompt}\n\n"
+            f"{analysis_steering(chunk.js_context_input, role='mechanism_typist')}"
+        )
+    return prompt
 
 
 def _witness_guide() -> str:
@@ -542,8 +549,15 @@ def _default_invoke_fn(messages, *, schema=None, system_prompt=None):
     return invoke_role("analyser", prepend_prompt(messages, prompt), schema=schema)
 
 
-def stateful_invoke_fn(run_id: str, checkpointer, project_id: str | None = None,
-                       auth_store=None):
+def stateful_invoke_fn(
+    run_id: str,
+    checkpointer,
+    project_id: str | None = None,
+    auth_store=None,
+    *,
+    js_context_selection=None,
+    js_context_tracker=None,
+):
     """The STATEFUL mechanism-typist call (#94): the `mechanism_typist` role runs as a
     session on its OWN per-run thread (`AnalysisSession(run_id, "mechanism_typist")`, distinct from every other agent's), so its 3-call
     chain shares ONE session that resets at each chunk boundary. Structured turns go through
@@ -567,8 +581,15 @@ def stateful_invoke_fn(run_id: str, checkpointer, project_id: str | None = None,
     config degrades the profile/window, never the session."""
     from polymerhus.analysis.proposer_turn import session_invoke_fn
 
-    return session_invoke_fn("mechanism_typist", run_id, checkpointer, project_id,
-                             auth_store)
+    return session_invoke_fn(
+        "mechanism_typist",
+        run_id,
+        checkpointer,
+        project_id,
+        auth_store,
+        js_context_selection=js_context_selection,
+        js_context_tracker=js_context_tracker,
+    )
 
 
 # The mechanism-typist role prompt (`prompts/technical-system.md`), memoized on
@@ -613,7 +634,8 @@ def type_mechanisms(
     exception - never crashes the caller."""
     from langchain_core.messages import HumanMessage
 
-    if not chunk.assets:  # empty delta -> nothing to type (valid empty)
+    if not chunk.assets and chunk.js_context_input is None:
+        # No ordinary surface and no JS integration pass: valid empty.
         return L1DeltaBatch()
     invoke_fn = invoke_fn or _default_invoke_fn
     # The skill rides the stateful seam's `system_prompt=` binding (the converged
@@ -728,7 +750,10 @@ def mechanism_typist_body(
     if getattr(dispatch, "phase", None) != "A1":
         return None  # A.2 (missing-systems sweep) is a later slice
     chunk = getattr(dispatch, "chunk", None)
-    if chunk is None or not getattr(chunk, "assets", None):
+    if chunk is None or (
+        not getattr(chunk, "assets", None)
+        and getattr(chunk, "js_context_input", None) is None
+    ):
         return L1DeltaBatch()
     project_id = state.get("project_id", "")
     read_inventory = read_inventory or _default_read_inventory
