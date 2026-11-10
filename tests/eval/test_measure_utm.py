@@ -195,15 +195,15 @@ def test_the_measurement_prompt_carries_the_narrowing_rubric():
         assert clause in prompt, clause
 
 
-def test_a_dispatch_id_provenance_value_normalises_to_the_threat_id():
+def test_a_dispatch_id_provenance_value_keeps_the_full_identity():
     assert measure_utm.threat_id_of(
         {"threat_id": "Service-sign-in__threat-1"}
-    ) == "threat-1"
+    ) == "Service-sign-in__threat-1"
     assert measure_utm.threat_id_of({"threat_id": "threat-1"}) == "threat-1"
     assert measure_utm.threat_id_of({}) == ""
 
 
-def test_spec_metrics_normalises_the_dispatch_id_provenance():
+def test_spec_metrics_keeps_the_full_dispatch_id_and_its_suffix():
     spec = {
         "target_identity": {"unit_id": "Service:sign-in"},
         "verification_symptoms": "a symptom",
@@ -221,7 +221,8 @@ def test_spec_metrics_normalises_the_dispatch_id_provenance():
     }
     row = measure_utm.spec_metrics(spec, {"type": ""}, identity)
 
-    assert row["threat_id"] == "threat-1"
+    assert row["threat_id"] == "Service-sign-in__threat-1"
+    assert row["threat_id_suffix"] == "threat-1"
 
 
 # --- the impact metric (spec section 9) --------------------------------------
@@ -583,7 +584,8 @@ def test_the_measurement_writes_the_impact_block_beside_the_existing_fields(
     assert metrics["impact"]["green_share"] == 0.5
     assert metrics["counts"]["gt_total"] == 0
     assert metrics["counts"]["threats_total"] == 1
-    assert metrics["narrowing"]["threats_total"] == 0
+    assert metrics["narrowing"]["threats_total"] == 1
+    assert metrics["narrowing"]["broad"] == 0
     assert metrics["rates"]["identification_rate"] is None
 
 
@@ -952,3 +954,91 @@ def test_the_review_labels_do_not_collide_across_units():
     assert metric["green"] == 2
     assert metric["red"] == 1
     assert abs(metric["green_share"] - 2 / 3) < 1e-4
+
+
+def test_load_corpus_unit_reads_the_l1_profile_markdown(tmp_path):
+    target = tmp_path / "corpus" / "siyucms"
+    unit = target / "siyucms-001"
+    unit.mkdir(parents=True)
+    (unit / "l1-profile.md").write_text(
+        "# L1 profile - `siyucms-001` (`Weak Credentials`)\n\n"
+        "The target unit is `Service:admin-authentication`.\n\n"
+        "## Render block\n\n"
+        "```\n"
+        "unit kind: Service\n"
+        "spine (present keys): ['api_paradigm', 'business_function']\n"
+        "outgoing edges:\n"
+        "  - DEPENDS_ON: ['AuthenticationMechanism -> kind=AuthenticationMechanism; discriminator=__singleton__']\n"
+        "aggregated endpoints:\n"
+        "  - method=GET; path=/admin/index/index.html; baseurl=http://web:80; service_slug=admin-authentication\n"
+        "```\n",
+        encoding="utf-8",
+    )
+    spec = measure_utm.load_corpus_unit(target, "siyucms-001")
+    assert spec["unit"]["match"]["business_function_slug"] == "admin-authentication"
+    assert spec["fault_class"] == "Weak Credentials"
+    assert spec["edges_to_l0"]["endpoints"][0]["path"] == "/admin/index/index.html"
+    assert spec["typed_backbone"]["required"][0]["field"] == "api_paradigm"
+    assert spec["service_to_system_edges"]["required"][0]["target_kind"] == (
+        "AuthenticationMechanism"
+    )
+
+
+def test_spec_metrics_counts_all_nine_concretised_procedure_fields():
+    spec = {
+        "target_identity": {"unit_id": "Service:sign-in"},
+        "verification_symptoms": ["a symptom"],
+        "assumptions": [],
+        "rationale": "a rationale",
+        "provenance": {"threat_id": "Service-sign-in__threat-1"},
+        "skill_concretised_procedure": {
+            "recon_action": "a",
+            "bypass_technique": "b",
+            "advanced_technique": "c",
+            "preliminary_chaining": "d",
+            "payload_vector": "e",
+            "technology_misconfiguration": "f",
+            "technology_grounding": "g",
+            "pro_tips": "h",
+            "interpretation_pitfalls": "i",
+        },
+        "discriminators": [{"axis": "technique", "value": "burst"}],
+    }
+    identity = {
+        "expected_id": "Service:sign-in",
+        "names": ["Service:sign-in"],
+        "fault_class": "",
+        "location": "",
+    }
+    row = measure_utm.spec_metrics(spec, {"type": ""}, identity)
+    assert row["procedure_fields"] == 9
+    assert row["procedure_total"] == 9
+
+
+def test_threat_downstream_matches_the_unit_and_the_threat_id():
+    threat = {"threat_id": "threat-1", "unit_id": "Service:console-dashboard"}
+    specs = [
+        {
+            "threat_id": "Service-console-dashboard__threat-1",
+            "unit_id": "Service:console-dashboard",
+            **_spec("technique"),
+        },
+        {
+            "threat_id": "Service-console-dashboard__threat-1",
+            "unit_id": "Service:content-browsing",
+            **_spec("actor"),
+        },
+    ]
+    downstream = measure_utm.threat_downstream(threat, specs)
+    assert downstream["spec_count"] == 1
+
+
+def test_a_threat_file_without_a_model_file_still_carries_its_risk(tmp_path):
+    unit = tmp_path / "consumed" / "Service-console-dashboard"
+    unit.mkdir(parents=True)
+    (unit / "threat-1.yaml").write_text(
+        yaml.safe_dump({"risk": 9.9, "threat_id": "threat-1"}), encoding="utf-8"
+    )
+    models, threats = measure_utm.load_models(tmp_path)
+    metric = measure_utm.impact_metric(models, threats)
+    assert metric["risk_total"] == 9.9
