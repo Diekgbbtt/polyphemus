@@ -478,6 +478,12 @@ The fresh snapshot is stamped with the new `DocumentGeneration`.
 The executor acts on a ref that belongs to the live document.
 If the cached element's fingerprint is absent from the fresh projection, the
 action fails with `stale_element` and the candidate is consumed.
+A per-element action failure that is neither `stale_element` nor
+`session_missing` is also consumed: the frontier records the failure in its
+action ledger, restores the page, and continues with the next candidate.
+The traversal ends only when no candidate remains.
+This is the DOM fail-safe: one broken element never ends a session that can
+still traverse.
 The root needs no initial restore: the page factory just loaded it, so its
 snapshot and refs are already the live document's.
 
