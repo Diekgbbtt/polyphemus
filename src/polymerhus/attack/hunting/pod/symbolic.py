@@ -7,7 +7,7 @@ recogniser.
 
 The reduced D4 carries no structured payload vector: the runner authors the
 probe from the spec's target identity and evidence. The optional
-`provenance.baseline_ref` names one recorded artifact to replay; otherwise the
+`baseline_ref` names one recorded artifact to replay; otherwise the
 first probe is a GET of the base URL. The legacy `payload_vector_space`
 mutation parser is deleted (T8/T10): a replay's overrides are authored at the
 pod's own exec tool, never read from a retired D4 field.
@@ -52,7 +52,7 @@ def probe_signature(chain: ProbeChain) -> str:
 def author_probe_from_spec(spec: dict, variant_ref: str) -> ProbeChain | None:
     """Author the runner's first probe from the REDUCED D4 (S5 8.5).
 
-    The optional `provenance.baseline_ref` wins: it names one recorded artifact
+    The optional `baseline_ref` wins: it names one recorded artifact
     to replay, so the core step carries `request_ref` and no URL. Otherwise the
     core step is a GET of `target_identity.url`. A chain with neither is the
     real "no probe derivable" outcome (None) - the graph then lands

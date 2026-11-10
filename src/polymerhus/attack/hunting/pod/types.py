@@ -84,16 +84,19 @@ class TestImplementationSpec(BaseModel):
     the mandatory URL/symptom violations instead of raising;
     `verification.validate_spec` is the gate.
 
-    `provenance` carries `threat_id`, `unit_id`, `canonical_class` (the freely
-    named taxonomy class), `web_vulnerability_class` (the suite directory
-    name; empty when the class is a `suite_gap`), `baseline_ref` (optional),
-    `source_recon_refs`, `assumption_ref`, and `playbook`."""
+    `provenance` carries the SYMBOLIC dispatch fields: `threat_id`, `unit_id`,
+    `canonical_class` (the freely named taxonomy class), and
+    `web_vulnerability_class` (the suite directory name; empty when the class is a
+    `suite_gap`). The recorded-baseline pointer and the playbook are top-level
+    fields, never provenance."""
 
     target_identity: TargetIdentity = Field(default_factory=TargetIdentity)
     discriminators: list[Discriminator] = Field(default_factory=list)
     verification_symptoms: list[str] = Field(default_factory=list)
     assumptions: list[str] = Field(default_factory=list)
     rationale: str = ""
+    baseline_ref: str = ""
+    playbook: str = ""
     skill_concretised_procedure: SkillConcretisedProcedure | None = None
     # Variant lineage (D67-08): a derived variant records its parent + why.
     parent_spec_ref: str | None = None
@@ -122,9 +125,17 @@ def spec_provenance(spec: dict | TestImplementationSpec | None) -> dict:
 
 
 def baseline_ref_from_spec(spec: dict | TestImplementationSpec | None) -> str:
-    """The optional recorded-baseline artifact id (S5 8.5): the single pointer
-    that replaces the retired structured payload vector. Empty when absent."""
-    value = spec_provenance(spec).get("baseline_ref")
+    """The optional recorded-baseline artifact id.
+
+    The top-level field is the contract. The provenance read is the legacy
+    fallback for a spec written before the 2026-11-10 split. Empty when absent.
+    """
+    if isinstance(spec, TestImplementationSpec):
+        value = spec.baseline_ref or spec_provenance(spec).get("baseline_ref")
+    elif isinstance(spec, dict):
+        value = spec.get("baseline_ref") or spec_provenance(spec).get("baseline_ref")
+    else:
+        value = None
     return value.strip() if isinstance(value, str) else ""
 
 

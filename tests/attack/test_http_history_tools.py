@@ -113,7 +113,7 @@ def test_every_http_history_description_states_the_contract_and_the_model():
     assert "conjunctive" in search.lower()
     assert "next_cursor" in search
     assert "absent" in search
-    assert "provenance.baseline_ref" in search
+    assert "baseline_ref" in search
     # T8 (#381): the retired D4 field never names the baseline again.
     assert "payload_vector_space" not in search and "request_ref" not in search
     # FM-B: the filter-vocabulary anti-patterns are taught, not just listed
@@ -124,7 +124,7 @@ def test_every_http_history_description_states_the_contract_and_the_model():
     # get: what makes a baseline replayable, and what is visible
     get = GET_HTTP_ARTIFACT_DESCRIPTION
     assert "captured" in get
-    assert "provenance.baseline_ref" in get
+    assert "baseline_ref" in get
     assert "payload_vector_space" not in get and "request_ref" not in get
 
     # replay: the CLOSED override vocabulary and the lineage of the new artifact

@@ -38,7 +38,10 @@ def test_the_hunter_tool_descriptions_stay_within_the_budget():
     # view and the 12000-character read bound, and the HTTP search contract
     # gained the side-bound header families and the core-key rule. Both are new
     # contract content, not duplication.
-    assert total <= 8850, total
+    # 9500 (was 8850): the spec write contract now carries the top-level
+    # `baseline_ref` and `playbook` fields (the 2026-11-10 provenance split), so
+    # the fixed tax grows with new contract content, not duplication.
+    assert total <= 9500, total
 
 
 def test_every_hunter_tool_has_a_description():
