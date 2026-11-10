@@ -472,8 +472,9 @@ def _systems_prompt(inventory: dict | None) -> str:
         "witness is ONE typed object: an endpoint is `{method, path, baseurl}`; a header "
         "is `{name, endpoint, baseurl}`; a technology is `{name, version}`; a certificate "
         "is `{subject_cn}`; a base URL is `{url}`. Every key in the chosen shape is "
-        "REQUIRED - never omit one and never send null or blank. If you cannot read a "
-        "required key, choose a different witness or omit that witness. Each "
+        "REQUIRED except a Technology's `version`, which may be empty; never send "
+        "null. If you cannot read a required key, choose a different witness or "
+        "omit that witness. Each "
         "witness becomes one `EVIDENCED_BY` edge from the System to that L0 node; a witness "
         "the graph does not hold writes NO edge, so never invent a node, and NEVER drop a "
         "System for lack of one - a claim with no witness in the slice is still emitted, "
@@ -668,6 +669,7 @@ def type_mechanisms(
             tool_name="SystemExtraction",
             role="mechanism_typist",
             chunk_id=chunk.chunk_id,
+            expected=(SystemExtraction, L1DeltaBatch),
         )
         if extraction_failed and failure_fn is not None:
             failure_fn("mechanism_typist.extraction", chunk.chunk_id, 0)
@@ -689,6 +691,7 @@ def type_mechanisms(
             tool_name="SystemLinking",
             role="mechanism_typist",
             chunk_id=chunk.chunk_id,
+            expected=(SystemLinking, L1DeltaBatch),
         )
         if linking_failed and failure_fn is not None:
             failure_fn("mechanism_typist.linking", chunk.chunk_id, 0)

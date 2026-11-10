@@ -465,6 +465,31 @@ def test_N16_a_partial_witness_is_rejected_not_silently_retyped():
         })
 
 
+def test_N18_a_wrong_variant_is_a_miss_not_a_silent_drop():
+    calls = []
+
+    def invoke(messages, *, schema=None, system_prompt=None):
+        calls.append(schema)
+        if schema is None:
+            return "reflected"
+        prompt = messages[-1].content
+        if _SYSTEMS_MARKER in prompt or "SystemExtraction" in prompt:
+            if len(calls) == 2:  # the first extraction answer is the wrong variant
+                return SystemLinking(links=[])
+            return SystemExtraction(systems=[])
+        if len(calls) == 4:  # the first linking answer is the wrong variant
+            return SystemExtraction(systems=[])
+        return SystemLinking(links=[
+            SystemLink(service="checkout", kind="WAF", relation="FRONTED_BY")
+        ])
+
+    out = type_mechanisms(_service_chunk(), invoke_fn=invoke, inventory={"services": []})
+    assert out.systems == []
+    assert [(e.service_slug, e.rel) for e in out.system_edges] == [
+        ("checkout", "FRONTED_BY")
+    ]
+
+
 def test_N17_a_base_url_witness_maps_to_the_writer_label():
     from polymerhus.analysis.analyser_types import (
         SystemDefinition,

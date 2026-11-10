@@ -114,14 +114,16 @@ def structured_turn(
     tool_name: str,
     role: str,
     chunk_id: str,
+    expected=None,
 ):
     """One structured turn plus one bounded repair.
 
     Returns `(result, generation_failed)`. A first `None` is the exhausted-
     generation signal; the repair is a single corrective re-ask on the same
-    session, never an unbounded retry. A second `None` is a NAMED generation
-    failure: the caller records it on the pass census instead of treating the
-    empty batch as a valid "nothing to judge" outcome.
+    session, never an unbounded retry. `expected` is the type (or tuple of
+    types) this turn owns: a result of the WRONG variant is a miss, exactly
+    like `None`, so a union response format cannot silently discard a whole
+    turn's payload. A second miss is a NAMED generation failure.
 
     On the STATEFUL seam the first turn is already in the checkpoint; the
     repair appends only the corrective message, so the chunk and inventory are
@@ -130,8 +132,15 @@ def structured_turn(
     """
     from langchain_core.messages import HumanMessage
 
+    def _accepted(result) -> bool:
+        if result is None:
+            return False
+        if expected is None:
+            return True
+        return isinstance(result, expected)
+
     result = invoke_fn(messages, schema=schema, system_prompt=system_prompt)
-    if result is not None:
+    if _accepted(result):
         return result, False
     corrective = HumanMessage(content=repair_instruction(tool_name))
     repair = (
@@ -140,7 +149,7 @@ def structured_turn(
         else list(messages) + [corrective]
     )
     result = invoke_fn(repair, schema=schema, system_prompt=system_prompt)
-    if result is None:
+    if not _accepted(result):
         logger.warning(
             "%s: structured generation failed after one repair (chunk=%s)",
             role,

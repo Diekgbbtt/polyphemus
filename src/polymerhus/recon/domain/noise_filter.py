@@ -321,6 +321,19 @@ def _is_generated_js(filename: str, seg_set: set[str]) -> bool:
                for p in VENDOR_JS_PREFIXES)
 
 
+def _preserve_wins(segments: set[str]) -> bool:
+    """True when a user-content segment overrides a generic static root.
+
+    The framework's own `_next/static` tree and a verified CDN transform are
+    hard static and are never overridden.
+    """
+    hard_static = (
+        {"_next", "static"} <= segments
+        or bool(segments & {"cdn", "cdn-cgi"})
+    )
+    return not hard_static and bool(segments & PRESERVE_SEGMENTS)
+
+
 def is_static_base_path(path: str, *, extension: str = "") -> bool:
     """True when `path` sits under a confidently static base path.
 
@@ -335,11 +348,7 @@ def is_static_base_path(path: str, *, extension: str = "") -> bool:
     # A user-content segment wins over the generic static/build roots, but not
     # over the framework's own static tree or a verified CDN transform. This is
     # the recall bias: `/uploads/static/logo.png` is still user media.
-    hard_static = (
-        {"_next", "static"} <= segments
-        or bool(segments & {"cdn", "cdn-cgi"})
-    )
-    if not hard_static and segments & PRESERVE_SEGMENTS:
+    if _preserve_wins(segments):
         return False
     if segments & DROP_SEGMENTS:
         return True
@@ -364,13 +373,11 @@ def is_static_stream_path(path: str, *, extension: str = "") -> bool:
     static root, except for the `_next/static` tree and a verified CDN.
     """
     segments = set(_path_segments(path or "/"))
-    hard_static = (
-        {"_next", "static"} <= segments
-        or bool(segments & {"cdn", "cdn-cgi"})
-    )
-    if not hard_static and segments & PRESERVE_SEGMENTS:
+    if _preserve_wins(segments):
         return False
-    if hard_static or bool(segments & {"assets", "static"}):
+    if {"_next", "static"} <= segments or bool(segments & {"cdn", "cdn-cgi"}):
+        return True
+    if bool(segments & {"assets", "static"}):
         return True
     return (
         extension.lower() in (IMAGE_EXTS | MEDIA_EXTS)
@@ -382,19 +389,21 @@ def classify_endpoint(path: str, *, has_params: bool = False) -> Classification:
     """Classify an endpoint path as static noise, user-controllable surface, or
     ambiguous (kept by recall bias).
 
-    Precedence (PRESERVE beats DROP for the ambiguous media families, while a
-    CONFIDENT static base path beats PRESERVE):
+    Precedence (PRESERVE wins over the generic static roots, except for the
+    `_next/static` tree and a verified CDN transform):
       1. a query parameter present            -> "surface"
       2. a browser well-known / analytics path -> "static" (never app surface)
       3. a JavaScript extension (.js/.mjs)     -> "surface" unless generated
       4. a never-surface extension            -> "static"
       5. a fingerprinted / bundler filename   -> "static"
-      6. a confident static base path          -> "static"
-         (`/static/`, `/assets/`, `/_next/static/`, a verified CDN tree, or a
-         template/theme/skin image)
+      6. a hard static base path               -> "static"
+         (`/_next/static/` or a verified CDN tree)
       7. a user-content path segment          -> "surface"
-      8. an image / media / archive extension -> "ambiguous" (recall bias)
-      9. otherwise                            -> "ambiguous"
+      8. a generic static root or a theme image -> "static"
+         (`/static/`, `/assets/`, `/vendor/`, `/build/`, or a template/theme/
+         skin image)
+      9. an image / media / archive extension -> "ambiguous" (recall bias)
+     10. otherwise                            -> "ambiguous"
     """
     if has_params:
         return "surface"

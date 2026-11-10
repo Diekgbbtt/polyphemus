@@ -186,6 +186,7 @@ def test_the_systems_prompt_teaches_the_witness_emission():
         "{name, endpoint, baseurl}",
         "{name, version}",
         "{subject_cn}",
+        "{url}",
     ):
         assert shape in p, f"the witness shape {shape} is not taught"
     assert "EVIDENCED_BY" in p              # the edge the witnesses become

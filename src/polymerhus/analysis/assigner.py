@@ -525,6 +525,7 @@ def assign(
                 tool_name="AssignerDelta",
                 role=ROLE,
                 chunk_id=chunk.chunk_id,
+                expected=(AssignerDelta, L1DeltaBatch),
             )
     except Exception:  # LLM error -> fail-open to no assignment, never crash
         logger.warning("assigner: invoke failed; degrading to empty outcome", exc_info=True)

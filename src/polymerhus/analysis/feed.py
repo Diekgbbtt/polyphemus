@@ -311,8 +311,7 @@ class QueuedAnalysisFeed:
                             ) or ()
                         )
                         for detail in details:
-                            if detail not in self._generation_failures:
-                                self._generation_failures.append(detail)
+                            self._generation_failures.append(detail)
                         entered = getattr(self._last_census, "dispatches_entered", 0) or 0
                         self._dispatches_entered += entered
                         if entered:

@@ -983,6 +983,25 @@ def test_a_profile_without_a_unit_line_is_not_a_present_spec():
     assert measure_utm.unit_spec_from_profile("# L1 profile\n\nno unit") == {}
 
 
+def test_a_profile_parses_a_bare_system_unit():
+    spec = measure_utm.unit_spec_from_profile(
+        "The target unit is `ReverseProxy`.\n"
+    )
+    assert spec["unit"]["kind"] == "ReverseProxy"
+    assert spec["unit"]["match"] == {"kind": "ReverseProxy", "discriminator": ""}
+
+
+def test_a_profile_parses_a_discriminated_system_unit():
+    spec = measure_utm.unit_spec_from_profile(
+        "The target unit is `WebPresentation:admin::login`.\n"
+    )
+    assert spec["unit"]["kind"] == "WebPresentation"
+    assert spec["unit"]["match"] == {
+        "kind": "WebPresentation",
+        "discriminator": "admin::login",
+    }
+
+
 def test_spec_metrics_counts_all_nine_concretised_procedure_fields():
     spec = {
         "target_identity": {"unit_id": "Service:sign-in"},
@@ -1039,6 +1058,16 @@ def test_a_bare_threat_id_does_not_cross_units():
         {"threat_id": "threat-1", "unit_id": "Service:b", **_spec("actor")},
     ]
     assert measure_utm.threat_downstream(threat, specs)["spec_count"] == 1
+
+
+def test_the_narrowing_block_counts_distinct_threat_files():
+    threats = [
+        {"threat_id": "threat-1", "unit_id": "Service:a", "risk": 5.0},
+        {"threat_id": "threat-1", "unit_id": "Service:b", "risk": 5.0},
+    ]
+    block = measure_utm.narrowing_block(threats, [], {})
+    assert block["threats_total"] == 2
+    assert block["breadth_unknown"] == 2
 
 
 def test_a_threat_file_without_a_model_file_still_carries_its_risk(tmp_path):

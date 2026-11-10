@@ -34,7 +34,7 @@ A tool-call observation is a witness: say in the System's description where it c
 A description says WHAT you judged; the `evidence` list says WHAT THE GRAPH HOLDS that witnesses it.
 Every `systems` entry carries an `evidence` list of TYPED L0 witnesses - the header, technology, certificate, or endpoint you actually read the mechanism on - so the write can create one `EVIDENCED_BY` edge from the System to each witness.
 
-- A witness is a NODE, not a sentence, and it is typed by the L0 kind: an endpoint is `{method, path, baseurl}`; a header is `{name, endpoint, baseurl}`; a technology is `{name, version}`; a certificate is `{subject_cn}`. A reference the graph can be MATCHed on, never free text.
+- A witness is a NODE, not a sentence, and it is typed by the L0 kind: an endpoint is `{method, path, baseurl}`; a header is `{name, endpoint, baseurl}`; a technology is `{name, version}` (version may be empty); a certificate is `{subject_cn}`; a base URL is `{url}`. A reference the graph can be MATCHed on, never free text.
 - Name nodes the graph holds. The reference is `MATCH`ed as you write it: a witness that is not in the graph writes **no edge**, and the system is never fabricated to receive one.
 - Give every key of the chosen typed shape. Every key is REQUIRED: never omit one and never send a null or blank. If you cannot read a required key, choose a different witness or omit that witness.
 - A claim with no witness in the slice is STILL emitted, with an empty `evidence` list: withholding a System you cannot ground is your judgment at hypothesise-time, never a reason to drop it here, and never a reason to invent a node.

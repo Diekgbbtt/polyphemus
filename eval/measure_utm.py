@@ -159,14 +159,15 @@ def unit_spec_from_profile(text: str) -> dict:
                 "baseurl": endpoint.group(3).strip(),
                 "service_slug": endpoint.group(4).strip(),
             })
-    kind, _, slug = unit_id.partition(":")
-    if not kind or not slug:
+    kind, _, rest = unit_id.partition(":")
+    if not kind:
         return {}
-    match = (
-        {"business_function_slug": slug}
-        if kind == "Service"
-        else {"kind": slug or kind, "discriminator": ""}
-    )
+    if kind == "Service":
+        if not rest:
+            return {}
+        match = {"business_function_slug": rest}
+    else:
+        match = {"kind": kind, "discriminator": rest}
     return {
         "unit": {"kind": kind, "match": match},
         "fault_class": fault_class,
@@ -618,6 +619,62 @@ def _threat_id_matches(spec_threat: str, threat_id: str) -> bool:
     if spec_threat == threat_id:
         return True
     return spec_threat.rsplit("__", 1)[-1] == threat_id
+
+
+def narrowing_block(threats: list[dict], specs: list[dict],
+                    class_index: dict[str, int] | None) -> dict:
+    """The distinct-artifact narrowing summary.
+
+    A threat that matches several vulnerabilities is still ONE threat file, so
+    the block iterates the artifact list once, not the per-vulnerability match
+    rows. A spec is attributed by `(unit_id, threat_id)`.
+    """
+    distinct_specs: list[dict] = []
+    for spec in specs:
+        provenance = as_dict(spec.get("provenance"))
+        target = as_dict(spec.get("target_identity"))
+        distinct_specs.append({
+            **spec,
+            "threat_id": threat_id_of(provenance),
+            "unit_id": str(
+                target.get("unit_id") or provenance.get("unit_id") or ""
+            ),
+            "dispatch": spec.get("_dispatch"),
+        })
+    rows = [
+        {
+            **threat,
+            "bound_class_is_parent": is_broad_class(
+                as_dict(threat.get("threat")).get("web_vulnerability_class"),
+                class_index,
+            ),
+            "downstream": threat_downstream(threat, distinct_specs),
+        }
+        for threat in threats
+    ]
+    return {
+        "threats_total": len(rows),
+        "broad": sum(
+            1 for row in rows if row.get("bound_class_is_parent") is True),
+        "narrow": sum(
+            1 for row in rows if row.get("bound_class_is_parent") is False),
+        "breadth_unknown": sum(
+            1 for row in rows if row.get("bound_class_is_parent") is None),
+        "substantial_specs": sum(
+            1 for row in rows
+            if as_dict(row.get("downstream")).get("substantial")),
+        "well_formed_specs": sum(
+            1 for row in rows
+            if as_dict(row.get("downstream")).get("well_formed")),
+        "narrow_without_well_formed": sum(
+            1 for row in rows
+            if row.get("bound_class_is_parent") is False
+            and not as_dict(row.get("downstream")).get("well_formed")),
+        "broad_without_well_formed": sum(
+            1 for row in rows
+            if row.get("bound_class_is_parent") is True
+            and not as_dict(row.get("downstream")).get("well_formed")),
+    }
 
 
 def threat_text(threat_record: dict, model: dict) -> str:
@@ -1443,47 +1500,13 @@ def main() -> int:
     pods_all = [row for v in per_vuln for row in as_list(v.get("pods"))]
     # The narrowing block counts DISTINCT artifacts, not per-vuln matches. A
     # threat that matches several vulnerabilities is still one threat file.
-    distinct_spec_rows = []
-    for spec in specs:
-        provenance = as_dict(spec.get("provenance"))
-        target = as_dict(spec.get("target_identity"))
-        distinct_spec_rows.append({
-            **spec,
-            "threat_id": threat_id_of(provenance),
-            "unit_id": str(
-                target.get("unit_id") or provenance.get("unit_id") or ""
-            ),
-            "dispatch": spec.get("_dispatch"),
-        })
-    narrowing_rows = [
-        {
-            **threat,
-            "bound_class_is_parent": is_broad_class(
-                as_dict(threat.get("threat")).get("web_vulnerability_class"),
-                class_index,
-            ),
-            "downstream": threat_downstream(threat, distinct_spec_rows),
-        }
-        for threat in threats
-    ]
+    narrowing = narrowing_block(threats, specs, class_index)
     mapped_spec_ids = {
         str(row.get("spec_id") or "")
         for v in per_vuln
         for row in as_list(v.get("specs"))
         if row.get("candidate")
     }
-    narrow_without_well_formed = sum(
-        1
-        for row in narrowing_rows
-        if row.get("bound_class_is_parent") is False
-        and not as_dict(row.get("downstream")).get("well_formed")
-    )
-    broad_without_well_formed = sum(
-        1
-        for row in narrowing_rows
-        if row.get("bound_class_is_parent") is True
-        and not as_dict(row.get("downstream")).get("well_formed")
-    )
     confirmed_pods = [p for p in pods if int(p.get("confirmed") or 0) > 0]
     confirmed_non_gt = sum(
         1 for pod in confirmed_pods
@@ -1525,20 +1548,13 @@ def main() -> int:
             "threat_rows_matched": len(threats_all),
             "spec_rows_matched": len(specs_all),
             "pod_rows_matched": len(pods_all),
-            "threats_broad": sum(
-                1 for row in narrowing_rows if row.get("bound_class_is_parent") is True),
-            "threats_narrow": sum(
-                1 for row in narrowing_rows if row.get("bound_class_is_parent") is False),
-            "threats_breadth_unknown": sum(
-                1 for row in narrowing_rows if row.get("bound_class_is_parent") is None),
-            "threats_substantial_specs": sum(
-                1 for row in narrowing_rows
-                if as_dict(row.get("downstream")).get("substantial")),
-            "threats_well_formed_specs": sum(
-                1 for row in narrowing_rows
-                if as_dict(row.get("downstream")).get("well_formed")),
-            "threats_narrow_without_well_formed": narrow_without_well_formed,
-            "threats_broad_without_well_formed": broad_without_well_formed,
+            "threats_broad": narrowing["broad"],
+            "threats_narrow": narrowing["narrow"],
+            "threats_breadth_unknown": narrowing["breadth_unknown"],
+            "threats_substantial_specs": narrowing["substantial_specs"],
+            "threats_well_formed_specs": narrowing["well_formed_specs"],
+            "threats_narrow_without_well_formed": narrowing["narrow_without_well_formed"],
+            "threats_broad_without_well_formed": narrowing["broad_without_well_formed"],
         },
         "rates": {
             "identification_rate": round(identified / gt_total, 4) if gt_total else None,
@@ -1549,23 +1565,7 @@ def main() -> int:
             "full_core_rate": round(full_core / gt_total, 4) if gt_total else None,
         },
         "impact": impact,
-        "narrowing": {
-            "threats_total": len(narrowing_rows),
-            "broad": sum(
-                1 for row in narrowing_rows if row.get("bound_class_is_parent") is True),
-            "narrow": sum(
-                1 for row in narrowing_rows if row.get("bound_class_is_parent") is False),
-            "breadth_unknown": sum(
-                1 for row in narrowing_rows if row.get("bound_class_is_parent") is None),
-            "substantial_specs": sum(
-                1 for row in narrowing_rows
-                if as_dict(row.get("downstream")).get("substantial")),
-            "well_formed_specs": sum(
-                1 for row in narrowing_rows
-                if as_dict(row.get("downstream")).get("well_formed")),
-            "narrow_without_well_formed": narrow_without_well_formed,
-            "broad_without_well_formed": broad_without_well_formed,
-        },
+        "narrowing": dict(narrowing),
         "tokens": token_summary(trial),
         "per_vuln": per_vuln,
         "artifact_inventory": {

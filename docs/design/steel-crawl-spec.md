@@ -296,9 +296,12 @@ It marks the shared player `addressable=false`.
   The account identifier is the full path the read returned; a new account is a
   create at `accounts.<account>`.
 - The preflight mints the pool context (`browser_context.ref`) for every account
-  the bootstrap produced, and the crawl mounts that reference.
-  The preflight runs after the bootstrap, so a bootstrap-minted account is
-  included.
+  staged in the auth store before the trial, and the crawl mounts that reference.
+  The preflight runs before the trial.
+  A gateway-minted account created during the trial has no pool context yet: its
+  auth-store `snapshot`/`tokens` are the request-replayable record, and the NEXT
+  preflight mints its browser context.
+  The crawl only mounts a preflight-seeded context; it never invents one.
 - The crawl mounts the same context reference and calls
   `browser(command="end")` in its finalize close.
 - The `start` command restores cookies and localStorage from the pool store;

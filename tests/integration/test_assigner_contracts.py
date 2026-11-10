@@ -789,6 +789,38 @@ def test_C42_assigner_repair_reasks_once_on_none():
     assert out.generation_failed is False
 
 
+def test_C42b_stateful_repair_appends_only_the_corrective_message():
+    from polymerhus.analysis.analyser_types import (
+        Aggregation,
+        AssignerDelta,
+        EndpointRef,
+    )
+
+    calls = []
+
+    def invoke(messages, *, schema=None, system_prompt=None, **_):
+        calls.append(messages)
+        if len(calls) == 1:
+            return None
+        return AssignerDelta(aggregations=[
+            Aggregation(
+                service="checkout",
+                endpoints=[EndpointRef(method="GET", path="/orders/1", baseurl=BU)],
+                evidence="path segment /orders",
+            )
+        ])
+
+    invoke.stateful = True
+    out = assign(
+        _chunk("/orders/1"), invoke_fn=invoke, inventory=INVENTORY,
+        existing_slugs=SLUGS,
+    )
+    assert len(calls) == 2
+    assert len(calls[1]) == 1
+    assert "previous response" in str(calls[1][0].content).lower()
+    assert len(out.batch.aggregates) == 1
+
+
 def test_C43_assigner_repair_exhaustion_is_a_named_failure():
     calls = []
 
