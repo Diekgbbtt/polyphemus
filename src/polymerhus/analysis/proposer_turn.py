@@ -94,6 +94,52 @@ def current_batch() -> str | None:
     return _BATCH.get()
 
 
+def repair_instruction(tool_name: str) -> str:
+    """The one bounded re-ask after a structured turn returns no parseable call."""
+    return (
+        f"Your previous response did not produce a valid `{tool_name}` tool call. "
+        f"Call the `{tool_name}` tool now with ONE complete JSON object. "
+        "Do not write the JSON in your message text. "
+        "Do not use placeholder objects, and do not invent fields. "
+        "Every list entry must match the declared type exactly."
+    )
+
+
+def structured_turn(
+    invoke_fn,
+    messages,
+    *,
+    schema,
+    system_prompt,
+    tool_name: str,
+    role: str,
+    chunk_id: str,
+):
+    """One structured turn plus one bounded repair.
+
+    Returns `(result, generation_failed)`. A first `None` is the exhausted-
+    generation signal; the repair is a single corrective re-ask on the same
+    session, never an unbounded retry. A second `None` is a NAMED generation
+    failure: the caller records it on the pass census instead of treating the
+    empty batch as a valid "nothing to judge" outcome.
+    """
+    from langchain_core.messages import HumanMessage
+
+    result = invoke_fn(messages, schema=schema, system_prompt=system_prompt)
+    if result is not None:
+        return result, False
+    repair = list(messages) + [HumanMessage(content=repair_instruction(tool_name))]
+    result = invoke_fn(repair, schema=schema, system_prompt=system_prompt)
+    if result is None:
+        logger.warning(
+            "%s: structured generation failed after one repair (chunk=%s)",
+            role,
+            chunk_id,
+        )
+        return None, True
+    return result, False
+
+
 def _role_prompt(role_id: str) -> str:
     """The role's OWN stable prompt, resolved on call (no import-time I/O).
 

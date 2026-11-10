@@ -155,7 +155,7 @@ def test_C18_narrow_drops_non_assignment_lists():
 # --- C19: degradation ---------------------------------------------------------
 
 def test_C19_degrades_to_empty_outcome():
-    def boom(messages):
+    def boom(messages, **_):
         raise RuntimeError("llm down")
 
     empty = AssignmentOutcome()
@@ -163,8 +163,11 @@ def test_C19_degrades_to_empty_outcome():
     assert assign(Chunk(chunk_id="katana:0"), invoke_fn=lambda m, **_: None) == empty
     # (b) the invoke raises
     assert assign(_chunk("/x"), invoke_fn=boom) == empty
-    # (c) no parseable tool call
-    assert assign(_chunk("/x"), invoke_fn=lambda m, **_: None) == empty
+    # (c) no parseable tool call after the one repair: a NAMED generation
+    # failure, never a silent "nothing to judge" outcome.
+    degraded = assign(_chunk("/x"), invoke_fn=lambda m, **_: None)
+    assert degraded.batch == L1DeltaBatch()
+    assert degraded.generation_failed is True
 
 
 # --- C20: idempotent ----------------------------------------------------------
@@ -508,16 +511,16 @@ def test_C35_a_well_formed_reference_survives_the_gate_untouched():
     assert kept.evidence_refs == ["path segment /user"]
 
 
-def test_C35b_prompt_states_the_identity_shape_the_repair_depends_on():
+def test_C35b_prompt_states_the_endpoint_shape_the_repair_depends_on():
     """The one part of the reference rule that is NOT redundant. `_candidate_path`
     reads `identity["path"]` before it falls back to parsing the label, so the
-    identity shape is what makes the repair's happy path fire rather than its
-    salvage path. Asserted as a prompt property because it IS a prompt property -
-    unlike the label sentence, deleting it would change outcomes."""
+    endpoint identity shape is what makes the repair's happy path fire rather than
+    its salvage path. Asserted as a prompt property because it IS a prompt
+    property - unlike the label sentence, deleting it would change outcomes."""
     seen, make = _capture()
     assign(_chunk("/x"), invoke_fn=make(L1DeltaBatch()), inventory=INVENTORY, existing_slugs=SLUGS)
     system = seen["system_prompt"]
-    assert "l0.identity" in system
+    assert "endpoints" in system
     for key in ("path", "method", "baseurl"):
         assert f'"{key}"' in system
 
@@ -691,7 +694,7 @@ def test_C40_role_contract_holds_under_every_prompt_config(config, monkeypatch):
     assert "service_contract" not in system
     assert "exposure" not in system
     # the reference shape survives (C35)
-    assert "l0.label" in system
+    assert "endpoints" in system
     # no live inventory identity leaks into the cacheable half (C24)
     assert "checkout" not in system
     # SCOPE GUARD (#34 D4/D18). Note what this can NOT assert: `_ROLE_VERBATIM`
@@ -700,7 +703,7 @@ def test_C40_role_contract_holds_under_every_prompt_config(config, monkeypatch):
     # to catch is a prompt that teaches the model HOW to emit them, whose fingerprints
     # are the shared analyser skill's typed vocabulary - the exact text that made that
     # skill wrong for this role.
-    assert "Leave services, systems, system_edges and every data-modelling list EMPTY" in system
+    assert "Do not emit `services`, `systems`, `system_edges`" in system
     for forbidden in ("EXPOSED_VIA", "AUTHENTICATED_BY", "FRONTED_BY", "PROTECTED_BY",
                       "WebPresentation", "rendering_model", "navigation_model",
                       "api_paradigm", "derived_from", "business_function_slug"):
@@ -716,3 +719,106 @@ def test_C40b_reflect_appends_without_disturbing_the_cacheable_prefix(config, mo
     assert reflect.startswith(create)
     assert "RESTATE AS EVIDENCE" in reflect
     assert "RESTATE AS EVIDENCE" not in create
+
+
+def test_C41_assigner_schema_is_component_oriented():
+    from polymerhus.analysis.analyser_types import (
+        Aggregation,
+        AssignerDelta,
+        EndpointRef,
+    )
+
+    seen = {}
+
+    def invoke(messages, *, schema=None, system_prompt=None, **_):
+        seen["schema"] = schema
+        seen["messages"] = messages
+        return AssignerDelta(aggregations=[
+            Aggregation(
+                service="checkout",
+                endpoints=[
+                    EndpointRef(method="GET", path="/orders/1", baseurl=BU),
+                    EndpointRef(method="POST", path="/orders/2", baseurl=BU),
+                ],
+                evidence="path segment /orders",
+            )
+        ])
+
+    out = assign(
+        _chunk("/orders/1"), invoke_fn=invoke, inventory=INVENTORY,
+        existing_slugs=SLUGS,
+    )
+    assert seen["schema"] is AssignerDelta
+    assert len(out.batch.aggregates) == 1
+    survivor = out.batch.aggregates[0]
+    assert survivor.service_slug == "checkout"
+    assert survivor.l0.identity["path"] == "/orders/1"
+    assert survivor.evidence_refs == ["path segment /orders"]
+
+
+def test_C42_assigner_repair_reasks_once_on_none():
+    from polymerhus.analysis.analyser_types import (
+        Aggregation,
+        AssignerDelta,
+        EndpointRef,
+    )
+
+    calls = []
+
+    def invoke(messages, *, schema=None, system_prompt=None, **_):
+        calls.append(messages)
+        if len(calls) == 1:
+            return None
+        return AssignerDelta(aggregations=[
+            Aggregation(
+                service="checkout",
+                endpoints=[
+                    EndpointRef(method="GET", path="/orders/1", baseurl=BU),
+                ],
+                evidence="path segment /orders",
+            )
+        ])
+
+    out = assign(
+        _chunk("/orders/1"), invoke_fn=invoke, inventory=INVENTORY,
+        existing_slugs=SLUGS,
+    )
+    assert len(calls) == 2
+    assert "previous response" in str(calls[1][-1].content).lower()
+    assert len(out.batch.aggregates) == 1
+    assert out.generation_failed is False
+
+
+def test_C43_assigner_repair_exhaustion_is_a_named_failure():
+    calls = []
+
+    def invoke(messages, *, schema=None, system_prompt=None, **_):
+        calls.append(messages)
+        return None
+
+    out = assign(
+        _chunk("/orders/1"), invoke_fn=invoke, inventory=INVENTORY,
+        existing_slugs=SLUGS,
+    )
+    assert len(calls) == 2
+    assert out.generation_failed is True
+    assert out.batch.aggregates == []
+
+
+def test_C44_assigner_body_reports_a_named_generation_failure():
+    from polymerhus.analysis.assigner import make_assigner_body
+    from polymerhus.analysis.messages import AgentDispatch
+
+    failures = []
+    body = make_assigner_body(
+        invoke_fn=lambda messages, **_: None,
+        inventory_fn=lambda project_id: INVENTORY,
+        failure_fn=lambda role, chunk_id, admitted: failures.append(
+            (role, chunk_id, admitted)
+        ),
+    )
+    dispatch = AgentDispatch(
+        dispatch_id="d", role="assigner", phase="A1", chunk=_chunk("/orders/1")
+    )
+    assert body(dispatch, {"project_id": "p"}) == L1DeltaBatch()
+    assert failures == [("assigner", "katana:0", 1)]

@@ -68,6 +68,52 @@ class AggregatesProposal(BaseModel):
     evidence_refs: list[str] = Field(default_factory=list)
 
 
+# --- the assigner's model-facing component contract ---------------------------
+#
+# The assigner used to emit the shared `L1DeltaBatch` union. That union exposes
+# four writable lists and the prompt tells each role to fill a different subset,
+# so the model saw a contract larger than its job. Iteration E turned that gap
+# into a malformed tool call that LiteLLM could not parse, and the whole chunk's
+# judgments vanished. The component schema below states exactly one primitive:
+# a Service owning a group of Endpoints. The internal curator still consumes
+# `L1DeltaBatch`; `assigner_delta_to_batch` expands the groups at the seam.
+
+
+class EndpointRef(BaseModel):
+    """The L0 Endpoint identity an aggregation names."""
+
+    method: str = Field(description="HTTP method, for example GET or POST.")
+    path: str = Field(description="L0 path, for example /admin/index/index.")
+    baseurl: str = Field(description="L0 base URL, for example http://target.")
+
+
+class Aggregation(BaseModel):
+    """One Service's ownership of a group of Endpoints."""
+
+    service: str = Field(
+        description="The exact business_function_slug of the Service that owns "
+                    "these endpoints. Copy a slug from the inventory."
+    )
+    endpoints: list[EndpointRef] = Field(
+        description="The L0 endpoints this Service aggregates."
+    )
+    evidence: str = Field(
+        default="",
+        description="One short sentence naming the path segment or parameter "
+                    "that supports the ownership. Omit the aggregation when you "
+                    "cannot cite evidence. Never write a placeholder object."
+    )
+
+
+class AssignerDelta(BaseModel):
+    """The assigner's complete answer: one group per owning Service."""
+
+    aggregations: list[Aggregation] = Field(
+        description="One group per Service. The writer expands each group to one "
+                    "AGGREGATES edge per endpoint."
+    )
+
+
 # --- FR-ENRICH LLM-facing proposals (no provenance; system-stamped at curate) --
 
 class SystemEdgeProposal(BaseModel):
@@ -150,3 +196,32 @@ def enrichment_proposals_to_deltas(batch: L1DeltaBatch, provenance: Provenance) 
             for w in s.evidence
         ],
     }
+
+
+def assigner_delta_to_batch(delta: AssignerDelta) -> L1DeltaBatch:
+    """Expand the assigner's Service groups into the curator's per-endpoint union.
+
+    One group becomes one `AggregatesProposal` per endpoint, carrying the group's
+    evidence. The group-level evidence is the model-facing simplification; the
+    curator's judgment envelope is per aggregate, so the same sentence rides each
+    endpoint the group owns.
+    """
+    aggregates: list[AggregatesProposal] = []
+    for group in delta.aggregations:
+        evidence = [group.evidence.strip()] if group.evidence.strip() else []
+        for endpoint in group.endpoints:
+            aggregates.append(
+                AggregatesProposal(
+                    service_slug=group.service,
+                    l0=L0Ref(
+                        label="Endpoint",
+                        identity={
+                            "path": endpoint.path,
+                            "method": endpoint.method,
+                            "baseurl": endpoint.baseurl,
+                        },
+                    ),
+                    evidence_refs=evidence,
+                )
+            )
+    return L1DeltaBatch(aggregates=aggregates)
