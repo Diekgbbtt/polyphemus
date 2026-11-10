@@ -101,6 +101,7 @@ def test_the_baseline_ref_is_a_top_level_pointer():
 
 def test_a_legacy_provenance_baseline_still_reads():
     assert baseline_ref_from_spec(LEGACY_SPEC) == "http_LEGACY"
+    assert baseline_ref_from_spec(D4Spec.model_validate(LEGACY_SPEC)) == "http_LEGACY"
 
 
 def test_an_absent_or_blank_baseline_is_empty():
