@@ -159,3 +159,11 @@ The auth verdict's `probe_source` names the source that actually supplied the pr
 A probe resolved from the loaded session is never labelled as an overview probe.
 The resolver is `crawl_session_probe_with_source`; the `AuthOracle` carries the label into the manifest and the trace.
 
+## Request-cookie dedupe (2026-11-10)
+
+The request-material projection dedupes cookies by name.
+The snapshot is the broad capture; a repeated snapshot name keeps its first value.
+The token list is the explicit auth fact, so a token-located cookie overrides a snapshot cookie of the same name.
+The projection is internal to the recon request tools; it is never rendered into an agent prompt.
+
+
