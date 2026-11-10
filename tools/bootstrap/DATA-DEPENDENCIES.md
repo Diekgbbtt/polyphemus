@@ -19,7 +19,7 @@ Three data dependencies per target, the N12 work items of the eval harness:
    Mint one account per role, highest privilege first, and keep the least-privileged baseline; do not stop after one privileged account.
    It is the recon gateway's only pass/fail signal for authentication, and the crawl's precondition.
    Placed through the data-dependency endpoints: the auth files land in the app data root `<data_root>/<project_id>/auth/`.
-   The account browser-context reference is `browser_context: {ref: <pool context key>}`.
+   The account browser-context reference is preflight-minted (`browser_context: {ref: <pool context key>}`); the bootstrap persists the session through `accounts.<account>.snapshot` and/or `.tokens`.
    The retired `steel` object (and its `steel.profile` / `steel.state` fields) is not a valid reference: the store refuses it, and the data-dependency validator refuses it.
 3. **Project authn skill** - the replayable sign-in/sign-up procedure bundle. It covers every role, and the bootstrap mints the highest-privilege role first.
    Placed through the authn-skill endpoint: the canonical live bundle is `<skills_root>/target-specific-procedure/<project_id>/authn/SKILL.md`.
@@ -189,7 +189,7 @@ Rules:
 One creator subagent per target.
 The order is **authn first, L1 second**: the L1 crawl is authenticated, so the authn artifacts must exist before it runs.
 
-- **Phase 1 (authn)** - deploy the target locally, then run the `authn-skill-writing` meta-skill P0-P6 against it; write the staging source `auth/{overview.yaml,credentials.yaml}` + `skills/authn/`, including one account per session, the persisted session `snapshot`, the `role`, the deployment-neutral `root_url`, the per-account `auth_probe` (2xx authenticated, 401/403/3xx anonymous), and the `browser_context.ref`. The overview carries one `technical_conditions` entry per role with the authenticated-request shape; the authn skill prose covers the sign-in and sign-up procedure for each role. The upload places the authn in the canonical skills root's `target-specific-procedure/<project_id>/authn/` bundle. Leave the target running. STOP.
+- **Phase 1 (authn)** - deploy the target locally, then run the `authn-skill-writing` meta-skill P0-P6 against it; write the staging source `auth/{overview.yaml,credentials.yaml}` + `skills/authn/`, including one account per session, the persisted session `snapshot`/`tokens`, the `role`, the deployment-neutral `root_url`, the per-account `auth_probe` (2xx authenticated, 401/403/3xx anonymous); `browser_context.ref` is preflight-minted and not written by the bootstrap. The overview carries one `technical_conditions` entry per role with the authenticated-request shape; the authn skill prose covers the sign-in and sign-up procedure for each role. The upload places the authn in the canonical skills root's `target-specific-procedure/<project_id>/authn/` bundle. Leave the target running. STOP.
 - **Phase 2 (L1, authenticated)** - the same creator is resumed; it reads the AuthContext + skill, authenticates by replaying the persisted session snapshot (falling back to the skill's sign-in procedure with credentials when the snapshot is stale or not portable), then crawls both the anonymous and the post-login surface into `operator_kb.md` + `l1-surface.yaml` + `surface-map.md`/`research-notes.md`. STOP.
 
 Why this order:

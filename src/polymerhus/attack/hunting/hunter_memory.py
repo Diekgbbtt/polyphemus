@@ -120,7 +120,8 @@ def _is_durable_prior_insight(record: dict) -> bool:
     """The LEGACY durable prior-insight marker (G3/#202).
 
     New pod-export records live in `PodExportStore`
-    (`hunting/pod-export/notes.yaml`). This predicate keeps a
+    (`hunting/test-executor-pod/notes.yaml`), the pod module's notes file. This
+    predicate keeps a
     `provenance.verdict_stub` record that is already present in an OLD
     `hunting/hunter/notes.yaml` from the ordinary-notes eviction of the #341
     bound, so a legacy stub is never lost on the next write."""

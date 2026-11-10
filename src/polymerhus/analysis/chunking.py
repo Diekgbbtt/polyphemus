@@ -40,18 +40,25 @@ from polymerhus.recon.domain.noise_filter import (
     JS_EXTS,
     MEDIA_EXTS,
     STATIC_EXTS,
+    is_static_stream_path,
 )
 from polymerhus.recon.domain.types import AssetDelta, JobSpec, Observation
 
 logger = logging.getLogger(__name__)
 
 # The per-chunk packing threshold (#13's asset budget, reshaped 2026-10-21 by the
-# F-013 correction). The builder stacks COHERENT endpoint MICRO-FAMILIES (one
-# endpoint plus the headers and parameters that target it) until adding the next
-# micro-family would exceed this count. The default is 300 because a 300-asset
-# prompt stayed inside the analysis role's 200K compaction budget in the canary;
-# the 1,128-endpoint katana bucket that defeated compaction cannot form here.
-CHUNK_MAX_ASSETS = 300
+# F-013 correction, retuned 2026-11-10 from the iteration-E capacity read). The
+# builder stacks COHERENT endpoint MICRO-FAMILIES (one endpoint plus the headers
+# and parameters that target it) until adding the next micro-family would exceed
+# this count. The cap is evaluated AFTER the stream filter, the `(type, identity)`
+# collapse, and the micro-family grouping, and it counts EVERY streamed asset
+# type: Endpoint, Parameter, Header, Secret, and every other type the stream
+# carries. 120 is the operating point: large enough to keep a recon job's
+# coherent family set in one dispatch, small enough to bound a chunk's context.
+# This cap is capacity hygiene; the model-facing contract and the one repair are
+# the fix for the recorded malformed-call failure, which occurred on a 52-asset
+# chunk and is not split by this threshold.
+CHUNK_MAX_ASSETS = 120
 
 # The family-internal order: the ANCHOR first, then what it owns (the operator's
 # "parent endpoint -> its headers, parameters, secrets, technologies"). A type
@@ -82,16 +89,19 @@ _FAMILY_RANK: dict[str, int] = {
 #     segment (`assets`/`static`), because `/uploads/x.png` and `/downloads/x.pdf`
 #     can be real surface (SSRF / stored-XSS / path-traversal) - dropping them by
 #     extension alone would lose that surface (the D15 recall bias).
+#   - CONFIDENT STATIC BASE PATH (2026-11-10): the stream gate delegates the
+#     base-path decision to recon's `is_static_base_path`, so `/static/`,
+#     `/assets/`, `/_next/static/`, verified CDN trees, and template/theme/skin
+#     image paths drop. An image under `/uploads/` or an unknown base path stays,
+#     because user media can be real surface (SSRF / stored-XSS / path traversal).
 # Signals, all case-insensitive on the bare path (query string and fragment stripped
 # first, so a cache-busted `/app.js?v=2` is still recognised):
 #   - a never-surface FILE EXTENSION (the hard-drop families);
-#   - a presentational path DIRECTORY: a path SEGMENT equal to `assets` or `static`,
-#     matched on whole segments - never substrings, so `/api/static-data/x` is real
-#     API surface and stays. This rule drops ANY endpoint under it, which already
-#     covers the recall-biased image/media families, and the `_next/static` layout.
+#   - a confident static BASE PATH from `noise_filter.is_static_stream_path`, matched
+#     on whole segments - never substrings, so `/api/static-data/x` is real API
+#     surface and stays.
 _HARD_DROP_EXTS = STATIC_EXTS | JS_EXTS | {"wasm"}
 _RECALL_BIASED_EXTS = IMAGE_EXTS | MEDIA_EXTS
-_NOISE_SEGMENTS = frozenset({"assets", "static"})
 
 # The CONNECTIVITY types are EXCLUDED from the stream for every downstream agent
 # (operator decision 2026-10-15: `docs/design/plans/2026-10-15-streamed-pipeline-corrections.md`
@@ -175,10 +185,10 @@ def _endpoint_extension(path: str) -> str:
 def is_noise_endpoint(asset: AssetDelta) -> bool:
     """True for an Endpoint that is noise from an L1 surface-modelling perspective:
     a never-surface extension (the hard-drop families - stylesheets, fonts, sourcemaps,
-    scripts and wasm) or a path segment equal to `assets` / `static` (the latter covers
-    the `_next/static` layout). Matching is case-insensitive. Image/media extensions are
-    NOT hard-dropped: they drop only under a presentational segment (recall bias), which
-    the segment rule already enforces. See `_HARD_DROP_EXTS` for the decision record.
+    scripts and wasm) or a confident static base path (`is_static_base_path`:
+    `/static/`, `/assets/`, `/_next/static/`, a verified CDN tree, or a
+    template/theme/skin image). Matching is case-insensitive. Image/media under
+    `/uploads/` or an unknown base path stays (recall bias).
 
     Only Endpoints are judged: a Parameter or Header discovered ON a script is a real
     finding and stays in the stream."""
@@ -188,14 +198,9 @@ def is_noise_endpoint(asset: AssetDelta) -> bool:
     if not isinstance(path, str):
         return False
     bare = path.split("?", 1)[0].split("#", 1)[0].lower()
-    segments = [seg for seg in bare.split("/") if seg]
     if _endpoint_extension(bare) in _HARD_DROP_EXTS:
         return True
-    # Every other extension - the recall-biased image/media families included - drops
-    # only under a whole `assets`/`static` segment, so `/uploads/x.png` stays (the
-    # `_RECALL_BIASED_EXTS` families share this condition by design; see the decision
-    # record above).
-    return bool(_NOISE_SEGMENTS.intersection(segments))
+    return is_static_stream_path(bare, extension=_endpoint_extension(bare))
 
 
 def is_connectivity_asset(asset: AssetDelta) -> bool:

@@ -18,6 +18,7 @@ from polymerhus.recon.crawl.steel.live import (
     LiveRunContext,
     LiveRunResult,
     crawl_session_probe,
+    crawl_session_probe_with_source,
     crawl_session_root,
     run_live_crawl,
 )
@@ -60,6 +61,43 @@ def test_the_loaded_session_supplies_the_root_and_the_probe():
     assert crawl_session_probe(context, loaded) == (
         "https://app.test/loaded-probe"
     )
+
+
+def test_the_probe_source_names_the_actual_source():
+    context = LiveRunContext(
+        project_id="proj-1",
+        run_id="run-1",
+        session_name="steel-proj-1",
+        target_url="https://app.test/",
+        scope=["app.test"],
+        data_root="/tmp",
+        root_url="https://app.test/declared",
+        auth_probe="https://app.test/declared-probe",
+    )
+    loaded = SimpleNamespace(
+        root_url="https://app.test/loaded",
+        auth_probe="https://app.test/loaded-probe",
+    )
+    assert crawl_session_probe_with_source(context, loaded) == (
+        "https://app.test/loaded-probe",
+        "session.auth_probe",
+    )
+    loaded_no_probe = SimpleNamespace(root_url="https://app.test/loaded")
+    assert crawl_session_probe_with_source(context, loaded_no_probe) == (
+        "https://app.test/declared-probe",
+        "account.auth_probe",
+    )
+    assert crawl_session_probe_with_source(
+        LiveRunContext(
+            project_id="proj-1",
+            run_id="run-1",
+            session_name="steel-proj-1",
+            target_url="https://app.test/",
+            scope=["app.test"],
+            data_root="/tmp",
+            root_url="https://app.test/member",
+        )
+    ) == ("https://app.test/member", "session.root_url")
 
 
 def test_the_session_probe_falls_back_to_the_root_and_anonymous_has_none():

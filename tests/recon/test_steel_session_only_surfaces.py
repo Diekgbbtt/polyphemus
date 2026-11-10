@@ -30,7 +30,8 @@ def test_gateway_prompt_teaches_mounted_sessions_and_no_profile() -> None:
     assert "fingerprint replay" not in lower
     assert "web browser" in lower
     assert "browser(command" in text
-    assert "browser_context" in lower
+    assert "accounts.<account>.snapshot" in text
+    assert "accounts.<account>.tokens" in text
 
 
 def test_gateway_branch_manner_teaches_mounted_sessions_and_no_profile() -> None:
@@ -45,7 +46,8 @@ def test_gateway_branch_manner_teaches_mounted_sessions_and_no_profile() -> None
         assert "--update-profile" not in manner, directive
         assert "fingerprint replay" not in lower, directive
     assert "web browser" in _BRANCH_MANNER["browser_only"].lower()
-    assert "browser_context" in _BRANCH_MANNER["browser_only"].lower()
+    assert "auth_store" in _BRANCH_MANNER["browser_only"].lower()
+    assert "snapshot" in _BRANCH_MANNER["browser_only"].lower()
 
 
 def test_gateway_prompt_names_the_oracle_and_fails_closed() -> None:
@@ -187,7 +189,10 @@ def test_authn_meta_skill_sizes_the_session_and_handles_typed_loss() -> None:
     )
     for name, text in (("SKILL.md", skill), ("bootstrap-workflow.md", prompt)):
         assert 'browser(command="start", account=<account>)' in text, name
-        assert 'browser(command="end", persist_context=true)' in text, name
+        assert 'browser(command="end")' in text, name
+        assert "persist_context=true" not in text, name
+        assert "accounts.<account>.snapshot" in text, name
+        assert "accounts.<account>.tokens" in text, name
         assert "session_in_use" in text, name
         assert "no_session" in text, name
         assert "--inactivity-timeout" not in text, name
@@ -211,7 +216,7 @@ def test_authn_loop_hints_teach_live_sessions_and_no_profile() -> None:
         assert "fingerprint replay" not in lower
     assert "mounted session" in authn_loop.RETRIEVED_HINT.lower()
     assert "browser(command" in authn_loop.GENERATION_SIGNIN_HINT.lower()
-    assert "browser_context.ref" in authn_loop.GENERATION_SIGNIN_HINT.lower()
+    assert "accounts.<account>.snapshot" in authn_loop.GENERATION_SIGNIN_HINT.lower()
 
 
 def test_auth_store_contract_has_no_profile_vocabulary() -> None:
@@ -237,9 +242,11 @@ def test_authn_meta_skill_and_bootstrap_prompt_have_no_profile_vocabulary() -> N
     assert 'browser(command="start", account=<account>)' in prompt
 
 
-def test_external_bootstrapper_prompt_uses_a_state_reference() -> None:
+def test_external_bootstrapper_prompt_uses_a_session_persistence_reference() -> None:
     text = _read("tools", "bootstrap", "prompts", "data-dep-authn.md")
     assert "{profile}" not in text
-    assert "browser_context? ({ref})" in text
+    assert "accounts.<account>.snapshot" in text
+    assert "accounts.<account>.tokens" in text
+    assert "browser_context.ref` is preflight-minted" in text
     assert "steel? ({state})" not in text
     assert "profile" not in text.lower()

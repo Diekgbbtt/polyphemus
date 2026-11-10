@@ -256,11 +256,13 @@ class AuthOracle:
         fetch_fn: FetchFn,
         page_url: str,
         probe_url: str | None = None,
+        probe_source: str = PROBE_SOURCE,
         login_url: str | None = None,
     ) -> None:
         self._fetch_fn = fetch_fn
         self._page_url = page_url
         self._probe_url = probe_url
+        self._probe_source = probe_source
         self._login_url = login_url
         self._verdict: AuthVerdict | None = None
         self._fetch_count = 0
@@ -289,7 +291,7 @@ class AuthOracle:
         return AuthVerdict(
             classification=classify_probe(status, redirected),
             probe_url=probe_url,
-            probe_source=PROBE_SOURCE,
+            probe_source=self._probe_source,
             status=status,
             redirected=redirected,
             final_url=str(payload.get("url") or probe_url),

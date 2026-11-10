@@ -429,3 +429,23 @@ Both genuinely reach this Endpoint; emit both rather than choosing.
 - `AGGREGATES` remains the only cross-layer edge carrying a graded judgment.
 - The `service_slug` must name a live Service; unknown owners become backlog descriptions, not edges.
 - `AnalysisTurn` stays the single LLM-facing envelope; `claims` are dropped by `to_delta_batch` before the sole-writer.
+
+## 8. Model-facing contract (2026-11-10)
+
+The assigner no longer emits the shared `L1DeltaBatch` union.
+It emits `AssignerDelta`:
+
+```text
+AssignerDelta { aggregations: [Aggregation { service, endpoints: [EndpointRef], evidence }] }
+```
+
+`service` is the exact `business_function_slug`.
+`endpoints` lists the L0 endpoints the Service owns, each `{method, path, baseurl}`.
+`evidence` is one short sentence naming the matched path segment or parameter.
+The writer expands each group to one `AGGREGATES` edge per endpoint.
+The internal curator still consumes `L1DeltaBatch`; the mapping is `assigner_delta_to_batch`.
+
+A structured turn that returns no parseable call gets ONE repair re-ask that names the `AssignerDelta` tool.
+A second failure is a named `assigner:generation_failed` entry on the pass census, never a silent empty batch.
+The chunk is still consumed exactly once; the named failure is the escalation signal, not a requeue.
+

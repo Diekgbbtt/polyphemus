@@ -260,6 +260,12 @@ class SpecWrite(BaseModel):
         description="Optional: the technical assumptions the pod may falsify.")
     rationale: str = Field(
         default="", description="Optional: the vulnerability-level rationale.")
+    baseline_ref: str = Field(
+        default="",
+        description="Optional: the recorded-baseline artifact id to replay.")
+    playbook: str = Field(
+        default="",
+        description="Optional: the short procedure the pod should follow.")
     parent_spec_ref: str | None = Field(
         default=None,
         description="Optional: the parent spec id when this entry is a "
@@ -275,9 +281,9 @@ class SpecWrite(BaseModel):
                     "against it.")
     provenance: SpecProvenance = Field(
         default_factory=SpecProvenance,
-        description="Optional: the typed dispatch provenance (threat_id, unit_id, "
-                    "the two classes, baseline_ref, source_recon_refs, "
-                    "assumption_ref, playbook).")
+        description="Optional: the SYMBOLIC dispatch provenance (threat_id, "
+                    "unit_id, the two classes). The recorded baseline and the "
+                    "playbook are top-level fields.")
     merged_from: list[str] = Field(
         default_factory=list,
         description="Optional: the derived identities this survivor absorbed in "
@@ -1054,7 +1060,7 @@ class ExecTool(BaseTool):
         "contradicts a load-bearing assumption (technique feasibility, chained "
         "preliminary-vulnerability feasibility, technology-configuration "
         "evidence); it never probes a payload vector and never manufactures a "
-        "symptom. With `provenance.baseline_ref`, use the pod replay; a "
+        "symptom. With `baseline_ref`, use the pod replay; a "
         "hand-written curl loses lineage.\n"
         "The target front 5xx rule in your role prompt binds every call."
     )

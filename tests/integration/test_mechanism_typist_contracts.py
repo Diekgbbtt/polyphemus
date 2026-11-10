@@ -10,11 +10,22 @@ recomputed the way the code computes them. Verifier-gated; not selected by the t
 """
 import inspect
 
+import pytest
+from pydantic import ValidationError
+
 from polymerhus.analysis.analyser_types import (
+    BaseURLWitness,
+    EndpointWitness,
     L1DeltaBatch,
     ServiceProposal,
+    SystemAttributes,
+    SystemDefinition,
     SystemEdgeProposal,
+    SystemExtraction,
+    SystemLink,
+    SystemLinking,
     SystemProposal,
+    TypistDelta,
 )
 from polymerhus.analysis.chunking import Chunk
 from polymerhus.analysis.mechanism_typist import (
@@ -121,7 +132,7 @@ def test_N2_three_call_sequence_reflection_then_extract_then_link():
     inv = ScriptedInvoke(systems=L1DeltaBatch(systems=[_sys("WAF")]),
                          linking=L1DeltaBatch(system_edges=[_edge("checkout", "WAF", "FRONTED_BY")]))
     type_mechanisms(_service_chunk(), invoke_fn=inv)
-    assert inv.schemas == [None, L1DeltaBatch, L1DeltaBatch]      # reflect -> extract -> link
+    assert inv.schemas == [None, TypistDelta, TypistDelta]  # reflect -> extract -> link
     assert _SYSTEMS_MARKER in inv.calls[1][1]
     assert _LINKING_MARKER in inv.calls[2][1]
 
@@ -356,3 +367,142 @@ def test_N12_reemitted_system_props_reach_the_curator_cypher():
     assert "SET n += $props" in cypher                       # replaces props on every write
     assert params["props"]["description"].startswith("rewritten full text")
     assert params["props"]["pages"] == ["/items"]
+
+
+def test_N13_typist_uses_component_schemas():
+    inv = ScriptedInvoke(
+        systems=SystemExtraction(systems=[
+            SystemDefinition(
+                kind="ReverseProxy",
+                discriminator="__singleton__",
+                attributes=SystemAttributes(description="nginx fronts the origin."),
+                evidence=[EndpointWitness(method="GET", path="/", baseurl="https://a")],
+            )
+        ]),
+        linking=SystemLinking(links=[
+            SystemLink(
+                service="checkout",
+                kind="ReverseProxy",
+                discriminator="__singleton__",
+                relation="FRONTED_BY",
+            )
+        ]),
+    )
+    out = type_mechanisms(
+        _service_chunk(), invoke_fn=inv, inventory={"services": ["checkout"]}
+    )
+    assert inv.schemas == [None, TypistDelta, TypistDelta]
+    assert [s.kind for s in out.systems] == ["ReverseProxy"]
+    assert out.systems[0].props["description"] == "nginx fronts the origin."
+    assert out.systems[0].evidence[0].label == "Endpoint"
+    assert out.systems[0].evidence[0].identity == {
+        "path": "/", "method": "GET", "baseurl": "https://a"
+    }
+    assert [(e.service_slug, e.rel) for e in out.system_edges] == [
+        ("checkout", "FRONTED_BY")
+    ]
+
+
+def test_N14_typist_repair_reasks_each_structured_call_once():
+    calls = []
+    kinds = []
+
+    def invoke(messages, *, schema=None, system_prompt=None):
+        calls.append(schema)
+        if schema is None:
+            return "reflected"
+        prompt = messages[-1].content
+        if _SYSTEMS_MARKER in prompt or "SystemExtraction" in prompt:
+            kinds.append("systems")
+            if kinds.count("systems") == 1:
+                return None
+            return SystemExtraction(systems=[])
+        kinds.append("linking")
+        return SystemLinking(links=[])
+
+    type_mechanisms(_service_chunk(), invoke_fn=invoke, inventory={"services": []})
+    assert kinds.count("systems") == 2
+    assert kinds.count("linking") == 1
+
+
+def test_N15_typist_repair_exhaustion_is_a_named_failure():
+    calls = []
+    kinds = []
+    failures = []
+
+    def invoke(messages, *, schema=None, system_prompt=None):
+        calls.append(schema)
+        if schema is None:
+            return "reflected"
+        if (_SYSTEMS_MARKER in messages[-1].content
+                or "SystemExtraction" in messages[-1].content):
+            kinds.append("systems")
+            return None
+        kinds.append("linking")
+        return SystemLinking(links=[])
+
+    out = type_mechanisms(
+        _service_chunk(),
+        invoke_fn=invoke,
+        inventory={"services": []},
+        failure_fn=lambda role, chunk_id, admitted: failures.append(
+            (role, chunk_id, admitted)
+        ),
+    )
+    assert out.systems == []
+    assert kinds.count("systems") == 2
+    assert failures == [("mechanism_typist.extraction", "katana:service:0", 0)]
+
+
+def test_N16_a_partial_witness_is_rejected_not_silently_retyped():
+    with pytest.raises(ValidationError):
+        SystemExtraction.model_validate({
+            "systems": [{
+                "kind": "IdentificationSystem",
+                "attributes": {"description": "cookie session"},
+                "evidence": [{"name": "Set-Cookie", "endpoint": "/a"}],
+            }]
+        })
+
+
+def test_N18_a_wrong_variant_is_a_miss_not_a_silent_drop():
+    calls = []
+
+    def invoke(messages, *, schema=None, system_prompt=None):
+        calls.append(schema)
+        if schema is None:
+            return "reflected"
+        prompt = messages[-1].content
+        if _SYSTEMS_MARKER in prompt or "SystemExtraction" in prompt:
+            if len(calls) == 2:  # the first extraction answer is the wrong variant
+                return SystemLinking(links=[])
+            return SystemExtraction(systems=[])
+        if len(calls) == 4:  # the first linking answer is the wrong variant
+            return SystemExtraction(systems=[])
+        return SystemLinking(links=[
+            SystemLink(service="checkout", kind="WAF", relation="FRONTED_BY")
+        ])
+
+    out = type_mechanisms(_service_chunk(), invoke_fn=invoke, inventory={"services": []})
+    assert out.systems == []
+    assert [(e.service_slug, e.rel) for e in out.system_edges] == [
+        ("checkout", "FRONTED_BY")
+    ]
+
+
+def test_N17_a_base_url_witness_maps_to_the_writer_label():
+    from polymerhus.analysis.analyser_types import (
+        SystemDefinition,
+        SystemExtraction,
+        system_extraction_to_batch,
+    )
+
+    batch = system_extraction_to_batch(SystemExtraction(systems=[
+        SystemDefinition(
+            kind="ReverseProxy",
+            attributes=SystemAttributes(description="nginx"),
+            evidence=[BaseURLWitness(url="https://a")],
+        )
+    ]))
+    assert batch.systems[0].evidence[0].label == "BaseURL"
+    assert batch.systems[0].evidence[0].identity == {"url": "https://a"}

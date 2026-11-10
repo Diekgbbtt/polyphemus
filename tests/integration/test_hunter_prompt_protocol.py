@@ -55,12 +55,13 @@ def _spec(status, fault, strategy, *, symptom, assumption, rationale):
         "verification_symptoms": [symptom],
         "assumptions": [assumption],
         "rationale": rationale,
+        "baseline_ref": "http_01J0000000000000000000000A",
+        "playbook": "replay the recorded baseline, then swap the id",
         "provenance": {
             "threat_id": "threat-1",
             "unit_id": UNIT_ID,
             "canonical_class": "IDOR",
             "web_vulnerability_class": "idor",
-            "baseline_ref": "http_01J0000000000000000000000A",
         },
         "skill_concretised_procedure": {
             field: f"the class skill's {field} excerpt"

@@ -2,10 +2,10 @@
 
 The typed `SkillConcretisedProcedure` has ONE home
 (`attack/hunting/spec_contract.py`); the pod reads it from the top-level
-`skill_concretised_procedure` and reads the optional recorded baseline from
-`spec["provenance"]["baseline_ref"]`. A missing or malformed object is a
-recorded gap (None), never a raise: no variant basis is derivable
-basis (S5 8.6).
+`skill_concretised_procedure` and reads the optional recorded baseline from the
+top-level `spec["baseline_ref"]` (with a legacy provenance fallback). A missing
+or malformed object is a recorded gap (None), never a raise: no variant basis
+is derivable (S5 8.6).
 """
 from polymerhus.attack.hunting.pod.context import ExperimentLog
 from polymerhus.attack.hunting.pod.types import (
@@ -42,12 +42,23 @@ SPEC = {
     "assumptions": ["the session cookie is the only auth factor"],
     "rationale": "IDOR over the order endpoint",
     "skill_concretised_procedure": PROCEDURE,
+    "baseline_ref": "http_01J0000000000000000000000A",
+    "playbook": "replay the recorded order request with the swapped id",
     "provenance": {
         "threat_id": "threat-1",
         "unit_id": "service:web:soupmarket",
         "canonical_class": "IDOR",
         "web_vulnerability_class": "idor",
-        "baseline_ref": "http_01J0000000000000000000000A",
+    },
+}
+
+
+LEGACY_SPEC = {
+    **SPEC,
+    "baseline_ref": "",
+    "provenance": {
+        **SPEC["provenance"],
+        "baseline_ref": "http_LEGACY",
     },
 }
 
@@ -82,17 +93,37 @@ def test_a_malformed_procedure_is_a_recorded_gap_not_a_raise():
         {**SPEC, "skill_concretised_procedure": "not a mapping"}) is None
 
 
-def test_the_baseline_ref_is_the_provenance_pointer():
+def test_the_baseline_ref_is_a_top_level_pointer():
     assert baseline_ref_from_spec(SPEC) == "http_01J0000000000000000000000A"
     assert baseline_ref_from_spec(D4Spec.model_validate(SPEC)) == \
         "http_01J0000000000000000000000A"
 
 
+def test_a_legacy_provenance_baseline_still_reads():
+    assert baseline_ref_from_spec(LEGACY_SPEC) == "http_LEGACY"
+    assert baseline_ref_from_spec(D4Spec.model_validate(LEGACY_SPEC)) == "http_LEGACY"
+
+
 def test_an_absent_or_blank_baseline_is_empty():
-    assert baseline_ref_from_spec({**SPEC, "provenance": {}}) == ""
+    assert baseline_ref_from_spec({**SPEC, "provenance": {}, "baseline_ref": ""}) == ""
     assert baseline_ref_from_spec(
-        {**SPEC, "provenance": {"baseline_ref": "  "}}) == ""
+        {**SPEC, "provenance": {"baseline_ref": "  "}, "baseline_ref": ""}) == ""
     assert baseline_ref_from_spec(None) == ""
+
+
+def test_the_provenance_rejects_the_retired_grounding_fields():
+    import pytest
+
+    from polymerhus.attack.hunting.spec_contract import SpecProvenance
+
+    for field, value in (
+        ("source_recon_refs", ["x"]),
+        ("assumption_ref", "A-1"),
+        ("baseline_ref", "http_1"),
+        ("playbook", "do the thing"),
+    ):
+        with pytest.raises(ValueError):
+            SpecProvenance(**{field: value})
 
 
 def test_spec_provenance_is_empty_for_a_malformed_value():

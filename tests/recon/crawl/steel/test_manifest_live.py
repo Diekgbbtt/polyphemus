@@ -284,3 +284,42 @@ def test_a_flow_only_run_is_a_valid_non_empty_manifest():
     assert manifest.endpoints[0].path == "/"
     assert manifest.stats.flows == 1
     assert manifest.stats.endpoints == 1
+
+
+def test_data_uri_flows_never_become_endpoints():
+    page = _page()
+    flow = _flow("r1", "data:image/png;base64,iVBORw0KGgo=")
+    output = RunOutput(
+        frontier=FrontierResult(
+            stop_reason="frontier_empty", page_visits=(PageVisit(page=page),)
+        ),
+        flows=(flow,),
+        artifacts=((_artifact("http_1"), {}),),
+        flow_artifacts={"r1": "http_1"},
+    )
+
+    manifest = build_manifest_from_output(output, run=_run(), flows=output.flows)
+
+    assert manifest.endpoints == []
+    assert manifest.parameters == []
+    assert manifest.stats.flows == 1
+    assert manifest.stats.endpoints == 0
+
+
+def test_http_media_flows_still_become_endpoints():
+    page = _page()
+    flow = _flow("r1", "http://t.example/uploads/20181224/abc.jpg")
+    output = RunOutput(
+        frontier=FrontierResult(
+            stop_reason="frontier_empty", page_visits=(PageVisit(page=page),)
+        ),
+        flows=(flow,),
+        artifacts=((_artifact("http_1"), {}),),
+        flow_artifacts={"r1": "http_1"},
+    )
+
+    manifest = build_manifest_from_output(output, run=_run(), flows=output.flows)
+
+    assert [endpoint.path for endpoint in manifest.endpoints] == [
+        "/uploads/20181224/abc.jpg"
+    ]

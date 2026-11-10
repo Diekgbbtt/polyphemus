@@ -181,10 +181,14 @@ def test_the_systems_prompt_teaches_the_witness_emission():
         return L1DeltaBatch()
     type_mechanisms(_service_chunk(), invoke_fn=invoke, inventory={"services": []})
     p = captured["systems"]
-    for label in ("Header", "Technology", "Certificate", "Endpoint", "BaseURL"):
-        assert label in p, f"the witness label {label} is not taught"
-    assert "name/endpoint/baseurl" in p     # Header identity, as the writer MATCHes it
-    assert "subject_cn" in p                # Certificate identity
+    for shape in (
+        "{method, path, baseurl}",
+        "{name, endpoint, baseurl}",
+        "{name, version}",
+        "{subject_cn}",
+        "{url}",
+    ):
+        assert shape in p, f"the witness shape {shape} is not taught"
     assert "EVIDENCED_BY" in p              # the edge the witnesses become
     assert "never invent a node" in p       # a non-graph witness is never fabricated
     assert "empty `evidence` list" in p     # an ungrounded claim is still emitted

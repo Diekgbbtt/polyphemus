@@ -339,6 +339,7 @@ def test_auth_criterion_rewards_one_session_per_role_high_privilege_first(
             "root_url": "/admin",
             "auth_probe": "/admin",
             "browser_context": {"ref": "steel-auth-p1-admin"},
+            "snapshot": {"cookies": [{"name": "sid", "value": "s"}]},
             "credentials": {
                 "username": "admin",
                 "password": "pw",
@@ -350,6 +351,7 @@ def test_auth_criterion_rewards_one_session_per_role_high_privilege_first(
             "root_url": "/member",
             "auth_probe": "/member",
             "browser_context": {"ref": "steel-auth-p1-member"},
+            "snapshot": {"cookies": [{"name": "sid", "value": "s"}]},
             "credentials": {
                 "username": "member",
                 "password": "pw",
@@ -374,6 +376,7 @@ def test_auth_criterion_rewards_one_session_per_role_high_privilege_first(
     assert criterion["metrics"]["n_sessions"] == 2
     assert criterion["metrics"]["n_account_probes"] == 2
     assert criterion["metrics"]["n_contexts"] == 2
+    assert criterion["metrics"]["n_persisted_sessions"] == 2
     assert criterion["metrics"]["high_privilege_session"] is True
 
 

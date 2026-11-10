@@ -25,7 +25,7 @@ pod's runner turn.
 This module is pure text plus constants - it imports nothing and performs no
 I/O (CODING_STANDARD section 6).
 
-The baseline pointer is `provenance.baseline_ref` on the reduced D4 (T8, S5
+The baseline pointer is `baseline_ref` on the reduced D4 (T8, S5
 8.5): the hunter names the recorded artifact in the spec provenance and the pod
 replays it. The retired `payload_vector_space.request_ref` is gone from every
 description, so a model can never re-learn the stale field.
@@ -79,7 +79,7 @@ SEARCH_HTTP_HISTORY_DESCRIPTION: str = (
     "x-frame-options, www-authenticate, server, x-powered-by, "
     "x-cache{,-lookup}; content-type is on both. A misspelled op/side/namespace "
     "or a bad core key is `invalid_filter`, not an empty result. Inspect with "
-    "`get_http_artifact`; cite its id in `provenance.baseline_ref`.\n"
+    "`get_http_artifact`; cite its id in `baseline_ref`.\n"
     "Failures are in-band: `invalid_filter`, `not_found`, `corrupt_artifact`, "
     "`unavailable` or `http_history_failed` (missing evidence, never proof of "
     "an empty surface). Rows are candidate summaries: `artifact_id`, `method`, "
@@ -90,7 +90,7 @@ SEARCH_HTTP_HISTORY_DESCRIPTION: str = (
 
 GET_HTTP_ARTIFACT_DESCRIPTION: str = (
     "Fetch ONE recorded transaction by `artifact_id`. Use it before naming a "
-    "candidate as `provenance.baseline_ref`. The record carries a bounded, "
+    "candidate as `baseline_ref`. The record carries a bounded, "
     "redacted `body.text` for captured textual bodies (HTML, JSON, XML, form, "
     "JavaScript); `body.truncated` marks the 16 KiB cap, and a binary or "
     "uncaptured body returns `body.text: null` with `capture_state` and "
@@ -107,7 +107,7 @@ GET_HTTP_ARTIFACT_DESCRIPTION: str = (
 REPLAY_HTTP_REQUEST_DESCRIPTION: str = (
     "Replay a recorded request by `artifact_id`, applying the declared "
     "deterministic overrides, and return the status observed for it. Use this "
-    "when the spec's `provenance.baseline_ref` names a recorded baseline "
+    "when the spec's `baseline_ref` names a recorded baseline "
     "instead of authoring a curl by hand: a hand-written curl carries no "
     "lineage (its "
     "`derived_from`/`replay_kind` stay null and the exchange looks like original "

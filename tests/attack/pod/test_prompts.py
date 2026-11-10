@@ -113,7 +113,7 @@ def test_runner_prompt_keeps_the_p0_falsification_semantics():
 # --- T8: the reduced spec and the baseline (S5 8.4/8.5) ----------------------
 
 def test_runner_prompt_names_the_baseline_not_the_retired_vector():
-    assert "provenance.baseline_ref" in POD_RUNNER_SYSTEM
+    assert "baseline_ref" in POD_RUNNER_SYSTEM
     assert "payload_vector_space" not in POD_RUNNER_SYSTEM
     assert "replay" in POD_RUNNER_SYSTEM.lower()      # the replay tool instruction
 

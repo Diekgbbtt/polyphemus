@@ -989,9 +989,10 @@ def _record_durable_pod_export(*, pod_export_store, project_id, run_id, hunt_key
     (`hunt_key`, S3 8.9) - independent of any live parent session, crash-safe,
     never lost to a live-mailbox-only path.
 
-    The record lives in the pod-export store (`hunting/pod-export/notes.yaml`),
-    NOT in the hunter's episodic notes file. The two files have separate
-    writers and separate bounds. The pod-export key is
+    The record lives in the pod module's notes file
+    (`hunting/test-executor-pod/notes.yaml`), NOT in the hunter's episodic
+    notes file. It shares that file with the pod's own `freeform`/`kb_insight`
+    records under the one project lock. The pod-export key is
     `<hunt_key>:pod-export:<spec_id>` with ONE current record per (hunt, spec):
     a re-export UPDATEs the same key, and the pod session id lives ONLY in
     `provenance["source"]`. Fail-open (O3): a write failure warns - the export

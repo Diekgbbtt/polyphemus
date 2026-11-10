@@ -145,9 +145,11 @@ GENERATION_SIGNIN_HINT = (
     "credentials and status valid, then re-run the oracle. If the skill has "
     "no mint path, stop with the terminal failed verdict (missing bootstrap "
     "data dependency); do not fail open and do not mint an unauthenticated "
-    "browser session. Call `browser(command=\"end\", persist_context=true)` "
-    "after the flow and record the context reference as the account's "
-    "`browser_context.ref`."
+    "browser session. After the flow, persist the authenticated session "
+    "through `auth_store`: write `accounts.<account>.snapshot` "
+    "(cookies/headers/params/captured_at) and/or "
+    "`accounts.<account>.tokens` (value/location/target/expiry). "
+    "Do not call `browser(command=\"end\", persist_context=true)`."
 )
 """Injected when the accounts read holds no usable account: mint one."""
 

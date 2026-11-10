@@ -388,6 +388,8 @@ class PassCensus(BaseModel):
     dispatches_entered: int = 0
     aggregates_written: int = 0
     systems_written: int = 0
+    generation_failures: int = 0
+    generation_failure_details: tuple[str, ...] = ()
     terminal: bool = False
     error: str | None = None
 
@@ -596,7 +598,18 @@ async def analyse_chunked(
     typist_invoke_fn = typist_invoke_fn or typist_stateful_invoke_fn(
         run_id, session_cp, project_id, auth_store=auth_store)
 
-    assigner_inner = make_assigner_body(invoke_fn=invoke_fn, inventory_fn=inventory_fn)
+    generation_failures: list[str] = []
+
+    def _record_failure(role: str, chunk_id: str, admitted: int) -> None:
+        detail = f"{role}:generation_failed chunk={chunk_id} admitted={admitted}"
+        generation_failures.append(detail)
+        logger.warning("analysis: %s", detail)
+
+    assigner_inner = make_assigner_body(
+        invoke_fn=invoke_fn,
+        inventory_fn=inventory_fn,
+        failure_fn=_record_failure,
+    )
 
     def _counted(inner):
         # Counted HERE rather than from the schedule: a dispatch that was scheduled
@@ -614,7 +627,11 @@ async def analyse_chunked(
     # share one injected callable; `typist_invoke_fn` is its own seam, defaulting
     # (None) to the role's live `_default_invoke_fn`. Every read inside a body is
     # guarded, so it is fail-open regardless.
-    typist_inner = partial(mechanism_typist_body, invoke_fn=typist_invoke_fn)
+    typist_inner = partial(
+        mechanism_typist_body,
+        invoke_fn=typist_invoke_fn,
+        failure_fn=_record_failure,
+    )
     proposer_bodies = {
         "assigner": _counted(assigner_inner),
         "mechanism_typist": _counted(typist_inner),
@@ -651,14 +668,17 @@ async def analyse_chunked(
         chunks_built=len(chunks),
         dispatches_scheduled=len(schedule), dispatches_entered=entered["n"],
         aggregates_written=totals["aggregates"], systems_written=totals["systems"],
+        generation_failures=len(generation_failures),
+        generation_failure_details=tuple(generation_failures),
         terminal=terminal, **_window(_t0, _started_at),
     )
     logger.info(
         "analyser chunked run=%s terminal=%s chunks=%d scheduled=%d entered=%d "
-        "l0_assets=%d aggregates_written=%d systems_written=%d duration_s=%.1f",
+        "l0_assets=%d aggregates_written=%d systems_written=%d "
+        "generation_failures=%d duration_s=%.1f",
         run_id, terminal, census.chunks_built, census.dispatches_scheduled,
         census.dispatches_entered, census.l0_assets_read, census.aggregates_written,
-        census.systems_written, census.duration_s,
+        census.systems_written, census.generation_failures, census.duration_s,
     )
     return PassResult(
         export=AnalyserExport(aggregates_written=totals["aggregates"],

@@ -9,9 +9,8 @@ the layout is defined once and no module scaffolds its own directories:
     ├── analysis/               # the analysis episodic memory (T3)
     ├── hunting/
     │   ├── hunter/             # HunterMemoryStore
-    │   ├── pod-export/         # PodExportStore (the durable Q16 exports)
     │   ├── threat_modeller/    # ThreatModelStore (produced|consumed|abandoned)
-    │   └── test-executor-pod/  # PodMemoryStore
+    │   └── test-executor-pod/  # PodMemoryStore + PodExportStore (the durable Q16 exports)
     └── ...                     # later module dirs, same one-dir-per-module rule
 
 ``ensure_data_root()`` runs at system bootstrap (``app.main`` startup) and
@@ -50,7 +49,6 @@ PROJECT_SCAFFOLD: tuple[str, ...] = (
     "analysis",
     "hunting/hunter",
     "hunting/hunter/test-specs",
-    "hunting/pod-export",
     "hunting/test-executor-pod",
     "hunting/threat_modeller",
     "hunting/threat_modeller/produced",

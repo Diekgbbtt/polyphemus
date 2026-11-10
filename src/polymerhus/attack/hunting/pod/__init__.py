@@ -15,7 +15,7 @@ reads that note through a `stateful_turn` (D84-23). As of T8 (#381) the D4 is
 the reduced surface (target identity, symptoms, assumptions, rationale, lineage,
 provenance): the INIT gate requires only the base URL and a non-blank symptom,
 and the runner authors its probes from the spec and the optional
-`provenance.baseline_ref`. The pod owns a
+`baseline_ref`. The pod owns a
 persistent experiment-memory store (`PodMemoryStore`, D84-20/28) with the
 prompt-memory pattern (D84-27); the harness middleware owns G1/G4/O7 (D84-22)
 and the `tool_exec` graph node is retired from the production lane (D84-29).

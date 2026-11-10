@@ -34,7 +34,11 @@ import os
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from polymerhus.analysis.analyser_types import L1DeltaBatch
+from polymerhus.analysis.analyser_types import (
+    AssignerDelta,
+    L1DeltaBatch,
+    assigner_delta_to_batch,
+)
 from polymerhus.analysis.chunking import Chunk, admit_for_role
 from polymerhus.analysis.l1_types import L0Ref
 from polymerhus.analysis.overview import overview_message
@@ -74,6 +78,7 @@ class AssignmentOutcome(BaseModel):
     batch: L1DeltaBatch = Field(default_factory=L1DeltaBatch)
     backlog: tuple[str, ...] = ()
     stats: AssignmentStats = Field(default_factory=AssignmentStats)
+    generation_failed: bool = False
 
 
 def narrow_to_assignment(batch: L1DeltaBatch) -> L1DeltaBatch:
@@ -284,7 +289,7 @@ def _system_prompt(mode: str = "create") -> str:
 _ROLE_VERBATIM = (
     "You are the cross-layer Assigner in an attack-surface analyser.\n"
     "ROLE - SURFACE ASSIGNMENT. You judge ONE thing: which EXISTING Service owns each "
-    "Endpoint you are shown. You propose `aggregates` and nothing else.\n"
+    "Endpoint you are shown. You propose `aggregations` and nothing else.\n"
     # The contract is the PRIMARY routing evidence (#29). Before it existed the
     # inventory offered only slugs, so matching fell back to guessing what an opaque
     # slug (`byoc`, `agent-tool`) might mean - the assignment noise the withholding
@@ -294,9 +299,9 @@ _ROLE_VERBATIM = (
     "actions in the Endpoint itself: the path segments, the parameter names, the "
     "method. A path noun that names something a contract says the Service owns is "
     "strong evidence; a merely plausible topical association is not. Cite the specific "
-    "path or parameter you matched in `evidence_refs`.\n"
+    "path or parameter you matched in `evidence`.\n"
     "SHARED OWNERSHIP IS REAL: more than one Service may genuinely own the same "
-    "Endpoint. When two contracts both fit, emit an aggregate for EACH, every one "
+    "Endpoint. When two contracts both fit, emit an aggregation for EACH, every one "
     "carrying its own grounding evidence. Do not pick a winner and do not discard a "
     "genuine owner merely because ownership is shared.\n"
     "USE ONLY THE SLUGS LISTED IN THE INVENTORY. You cannot create a Service: a slug "
@@ -308,14 +313,19 @@ _ROLE_VERBATIM = (
     # net, it is tokens spent naming the elephant. What survives is the IDENTITY
     # shape, which is still load-bearing - it is what makes the repair's happy path
     # fire, because `_candidate_path` reads `identity["path"]` first.
-    "REFERENCING AN ENDPOINT: put the endpoint in `l0.identity` as "
-    "`{\"path\": \"/api/Users\", \"method\": \"GET\", "
-    "\"baseurl\": \"<the baseurl shown>\"}`, with `l0.label` set to `Endpoint`. "
+    "REFERENCING AN ENDPOINT: each `endpoints` entry is "
+    "`{\"method\": \"GET\", \"path\": \"/api/Users\", "
+    "\"baseurl\": \"<the baseurl shown>\"}`. "
     "Only reference endpoints you have seen - in the slice above or read through "
     "the HTTP-history pair (`search_http_history` / `get_http_artifact`); one "
     "you invent names nothing and is discarded.\n"
-    "Emit `aggregates` only. Leave services, systems, system_edges and every "
-    "data-modelling list EMPTY - other proposers own those."
+    "OUTPUT - call the `AssignerDelta` tool. Emit ONE `aggregations` entry per "
+    "owning Service. Each entry is `{service, endpoints, evidence}`: `service` "
+    "is the exact inventory slug, `endpoints` is the list of L0 endpoints that "
+    "Service owns, and `evidence` is ONE short sentence naming the path segment "
+    "or parameter you matched. Do not emit `services`, `systems`, "
+    "`system_edges`, or any data-modelling list. Never write a placeholder "
+    "object, a null endpoint, or an evidence list - `evidence` is a string."
 )
 
 # Three worked examples (#34), rewritten scoreless when the confidence score was
@@ -332,17 +342,17 @@ _FEW_SHOTS = (
     "inventory; use them for the SHAPE of the judgment, never as an answer.\n"
     "1. CLEAR ASSIGNMENT. Inventory has `invoice-settlement - Takes a draft invoice to "
     "a settled payment; owns invoices and payment intents.` Endpoint "
-    "`POST /invoices/42/settle`. -> one aggregate, service_slug `invoice-settlement`, "
-    "evidence_refs [\"path segment /invoices\", \"path segment /settle\"]. The path "
-    "nouns name records the contract says the Service owns.\n"
+    "`POST /invoices/42/settle`. -> one aggregation: service `invoice-settlement`, "
+    "endpoints [`POST /invoices/42/settle`], evidence \"path segment /invoices and "
+    "/settle\". The path nouns name records the contract says the Service owns.\n"
     "2. NO OWNER. Inventory has `invoice-settlement` and "
     "`brochure-pages - Presents marketing pages and categories.` Endpoint "
-    "`GET /internal/health`. -> no aggregate. Nothing in either contract mentions "
+    "`GET /internal/health`. -> no aggregation. Nothing in either contract mentions "
     "health or internal probes; topical proximity to a web app is not evidence, and "
     "the element correctly ends up with no owner.\n"
     "3. SHARED OWNERSHIP. Inventory has `invoice-settlement - owns invoices` and "
     "`parcel-dispatch - owns shipments and dispatch of settled invoices.` Endpoint "
-    "`GET /invoices/42/shipment`. -> TWO aggregates: `invoice-settlement` (evidence "
+    "`GET /invoices/42/shipment`. -> TWO aggregations: `invoice-settlement` (evidence "
     "\"path segment /invoices\") and `parcel-dispatch` (evidence "
     "\"path segment /shipment\"). Both contracts genuinely reach this Endpoint; emit "
     "both rather than choosing."
@@ -460,7 +470,7 @@ def _user_prompt(l0_slice: dict, inventory: dict | None, *, chained: bool = Fals
         "these listed identities - a judgment that cannot cite the surface "
         "against a listed Service is left unplaced; the endpoint stays in the "
         "stale pool. Assign each Endpoint to the Service(s) that own it, each "
-        "aggregate carrying its `evidence_refs`."
+        "aggregation carrying its `evidence`."
     )
 
 
@@ -479,10 +489,11 @@ def assign(
     out-of-scope references, and return the narrowed batch plus its backlog. ADMIT-ALL:
     every structurally-valid aggregate is kept.
 
-    `invoke_fn(messages) -> L1DeltaBatch | None` is injected (unit-testable, no live
-    LLM). Fail-open: a `None`/raising `invoke_fn` (or a chunk with no Endpoint in it)
-    degrades to an empty outcome. Pure given its inputs (a replayed chunk yields the
-    same outcome)."""
+    `invoke_fn(messages) -> AssignerDelta | L1DeltaBatch | None` is injected
+    (unit-testable, no live LLM). Fail-open: a raising `invoke_fn` (or a chunk
+    with no Endpoint in it) degrades to an empty outcome; a `None` after the one
+    repair is a NAMED generation failure. Pure given its inputs (a replayed
+    chunk yields the same outcome)."""
     from langchain_core.messages import HumanMessage
 
     admitted = admit_for_role(chunk, ROLE)
@@ -499,24 +510,34 @@ def assign(
     # session (the supervisor dispatches one chunk at a time); the seam resets
     # the session at each new chunk, so the next chunk starts fresh.
     # The scope is inert for the one-shot legacy seam.
-    from polymerhus.analysis.proposer_turn import proposer_batch
+    from polymerhus.analysis.proposer_turn import proposer_batch, structured_turn
 
     try:
         overview = overview_message((inventory or {}).get("application_overview"))
         with proposer_batch(chunk.chunk_id):
-            raw = invoke_fn(
+            raw, generation_failed = structured_turn(
+                invoke_fn,
                 ([HumanMessage(content=overview)] if overview else [])
                 + [HumanMessage(content=_user_prompt(
                     l0_slice, inventory, chained=bool(overview)))],
-                schema=L1DeltaBatch, system_prompt=system_prompt,
+                schema=AssignerDelta,
+                system_prompt=system_prompt,
+                tool_name="AssignerDelta",
+                role=ROLE,
+                chunk_id=chunk.chunk_id,
+                expected=(AssignerDelta, L1DeltaBatch),
             )
     except Exception:  # LLM error -> fail-open to no assignment, never crash
         logger.warning("assigner: invoke failed; degrading to empty outcome", exc_info=True)
         return AssignmentOutcome()
-    if raw is None:  # no parseable tool call after retries -> empty outcome
-        return AssignmentOutcome()
+    if generation_failed:
+        return AssignmentOutcome(
+            generation_failed=True,
+            stats=AssignmentStats(admitted=len(admitted)),
+        )
+    batch = raw if isinstance(raw, L1DeltaBatch) else assigner_delta_to_batch(raw)
     outcome = shape_proposal(
-        raw, existing_slugs=existing_slugs, endpoints=admitted,
+        batch, existing_slugs=existing_slugs, endpoints=admitted,
     )
     st = outcome.stats
     # #18/observability: persist the RAW proposals to Langfuse so a structurally-dropped
@@ -527,7 +548,7 @@ def assign(
                      run_id=run_id, tags=tags,
                      output={"proposed": [{"service_slug": getattr(a, "service_slug", None),
                                            "evidence_refs": list(getattr(a, "evidence_refs", []) or [])}
-                                          for a in (raw.aggregates or [])],
+                                          for a in (batch.aggregates or [])],
                              "stats": st.model_dump()})
     # ONE structured line per chunk. A zero-kept step now names its cause instead of
     # looking identical to a model that found nothing.
@@ -542,14 +563,15 @@ def assign(
 
 def default_invoke_fn():
     """The legacy stateless call, retained for callers/tests that want the one-shot
-    seam: the `analyser` role bound to `L1DeltaBatch` via function-calling through the
+    seam: the `analyser` role bound to `AssignerDelta` via function-calling through the
     #73 escalating retry (`invoke_role`); `None` = no parseable tool call, which
-    `assign` treats as a valid empty outcome. The role prompt is prepended into the
+    `assign` treats as a named generation failure after the one repair. The role
+    prompt is prepended into the
     message list here, exactly where the stateful seam's `system_prompt=` binding puts
     it. Production now uses `stateful_invoke_fn` (below)."""
     from polymerhus.analysis.proposer_turn import prepend_prompt, _served_prompt
 
-    def invoke(messages, *, schema=L1DeltaBatch, system_prompt=None):
+    def invoke(messages, *, schema=AssignerDelta, system_prompt=None):
         from polymerhus.app.llm.roles import invoke_role
 
         return invoke_role(
@@ -566,7 +588,7 @@ def stateful_invoke_fn(run_id: str, checkpointer, project_id: str | None = None,
     """The STATEFUL Assigner call (#94): the `assigner` role runs as a session on its
     own per-run thread (`AnalysisSession(run_id, "assigner")`, distinct from every
     other agent's thread), reset at each chunk boundary. Structured output is
-    `L1DeltaBatch` (#44-safe). Same `(messages)` shape as
+    `AssignerDelta` (#44-safe). Same `(messages)` shape as
     the legacy seam, so `make_assigner_body` is unchanged.
 
     `auth_store` is the injectable auth-store handle (#364): the read-only
@@ -592,7 +614,7 @@ def stateful_invoke_fn(run_id: str, checkpointer, project_id: str | None = None,
     return session_invoke_fn("assigner", run_id, checkpointer, project_id, auth_store)
 
 
-def make_assigner_body(*, invoke_fn, inventory_fn):
+def make_assigner_body(*, invoke_fn, inventory_fn, failure_fn=None):
     """Adapt `assign` to the supervisor's `ProposerBody` signature
     (`(dispatch, state) -> L1DeltaBatch | None`).
 
@@ -604,6 +626,10 @@ def make_assigner_body(*, invoke_fn, inventory_fn):
     References resolve against the chunk's admitted slice ONLY (the
     out-of-scope filter): no settled-surface reader is threaded, because no
     out-of-chunk discovery seam remains to feed it.
+
+    `failure_fn(role, chunk_id, admitted)` records a NAMED generation failure on
+    the pass census. A repaired-then-exhausted structured turn is never mistaken
+    for a valid "nothing to judge" outcome.
 
     The backlog is dropped here rather than transported (#34 D6): the envelope has no
     field to carry it yet."""
@@ -625,6 +651,8 @@ def make_assigner_body(*, invoke_fn, inventory_fn):
             run_id=run_id or None,
             tags=["analysis", getattr(dispatch, "role", "assigner")],
         )
+        if outcome.generation_failed and failure_fn is not None:
+            failure_fn("assigner", dispatch.chunk.chunk_id, outcome.stats.admitted)
         if outcome.backlog:
             logger.info("assigner: %d backlog description(s) not transported (D6)", len(outcome.backlog))
         return outcome.batch

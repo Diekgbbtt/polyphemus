@@ -11,6 +11,7 @@ import yaml
 
 from polymerhus.attack.hunting import pod_export_memory
 from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
+from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore
 from polymerhus.attack.hunting.pod_export_memory import PodExportStore
 
 PROJECT = "proj-1"
@@ -19,7 +20,9 @@ SPEC = "spec__x"
 
 
 def _export_file(tmp_path):
-    return tmp_path / PROJECT / "hunting" / "pod-export" / "notes.yaml"
+    return (
+        tmp_path / PROJECT / "hunting" / "test-executor-pod" / "notes.yaml"
+    )
 
 
 def _write(store: PodExportStore, *, spec: str = SPEC, verdict: str = "successful",
@@ -34,14 +37,16 @@ def _write(store: PodExportStore, *, spec: str = SPEC, verdict: str = "successfu
     )
 
 
-def test_pod_export_store_writes_its_own_module_file(tmp_path):
-    """The durable export lands under `hunting/pod-export/`, never in the
-    hunter's `hunting/hunter/notes.yaml`."""
+def test_pod_export_store_writes_the_pod_module_notes_file(tmp_path):
+    """The durable export lands under `hunting/test-executor-pod/`, the pod
+    module's own bucket, never in the hunter's notes file and never in a
+    sibling `pod-export/` bucket."""
     store = PodExportStore(tmp_path)
     key = _write(store)
 
     assert key == f"{HUNT}:pod-export:{SPEC}"
     assert _export_file(tmp_path).exists()
+    assert not (tmp_path / PROJECT / "hunting" / "pod-export" / "notes.yaml").exists()
     assert not (tmp_path / PROJECT / "hunting" / "hunter" / "notes.yaml").exists()
 
     records = yaml.safe_load(_export_file(tmp_path).read_text(encoding="utf-8"))
@@ -105,3 +110,60 @@ def test_pod_export_store_is_bounded(tmp_path, monkeypatch):
     records = store.read_exports(PROJECT)
     assert records[0]["note_name"] == "pod-export:spec__3"
     assert len(records) < 4
+
+
+def test_pod_export_store_reads_the_legacy_export_bucket(tmp_path):
+    legacy = tmp_path / PROJECT / "hunting" / "pod-export" / "notes.yaml"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(
+        yaml.safe_dump([{
+            "key": f"{HUNT}:pod-export:{SPEC}",
+            "hunt_key": HUNT,
+            "note_name": f"pod-export:{SPEC}",
+            "kind": "freeform",
+            "body": "{}",
+        }]),
+        encoding="utf-8",
+    )
+    store = PodExportStore(tmp_path)
+
+    assert [record["key"] for record in store.read_exports(PROJECT)] == [
+        f"{HUNT}:pod-export:{SPEC}"
+    ]
+
+
+def test_pod_export_and_pod_notes_share_one_file(tmp_path):
+    store = PodExportStore(tmp_path)
+    _write(store)
+    memory = PodMemoryStore(
+        root_dir=tmp_path / PROJECT / "hunting" / "test-executor-pod"
+    )
+    memory.append(
+        SPEC, order=0, note_name="freeform", kind="freeform", body="x"
+    )
+
+    records = yaml.safe_load(_export_file(tmp_path).read_text(encoding="utf-8"))
+    keys = {record["key"] for record in records}
+    assert f"{HUNT}:pod-export:{SPEC}" in keys
+    assert f"{SPEC}:0:freeform" in keys
+
+
+def test_legacy_exports_survive_the_first_new_export(tmp_path):
+    legacy = tmp_path / PROJECT / "hunting" / "pod-export" / "notes.yaml"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(
+        yaml.safe_dump([{
+            "key": f"{HUNT}:pod-export:legacy",
+            "hunt_key": HUNT,
+            "note_name": "pod-export:legacy",
+            "kind": "freeform",
+            "body": "{}",
+        }]),
+        encoding="utf-8",
+    )
+    store = PodExportStore(tmp_path)
+    _write(store, spec="new")
+
+    keys = {record["key"] for record in store.read_exports(PROJECT)}
+    assert f"{HUNT}:pod-export:legacy" in keys
+    assert f"{HUNT}:pod-export:new" in keys

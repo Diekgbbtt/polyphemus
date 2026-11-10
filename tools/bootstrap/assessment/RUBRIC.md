@@ -99,8 +99,8 @@ Metrics: `kb_services_missing_in_surface`, `auth_edge_coverage`, `extra_surface_
 `auth/overview.yaml`, `auth/credentials.yaml`, and `skills/authn/SKILL.md`.
 One account is one session.
 An authenticated target needs one verified session per role, highest privilege first, each with its own `root_url` and `auth_probe` (the root URL is the fallback oracle; the overview `auth_probe` is legacy-only).
-Anchors: 4 = no validator errors, >= 2 sessions and >= 2 distinct roles including a high-privilege role, the skill present, and a `browser_context.ref` on every session; 3 = no errors, >= 1 session with a `browser_context.ref`, and the skill present; 2 = no errors, zero accounts (a valid unauthenticated target); 1 = validator errors or a session with no load reference; 0 = nothing.
-Metrics: `validator_errors`, `n_accounts`, `n_sessions`, `n_roles`, `n_account_probes`, `n_roots`, `n_contexts`, `high_privilege_session`, `skill_present`, `auth_probe_present`, `overview_probe_present`, `overview_present`.
+Anchors: 4 = no validator errors, >= 2 sessions and >= 2 distinct roles including a high-privilege role, the skill present, and a persisted session (`snapshot` cookies or `tokens`) on every session; 3 = no errors, >= 1 session with a persisted session, and the skill present; 2 = no errors, zero accounts (a valid unauthenticated target); 1 = validator errors or a session with no persisted session fact; 0 = nothing.
+Metrics: `validator_errors`, `n_accounts`, `n_sessions`, `n_roles`, `n_account_probes`, `n_roots`, `n_contexts`, `n_persisted_sessions`, `high_privilege_session`, `skill_present`, `auth_probe_present`, `overview_probe_present`, `overview_present`.
 
 ### Family E - research artifacts and integrity
 

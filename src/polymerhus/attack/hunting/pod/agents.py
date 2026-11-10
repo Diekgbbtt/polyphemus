@@ -146,7 +146,7 @@ TriagerFn = Callable[[dict, RawObservation, list, object], dict]
 
 def symbolic_runner_step_fn(spec: dict, messages: list, tool_calls: int) -> RunnerStep:
     """The LLM-free runner: on the first turn of a stretch it AUTHORS one probe
-    from the reduced spec (S5 8.5) - a replay of `provenance.baseline_ref` when
+    from the reduced spec (S5 8.5) - a replay of `baseline_ref` when
     the hunter named one, otherwise a GET of `target_identity.url` - then
     concludes and hands the observation to the critic. A spec with neither is
     the real "no probe derivable" outcome. Drives the LLM-free CONTRACT TIER

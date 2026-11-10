@@ -14,7 +14,7 @@ here from the LLM's `evidence_refs` plus system provenance.
 """
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from polymerhus.analysis.l1_types import (
     L1_SINGLETON,
@@ -68,6 +68,52 @@ class AggregatesProposal(BaseModel):
     evidence_refs: list[str] = Field(default_factory=list)
 
 
+# --- the assigner's model-facing component contract ---------------------------
+#
+# The assigner used to emit the shared `L1DeltaBatch` union. That union exposes
+# four writable lists and the prompt tells each role to fill a different subset,
+# so the model saw a contract larger than its job. Iteration E turned that gap
+# into a malformed tool call that LiteLLM could not parse, and the whole chunk's
+# judgments vanished. The component schema below states exactly one primitive:
+# a Service owning a group of Endpoints. The internal curator still consumes
+# `L1DeltaBatch`; `assigner_delta_to_batch` expands the groups at the seam.
+
+
+class EndpointRef(BaseModel):
+    """The L0 Endpoint identity an aggregation names."""
+
+    method: str = Field(description="HTTP method, for example GET or POST.")
+    path: str = Field(description="L0 path, for example /admin/index/index.")
+    baseurl: str = Field(description="L0 base URL, for example http://target.")
+
+
+class Aggregation(BaseModel):
+    """One Service's ownership of a group of Endpoints."""
+
+    service: str = Field(
+        description="The exact business_function_slug of the Service that owns "
+                    "these endpoints. Copy a slug from the inventory."
+    )
+    endpoints: list[EndpointRef] = Field(
+        description="The L0 endpoints this Service aggregates."
+    )
+    evidence: str = Field(
+        default="",
+        description="One short sentence naming the path segment or parameter "
+                    "that supports the ownership. Omit the aggregation when you "
+                    "cannot cite evidence. Never write a placeholder object."
+    )
+
+
+class AssignerDelta(BaseModel):
+    """The assigner's complete answer: one group per owning Service."""
+
+    aggregations: list[Aggregation] = Field(
+        description="One group per Service. The writer expands each group to one "
+                    "AGGREGATES edge per endpoint."
+    )
+
+
 # --- FR-ENRICH LLM-facing proposals (no provenance; system-stamped at curate) --
 
 class SystemEdgeProposal(BaseModel):
@@ -93,6 +139,139 @@ class L1DeltaBatch(BaseModel):
     systems: list[SystemProposal] = Field(default_factory=list)
     aggregates: list[AggregatesProposal] = Field(default_factory=list)
     system_edges: list[SystemEdgeProposal] = Field(default_factory=list)
+
+
+# --- the mechanism typist's model-facing component contracts -----------------
+#
+# The typist used to emit the same shared `L1DeltaBatch` union as the assigner.
+# Its two structured turns each own one primitive: the extraction turn owns
+# Systems and their witnesses; the linking turn owns the typed Service->System
+# links. The component schemas state exactly that, and the prompts no longer
+# tell the model to leave fields empty. The internal curator still consumes
+# `L1DeltaBatch`; the mappings below build it at the seam.
+
+
+class EndpointWitness(BaseModel):
+    """An L0 Endpoint that witnesses a System."""
+
+    method: str = Field(description="HTTP method.")
+    path: str = Field(description="L0 path.")
+    baseurl: str = Field(description="L0 base URL.")
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class HeaderWitness(BaseModel):
+    """An L0 Header that witnesses a System."""
+
+    name: str = Field(description="Header name.")
+    endpoint: str = Field(description="The endpoint path the header was seen on.")
+    baseurl: str = Field(description="L0 base URL.")
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class TechnologyWitness(BaseModel):
+    """An L0 Technology that witnesses a System."""
+
+    name: str = Field(description="Technology name.")
+    version: str = Field(default="", description="Observed version, or empty.")
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class CertificateWitness(BaseModel):
+    """An L0 Certificate that witnesses a System."""
+
+    subject_cn: str = Field(description="Certificate subject common name.")
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class BaseURLWitness(BaseModel):
+    """An L0 BaseURL that witnesses a System."""
+
+    url: str = Field(description="L0 base URL.")
+
+    model_config = ConfigDict(extra="forbid")
+
+
+Witness = (
+    EndpointWitness
+    | HeaderWitness
+    | TechnologyWitness
+    | CertificateWitness
+    | BaseURLWitness
+)
+
+
+class SystemAttributes(BaseModel):
+    """The typed attributes a System carries."""
+
+    description: str = Field(
+        description="One or two sentences naming the mechanism and its "
+                    "adversarial edge. This is the attribute the next batch reads."
+    )
+    pages: list[str] = Field(
+        default_factory=list,
+        description="For a WebPresentation, the member text/html page paths.",
+    )
+    rendering_model: str = Field(
+        default="", description="The observed rendering model, when one applies."
+    )
+
+
+class SystemDefinition(BaseModel):
+    """One System the typist judges to exist, with its witnesses."""
+
+    kind: str = Field(description="A known System kind, for example ReverseProxy.")
+    discriminator: str = Field(
+        default="__singleton__",
+        description="The System discriminator. Use __singleton__ when the kind "
+                    "has one instance.",
+    )
+    attributes: SystemAttributes
+    evidence: list[Witness] = Field(
+        default_factory=list,
+        description="The L0 nodes that witness the mechanism.",
+    )
+
+
+class SystemExtraction(BaseModel):
+    """The extraction turn's complete answer."""
+
+    systems: list[SystemDefinition] = Field(
+        description="One entry per mechanism the reflection identified."
+    )
+
+
+class SystemLink(BaseModel):
+    """One typed Service-to-System link."""
+
+    service: str = Field(description="The exact business_function_slug.")
+    kind: str = Field(description="The System kind.")
+    discriminator: str = Field(default="__singleton__")
+    relation: str = Field(
+        description="One of EXPOSED_VIA, FRONTED_BY, PROTECTED_BY, ROUTED_BY, "
+                    "IDENTIFIED_BY, AUTHENTICATED_BY, AUTHORIZED_BY, SHAPES_DATA_OF."
+    )
+    role: str | None = None
+    realm: str | None = None
+    order: int | None = None
+
+
+class SystemLinking(BaseModel):
+    """The linking turn's complete answer."""
+
+    links: list[SystemLink] = Field(
+        description="One typed Service-to-System link per evidenced pair."
+    )
+
+
+# The typist binds BOTH structured tools on every turn (reflection, extraction,
+# linking), so the request shape never toggles. The prompt says which tool to
+# call; the response format carries both.
+TypistDelta = SystemExtraction | SystemLinking
 
 
 def proposals_to_deltas(
@@ -150,3 +329,96 @@ def enrichment_proposals_to_deltas(batch: L1DeltaBatch, provenance: Provenance) 
             for w in s.evidence
         ],
     }
+
+
+def assigner_delta_to_batch(delta: AssignerDelta) -> L1DeltaBatch:
+    """Expand the assigner's Service groups into the curator's per-endpoint union.
+
+    One group becomes one `AggregatesProposal` per endpoint, carrying the group's
+    evidence. The group-level evidence is the model-facing simplification; the
+    curator's judgment envelope is per aggregate, so the same sentence rides each
+    endpoint the group owns.
+    """
+    aggregates: list[AggregatesProposal] = []
+    for group in delta.aggregations:
+        evidence = [group.evidence.strip()] if group.evidence.strip() else []
+        for endpoint in group.endpoints:
+            aggregates.append(
+                AggregatesProposal(
+                    service_slug=group.service,
+                    l0=L0Ref(
+                        label="Endpoint",
+                        identity={
+                            "path": endpoint.path,
+                            "method": endpoint.method,
+                            "baseurl": endpoint.baseurl,
+                        },
+                    ),
+                    evidence_refs=evidence,
+                )
+            )
+    return L1DeltaBatch(aggregates=aggregates)
+
+
+def witness_to_l0_ref(witness) -> L0Ref:
+    """Map one typed witness to the writer's L0 reference shape."""
+    if isinstance(witness, EndpointWitness):
+        return L0Ref(label="Endpoint", identity={
+            "path": witness.path,
+            "method": witness.method,
+            "baseurl": witness.baseurl,
+        })
+    if isinstance(witness, HeaderWitness):
+        return L0Ref(label="Header", identity={
+            "name": witness.name,
+            "endpoint": witness.endpoint,
+            "baseurl": witness.baseurl,
+        })
+    if isinstance(witness, TechnologyWitness):
+        return L0Ref(label="Technology", identity={
+            "name": witness.name,
+            "version": witness.version,
+        })
+    if isinstance(witness, BaseURLWitness):
+        return L0Ref(label="BaseURL", identity={"url": witness.url})
+    return L0Ref(label="Certificate", identity={"subject_cn": witness.subject_cn})
+
+
+def system_extraction_to_batch(extraction: SystemExtraction) -> L1DeltaBatch:
+    """Map the extraction turn's typed Systems to the curator's union."""
+    systems: list[SystemProposal] = []
+    for definition in extraction.systems:
+        props = {"description": definition.attributes.description}
+        if definition.attributes.pages:
+            props["pages"] = list(definition.attributes.pages)
+        if definition.attributes.rendering_model:
+            props["rendering_model"] = definition.attributes.rendering_model
+        systems.append(
+            SystemProposal(
+                kind=definition.kind,
+                discriminator=definition.discriminator,
+                props=props,
+                evidence=[
+                    witness_to_l0_ref(witness) for witness in definition.evidence
+                ],
+            )
+        )
+    return L1DeltaBatch(systems=systems)
+
+
+def system_linking_to_batch(linking: SystemLinking) -> L1DeltaBatch:
+    """Map the linking turn's typed links to the curator's union."""
+    return L1DeltaBatch(
+        system_edges=[
+            SystemEdgeProposal(
+                service_slug=link.service,
+                kind=link.kind,
+                discriminator=link.discriminator,
+                rel=link.relation,
+                role=link.role,
+                realm=link.realm,
+                order=link.order,
+            )
+            for link in linking.links
+        ]
+    )

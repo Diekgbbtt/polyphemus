@@ -163,9 +163,11 @@ _BRANCH_MANNER = {
         "(`account.auth_probe`, else `account.root_url`) using "
         "`browser(command=\"exec\", input=\"eval ...\")`: 2xx passes; 401, "
         "403, or any 3xx fails; anything else is indeterminate and stops the "
-        "run. Call `browser(command=\"end\", persist_context=true)` when the "
-        "authenticated state should be saved, then write "
-        "`accounts.<account>.browser_context.ref = <context-ref>`. Then "
+        "run. Call `browser(command=\"end\")` when the browser is no longer "
+        "needed, then persist the authenticated session through `auth_store`: "
+        "write `accounts.<account>.snapshot` (cookies/headers/params/"
+        "captured_at) and/or `accounts.<account>.tokens` (value/location/"
+        "target/expiry). Then "
         "validate the request material with the recorded HTTP history replay "
         "(`search_http_history`, then `replay_http_request`); the in-process "
         "auth-store view is redacted, so never read or paste token values. "
@@ -184,10 +186,10 @@ _BRANCH_MANNER = {
         "2xx passes, 401, 403, or 3xx fails. On a failure, sign in or mint a "
         "new account through the authn skill's sign-up procedure with "
         "synthetic identity data in the same browser, then prove the oracle "
-        "again. Call `browser(command=\"end\", persist_context=true)` on "
-        "every successful path; it captures, saves, stops, and releases. "
-        "Write `accounts.<account>.browser_context.ref = <context-ref>` after "
-        "a successful end. A failed or indeterminate oracle stops the run. "
+        "again. Call `browser(command=\"end\")` on every successful path; it "
+        "stops and releases. Persist the authenticated session through "
+        "`auth_store` writes at `accounts.<account>.snapshot` and/or "
+        "`accounts.<account>.tokens`. A failed or indeterminate oracle stops the run. "
         "Never use request tools. Request phases will be pruned; only the "
         "Steel crawl runs."),
     "request_browser_first": (
@@ -198,8 +200,9 @@ _BRANCH_MANNER = {
         "values. On a failed oracle, sign in or mint a new account through "
         "the authn skill's sign-up procedure with synthetic identity data, "
         "then prove the oracle again. Call "
-        "`browser(command=\"end\", persist_context=true)` and write "
-        "`accounts.<account>.browser_context.ref = <context-ref>`. Then "
+        "`browser(command=\"end\")` and persist the authenticated session "
+        "through `auth_store` writes at `accounts.<account>.snapshot` and/or "
+        "`accounts.<account>.tokens`. Then "
         "release request collection."),
     "resolve_in_loop": (
         "Replayability UNKNOWN. Resolve it with the recorded HTTP history "
@@ -209,8 +212,9 @@ _BRANCH_MANNER = {
         "result; record the fact as unresolved and loud. The oracle still "
         "decides whether the session is authenticated. Mount the web browser "
         "with `browser(command=\"start\", account=<account>)` for the oracle, "
-        "call `browser(command=\"end\", persist_context=true)`, and write "
-        "`accounts.<account>.browser_context.ref = <context-ref>`. An "
+        "call `browser(command=\"end\")`, and persist the authenticated "
+        "session through `auth_store` writes at "
+        "`accounts.<account>.snapshot` and/or `accounts.<account>.tokens`. An "
         "unresolved request fact never forces a fail-open. Persist any "
         "resolved fact to the overview with an auth_store write (your write "
         "merges; the operator stamp stays), and record it in the rationale "
@@ -225,14 +229,7 @@ def _gateway_human(*, project_id: str, directive: str, candidate: str | None) ->
     reads, which is what the loop tracker observes."""
     from langchain_core.messages import HumanMessage  # noqa: PLC0415
 
-    from polymerhus.app.llm.browser_tools import (  # noqa: PLC0415
-        browser_context_ref,
-    )
-
     manner = _BRANCH_MANNER.get(directive, _BRANCH_MANNER["request"])
-    context_ref = (
-        browser_context_ref(project_id, candidate) if candidate else None
-    )
     selection = (
         f"Candidate account (most recently updated usable): {candidate}."
         if candidate else
@@ -243,12 +240,9 @@ def _gateway_human(*, project_id: str, directive: str, candidate: str | None) ->
         f"Auth gateway for project {project_id}.\n\n"
         f"Branch directive: {directive}.\n{manner}\n\n"
         f"{selection}\n"
-        f"Browser context reference: `{context_ref or 'derived from the selected account'}`.\n"
         "The browser tool derives the session key; never pass a session name. "
-        "Mount with `browser(command=\"start\", account=<account>)`. If you "
-        "mint a different account, its context reference is "
-        "`steel-auth-<project_slug>-<account_slug>` with the same slug rule "
-        "(lowercase; runs outside [a-z0-9_-] become `-`).\n\n"
+        "Mount with `browser(command=\"start\", account=<account>)`. Use the "
+        "exact account identifier the store read returned; never invent one.\n\n"
         "Ground (overview read + authn skill load), validate with the "
         "authenticated-context oracle before sign-in, sign in or mint on a "
         "failed oracle, assert the outcome in the store, run the outer "

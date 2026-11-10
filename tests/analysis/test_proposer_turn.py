@@ -21,6 +21,8 @@ from langchain_core.messages import (
 )
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from langgraph.checkpoint.memory import InMemorySaver
+
+from polymerhus.analysis.analyser_types import TypistDelta
 from polymerhus.analysis.proposer_turn import (
     prepend_prompt,
     session_invoke_fn,
@@ -200,7 +202,9 @@ def test_the_stateful_leg_carries_no_skill_surface_without_a_project(monkeypatch
 
     tool_names = {getattr(t, "name", "") for t in bound.get("tools") or ()}
     assert "load_skill" not in tool_names, "no skill tool"
-    assert tool_names <= {"L1DeltaBatch"}, "only the role's own structured-output tool"
+    assert tool_names <= {"SystemExtraction", "SystemLinking"}, (
+        "only the role's own structured-output tools"
+    )
     assert "context" not in bound or bound.get("context") is None
     assert "_skill_index" not in {type(m).__name__ for m in bound["middleware"] or ()}
     assert roles == ["mechanism_typist"], "one middleware per turn, for its OWN role"
@@ -242,10 +246,9 @@ def test_the_typist_structured_turn_binds_the_surface_and_exec_tools(monkeypatch
     than path nouns alone."""
     seam = _CapturingSeam()
     _patch_stateful_turn(monkeypatch, seam)
-    from polymerhus.analysis.analyser_types import L1DeltaBatch
 
     session_invoke_fn("mechanism_typist", "runX", object(), project_id="proj-1")(
-        [HumanMessage(content="extraction")], schema=L1DeltaBatch)
+        [HumanMessage(content="extraction")], schema=TypistDelta)
     tool_names = {getattr(t, "name", "") for t in seam.seen[-1].get("tools") or ()}
     assert {"graph_view", "search_http_history", "get_http_artifact", "exec",
             "load_skill", "record_skill_lesson", "auth_store"} <= tool_names
@@ -259,17 +262,16 @@ def test_the_typist_reflection_turn_binds_the_same_surface_tools(monkeypatch):
     the structured turns supply through `response_format`."""
     seam = _CapturingSeam()
     _patch_stateful_turn(monkeypatch, seam)
-    from polymerhus.analysis.analyser_types import L1DeltaBatch
 
     invoke = session_invoke_fn("mechanism_typist", "runX", object(), project_id="proj-1")
     invoke([HumanMessage(content="reflection")], schema=None)
     reflection = {getattr(t, "name", "") for t in seam.seen[-1].get("tools") or ()}
-    invoke([HumanMessage(content="extraction")], schema=L1DeltaBatch)
+    invoke([HumanMessage(content="extraction")], schema=TypistDelta)
     extraction = {getattr(t, "name", "") for t in seam.seen[-1].get("tools") or ()}
 
     surface = {"graph_view", "search_http_history", "get_http_artifact", "exec"}
     assert surface <= reflection
-    assert reflection - {"L1DeltaBatch"} == extraction, "the same surface set on both turn kinds"
+    assert reflection - {"SystemExtraction", "SystemLinking"} == extraction, "the same surface set on both turn kinds"
 
 
 def test_only_the_surface_owners_bind_surface_tools():
@@ -315,10 +317,9 @@ def test_the_typist_turn_degrades_fail_open_when_surface_tools_are_unbuildable(m
         raise RuntimeError("surface tools unbuildable")
 
     monkeypatch.setattr(G, "build_surface_tools", boom)
-    from polymerhus.analysis.analyser_types import L1DeltaBatch
 
     invoke = session_invoke_fn("mechanism_typist", "runX", object(), project_id="proj-1")
-    invoke([HumanMessage(content="extraction")], schema=L1DeltaBatch)  # must not raise
+    invoke([HumanMessage(content="extraction")], schema=TypistDelta)  # must not raise
     tool_names = {getattr(t, "name", "") for t in seam.seen[-1].get("tools") or ()}
     assert not ({"graph_view", "search_http_history", "get_http_artifact", "exec"} & tool_names)
     # The other fail-open direction (#364, review S3): the auth view survives a
@@ -432,18 +433,17 @@ def test_the_auth_view_rides_every_turn_and_never_toggles(monkeypatch, tmp_path)
     provider prefix) never toggles."""
     seam = _CapturingSeam()
     _patch_stateful_turn(monkeypatch, seam)
-    from polymerhus.analysis.analyser_types import L1DeltaBatch
 
     store = _seeded_auth_store(tmp_path)
     invoke = session_invoke_fn("mechanism_typist", "runX", object(),
                                project_id=AUTH_PROJECT, auth_store=store)
     invoke([HumanMessage(content="reflection")], schema=None)
     reflection = {getattr(t, "name", "") for t in seam.seen[-1]["tools"]}
-    invoke([HumanMessage(content="extraction")], schema=L1DeltaBatch)
+    invoke([HumanMessage(content="extraction")], schema=TypistDelta)
     extraction = {getattr(t, "name", "") for t in seam.seen[-1]["tools"]}
 
     assert "auth_store" in reflection
-    assert reflection - {"L1DeltaBatch"} == extraction, \
+    assert reflection - {"SystemExtraction", "SystemLinking"} == extraction, \
         "the same surface set on both turn kinds"
 
 
@@ -476,10 +476,9 @@ def test_the_turn_degrades_fail_open_when_the_auth_seam_cannot_build(monkeypatch
 
     seam = _CapturingSeam()
     _patch_stateful_turn(monkeypatch, seam)
-    from polymerhus.analysis.analyser_types import L1DeltaBatch
 
     invoke = session_invoke_fn("mechanism_typist", "runX", object(), project_id="proj-1")
-    invoke([HumanMessage(content="extraction")], schema=L1DeltaBatch)  # must not raise
+    invoke([HumanMessage(content="extraction")], schema=TypistDelta)  # must not raise
     tool_names = {getattr(t, "name", "") for t in seam.seen[-1]["tools"]}
     assert "auth_store" not in tool_names
     assert "load_skill" not in tool_names
@@ -843,7 +842,7 @@ class _ToolRecordingModel(BaseChatModel):
 
     @staticmethod
     def _tool_call():
-        return {"name": "L1DeltaBatch", "args": {}, "id": "call-1", "type": "tool_call"}
+        return {"name": "SystemExtraction", "args": {"systems": []}, "id": "call-1", "type": "tool_call"}
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
         if self._is_reflection(messages):
@@ -858,7 +857,7 @@ class _ToolRecordingModel(BaseChatModel):
         else:
             yield ChatGenerationChunk(message=AIMessageChunk(
                 content="",
-                tool_call_chunks=[{"name": "L1DeltaBatch", "args": "{}",
+                tool_call_chunks=[{"name": "SystemExtraction", "args": '{"systems": []}',
                                    "id": "call-1", "index": 0,
                                    "type": "tool_call_chunk"}],
             ))
@@ -896,7 +895,7 @@ def test_a_roles_tool_set_is_constant_across_reflection_and_extraction(monkeypat
     toggles. The prose turn still returns prose."""
     from langchain_core.utils.function_calling import convert_to_openai_tool
 
-    from polymerhus.analysis.analyser_types import L1DeltaBatch
+    from polymerhus.analysis.analyser_types import TypistDelta
     from polymerhus.analysis.proposer_turn import proposer_batch, session_invoke_fn
 
     _force_voluntary_rung(monkeypatch)
@@ -909,7 +908,7 @@ def test_a_roles_tool_set_is_constant_across_reflection_and_extraction(monkeypat
     invoke = session_invoke_fn("mechanism_typist", "runshape", InMemorySaver())
     with proposer_batch("c1"):
         prose = invoke([HumanMessage(content="reflection")], schema=None)
-        invoke([HumanMessage(content="extraction")], schema=L1DeltaBatch)
+        invoke([HumanMessage(content="extraction")], schema=TypistDelta)
 
     assert prose == "prose answer", "the prose turn still returns prose"
     assert len(model._bound) == 2, "one bind per turn"
@@ -929,18 +928,19 @@ def test_the_reflection_turn_tool_message_names_the_gate_and_stops_retries(monke
 
     _force_voluntary_rung(monkeypatch)
     tools = _prose_tools("mechanism_typist", tools_bound=True)
-    assert len(tools) == 1
-    message = tools[0].func()
-    assert "Reflection turn" in message
-    assert "Do not call this tool again" in message
-    assert "Finish the reflection with prose" in message
+    assert len(tools) == 2
+    for tool in tools:
+        message = tool.func()
+        assert "Reflection turn" in message
+        assert "Do not call this tool again" in message
+        assert "Finish the reflection with prose" in message
 
 
 def test_the_constant_shape_covers_the_whole_mechanism_typist_chain(monkeypatch):
     """The same rule over the typist's 3-call chain (P,S,S): all three turns bind
     the same tool set, so the S,S pair keeps caching AND the P->S transition now
     shares the shape too."""
-    from polymerhus.analysis.analyser_types import L1DeltaBatch
+    from polymerhus.analysis.analyser_types import TypistDelta
     from polymerhus.analysis.proposer_turn import proposer_batch, session_invoke_fn
 
     _force_voluntary_rung(monkeypatch)
@@ -953,8 +953,8 @@ def test_the_constant_shape_covers_the_whole_mechanism_typist_chain(monkeypatch)
     invoke = session_invoke_fn("mechanism_typist", "runshape", InMemorySaver())
     with proposer_batch("c1"):
         invoke([HumanMessage(content="reflect")], schema=None)
-        invoke([HumanMessage(content="extract")], schema=L1DeltaBatch)
-        invoke([HumanMessage(content="link")], schema=L1DeltaBatch)
+        invoke([HumanMessage(content="extract")], schema=TypistDelta)
+        invoke([HumanMessage(content="link")], schema=TypistDelta)
 
     tool_sets = [tuple(t.name for t in tools) for tools, _ in model._bound]
     assert tool_sets == [tool_sets[0]] * 3, "the tool set never toggles across the chain"
@@ -969,7 +969,7 @@ def test_the_typist_surface_tools_keep_the_request_shape_byte_identical(monkeypa
     both add the same surface terms."""
     from langchain_core.utils.function_calling import convert_to_openai_tool
 
-    from polymerhus.analysis.analyser_types import L1DeltaBatch
+    from polymerhus.analysis.analyser_types import TypistDelta
     from polymerhus.analysis.proposer_turn import proposer_batch, session_invoke_fn
 
     _force_voluntary_rung(monkeypatch)
@@ -983,12 +983,12 @@ def test_the_typist_surface_tools_keep_the_request_shape_byte_identical(monkeypa
         "mechanism_typist", "runshape", InMemorySaver(), project_id="proj-1")
     with proposer_batch("c1"):
         invoke([HumanMessage(content="reflect")], schema=None)
-        invoke([HumanMessage(content="extract")], schema=L1DeltaBatch)
-        invoke([HumanMessage(content="link")], schema=L1DeltaBatch)
+        invoke([HumanMessage(content="extract")], schema=TypistDelta)
+        invoke([HumanMessage(content="link")], schema=TypistDelta)
 
     assert len(model._bound) == 3
     defs = [[convert_to_openai_tool(t) for t in tools] for tools, _ in model._bound]
     assert defs[0] == defs[1] == defs[2], "byte-identical tool definitions across P,S,S"
     names = {t.name for t in model._bound[0][0]}
     assert {"graph_view", "search_http_history", "get_http_artifact", "exec",
-            "L1DeltaBatch"} <= names
+            "SystemExtraction", "SystemLinking"} <= names
