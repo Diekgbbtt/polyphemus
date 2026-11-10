@@ -176,7 +176,7 @@ parent config was consumed by an earlier run (no live parent in this run). The e
 is never lost to a crash between dispatch and an in-memory inbox consumption.
 
 **The durable-record note key (amended by #199):** the durable pod-export record
-(now in `hunting/pod-export/notes.yaml`, 2026-11-07) is
+(now in the pod module notes file `hunting/test-executor-pod/notes.yaml`, 2026-11-10) is
 keyed `<config_key>:pod-export:<spec_id>` (the parent's canonical `config_key` +
 the `pod-export:` marker + the semantic `<fault>_<strategy>` spec id) with action
 `update` - one current record per (config, spec), since one TestImplementationSpec
