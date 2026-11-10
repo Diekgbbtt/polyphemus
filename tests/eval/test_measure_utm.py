@@ -960,19 +960,13 @@ def test_load_corpus_unit_reads_the_l1_profile_markdown(tmp_path):
     target = tmp_path / "corpus" / "siyucms"
     unit = target / "siyucms-001"
     unit.mkdir(parents=True)
+    fixture = (
+        Path(__file__).resolve().parent
+        / "fixtures"
+        / "siyucms-001-l1-profile.md"
+    )
     (unit / "l1-profile.md").write_text(
-        "# L1 profile - `siyucms-001` (`Weak Credentials`)\n\n"
-        "The target unit is `Service:admin-authentication`.\n\n"
-        "## Render block\n\n"
-        "```\n"
-        "unit kind: Service\n"
-        "spine (present keys): ['api_paradigm', 'business_function']\n"
-        "outgoing edges:\n"
-        "  - DEPENDS_ON: ['AuthenticationMechanism -> kind=AuthenticationMechanism; discriminator=__singleton__']\n"
-        "aggregated endpoints:\n"
-        "  - method=GET; path=/admin/index/index.html; baseurl=http://web:80; service_slug=admin-authentication\n"
-        "```\n",
-        encoding="utf-8",
+        fixture.read_text(encoding="utf-8"), encoding="utf-8"
     )
     spec = measure_utm.load_corpus_unit(target, "siyucms-001")
     assert spec["unit"]["match"]["business_function_slug"] == "admin-authentication"
@@ -982,6 +976,11 @@ def test_load_corpus_unit_reads_the_l1_profile_markdown(tmp_path):
     assert spec["service_to_system_edges"]["required"][0]["target_kind"] == (
         "AuthenticationMechanism"
     )
+    assert len(spec["edges_to_l0"]["endpoints"]) == 3
+
+
+def test_a_profile_without_a_unit_line_is_not_a_present_spec():
+    assert measure_utm.unit_spec_from_profile("# L1 profile\n\nno unit") == {}
 
 
 def test_spec_metrics_counts_all_nine_concretised_procedure_fields():
@@ -1031,6 +1030,15 @@ def test_threat_downstream_matches_the_unit_and_the_threat_id():
     ]
     downstream = measure_utm.threat_downstream(threat, specs)
     assert downstream["spec_count"] == 1
+
+
+def test_a_bare_threat_id_does_not_cross_units():
+    threat = {"threat_id": "threat-1", "unit_id": "Service:a"}
+    specs = [
+        {"threat_id": "threat-1", "unit_id": "Service:a", **_spec("technique")},
+        {"threat_id": "threat-1", "unit_id": "Service:b", **_spec("actor")},
+    ]
+    assert measure_utm.threat_downstream(threat, specs)["spec_count"] == 1
 
 
 def test_a_threat_file_without_a_model_file_still_carries_its_risk(tmp_path):

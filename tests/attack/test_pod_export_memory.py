@@ -146,3 +146,24 @@ def test_pod_export_and_pod_notes_share_one_file(tmp_path):
     keys = {record["key"] for record in records}
     assert f"{HUNT}:pod-export:{SPEC}" in keys
     assert f"{SPEC}:0:freeform" in keys
+
+
+def test_legacy_exports_survive_the_first_new_export(tmp_path):
+    legacy = tmp_path / PROJECT / "hunting" / "pod-export" / "notes.yaml"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(
+        yaml.safe_dump([{
+            "key": f"{HUNT}:pod-export:legacy",
+            "hunt_key": HUNT,
+            "note_name": "pod-export:legacy",
+            "kind": "freeform",
+            "body": "{}",
+        }]),
+        encoding="utf-8",
+    )
+    store = PodExportStore(tmp_path)
+    _write(store, spec="new")
+
+    keys = {record["key"] for record in store.read_exports(PROJECT)}
+    assert f"{HUNT}:pod-export:legacy" in keys
+    assert f"{HUNT}:pod-export:new" in keys

@@ -107,6 +107,12 @@ class PodExportStore(BoundedRecordStore):
                 records,
                 max_records=POD_EXPORT_NOTES_MAX_RECORDS,
                 max_bytes=POD_EXPORT_NOTES_MAX_BYTES,
+                # The file is shared with the pod's own notes. The export write
+                # may trim other EXPORTS under its bound, but it must never evict
+                # the pod's freeform/kb_insight records.
+                protected=lambda record: ":pod-export:" not in str(
+                    record.get("key") or ""
+                ),
             ),
         )
 
@@ -123,8 +129,9 @@ class PodExportStore(BoundedRecordStore):
         """Record one completed pod's export durably.
 
         The same `(hunt_key, spec_id)` key updates its one current record; a
-        new key appends. The whole read-modify-write runs under the project
-        lock, so concurrent writers cannot lost-update the file.
+        new key appends. The whole read-modify-write runs under the lock keyed
+        on the shared notes file, so a concurrent pod note append cannot
+        lost-update the file.
         """
         validate_path_component(project_id, "project_id")
         validate_path_component(hunt_key, "hunt_key")
@@ -143,7 +150,7 @@ class PodExportStore(BoundedRecordStore):
                 "verdict_stub": True,
             },
         }
-        with self._lock_for(project_id):
+        with self._lock_for(str(self._notes_file(project_id))):
             path = self._notes_file(project_id)
             records = self._read_records(path)
             for index, existing in enumerate(records):
@@ -165,8 +172,13 @@ class PodExportStore(BoundedRecordStore):
         existing run keeps its exports.
         """
         records = self._read_records(self._notes_file(project_id))
-        if not records:
-            records = self._read_records(self._legacy_notes_file(project_id))
+        legacy = self._read_records(self._legacy_notes_file(project_id))
+        if legacy:
+            known = {str(record.get("key") or "") for record in records}
+            records = [
+                record for record in legacy
+                if str(record.get("key") or "") not in known
+            ] + records
         if hunt_key is not None:
             records = [
                 record for record in records

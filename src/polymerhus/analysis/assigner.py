@@ -289,7 +289,7 @@ def _system_prompt(mode: str = "create") -> str:
 _ROLE_VERBATIM = (
     "You are the cross-layer Assigner in an attack-surface analyser.\n"
     "ROLE - SURFACE ASSIGNMENT. You judge ONE thing: which EXISTING Service owns each "
-    "Endpoint you are shown. You propose `aggregates` and nothing else.\n"
+    "Endpoint you are shown. You propose `aggregations` and nothing else.\n"
     # The contract is the PRIMARY routing evidence (#29). Before it existed the
     # inventory offered only slugs, so matching fell back to guessing what an opaque
     # slug (`byoc`, `agent-tool`) might mean - the assignment noise the withholding
@@ -534,8 +534,6 @@ def assign(
             generation_failed=True,
             stats=AssignmentStats(admitted=len(admitted)),
         )
-    if raw is None:  # no parseable tool call after retries -> empty outcome
-        return AssignmentOutcome()
     batch = raw if isinstance(raw, L1DeltaBatch) else assigner_delta_to_batch(raw)
     outcome = shape_proposal(
         batch, existing_slugs=existing_slugs, endpoints=admitted,

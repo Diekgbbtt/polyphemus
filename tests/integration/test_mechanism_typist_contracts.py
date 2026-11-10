@@ -10,7 +10,11 @@ recomputed the way the code computes them. Verifier-gated; not selected by the t
 """
 import inspect
 
+import pytest
+from pydantic import ValidationError
+
 from polymerhus.analysis.analyser_types import (
+    BaseURLWitness,
     EndpointWitness,
     L1DeltaBatch,
     ServiceProposal,
@@ -21,6 +25,7 @@ from polymerhus.analysis.analyser_types import (
     SystemLink,
     SystemLinking,
     SystemProposal,
+    TypistDelta,
 )
 from polymerhus.analysis.chunking import Chunk
 from polymerhus.analysis.mechanism_typist import (
@@ -127,7 +132,7 @@ def test_N2_three_call_sequence_reflection_then_extract_then_link():
     inv = ScriptedInvoke(systems=L1DeltaBatch(systems=[_sys("WAF")]),
                          linking=L1DeltaBatch(system_edges=[_edge("checkout", "WAF", "FRONTED_BY")]))
     type_mechanisms(_service_chunk(), invoke_fn=inv)
-    assert inv.schemas == [None, SystemExtraction, SystemLinking]  # reflect -> extract -> link
+    assert inv.schemas == [None, TypistDelta, TypistDelta]  # reflect -> extract -> link
     assert _SYSTEMS_MARKER in inv.calls[1][1]
     assert _LINKING_MARKER in inv.calls[2][1]
 
@@ -386,7 +391,7 @@ def test_N13_typist_uses_component_schemas():
     out = type_mechanisms(
         _service_chunk(), invoke_fn=inv, inventory={"services": ["checkout"]}
     )
-    assert inv.schemas == [None, SystemExtraction, SystemLinking]
+    assert inv.schemas == [None, TypistDelta, TypistDelta]
     assert [s.kind for s in out.systems] == ["ReverseProxy"]
     assert out.systems[0].props["description"] == "nginx fronts the origin."
     assert out.systems[0].evidence[0].label == "Endpoint"
@@ -400,32 +405,40 @@ def test_N13_typist_uses_component_schemas():
 
 def test_N14_typist_repair_reasks_each_structured_call_once():
     calls = []
+    kinds = []
 
     def invoke(messages, *, schema=None, system_prompt=None):
         calls.append(schema)
         if schema is None:
             return "reflected"
-        if schema is SystemExtraction:
-            if calls.count(SystemExtraction) == 1:
+        prompt = messages[-1].content
+        if _SYSTEMS_MARKER in prompt or "SystemExtraction" in prompt:
+            kinds.append("systems")
+            if kinds.count("systems") == 1:
                 return None
             return SystemExtraction(systems=[])
+        kinds.append("linking")
         return SystemLinking(links=[])
 
     type_mechanisms(_service_chunk(), invoke_fn=invoke, inventory={"services": []})
-    assert calls.count(SystemExtraction) == 2
-    assert calls.count(SystemLinking) == 1
+    assert kinds.count("systems") == 2
+    assert kinds.count("linking") == 1
 
 
 def test_N15_typist_repair_exhaustion_is_a_named_failure():
     calls = []
+    kinds = []
     failures = []
 
     def invoke(messages, *, schema=None, system_prompt=None):
         calls.append(schema)
         if schema is None:
             return "reflected"
-        if schema is SystemExtraction:
+        if (_SYSTEMS_MARKER in messages[-1].content
+                or "SystemExtraction" in messages[-1].content):
+            kinds.append("systems")
             return None
+        kinds.append("linking")
         return SystemLinking(links=[])
 
     out = type_mechanisms(
@@ -437,5 +450,34 @@ def test_N15_typist_repair_exhaustion_is_a_named_failure():
         ),
     )
     assert out.systems == []
-    assert calls.count(SystemExtraction) == 2
-    assert failures == [("mechanism_typist", "katana:service:0", 0)]
+    assert kinds.count("systems") == 2
+    assert failures == [("mechanism_typist.extraction", "katana:service:0", 0)]
+
+
+def test_N16_a_partial_witness_is_rejected_not_silently_retyped():
+    with pytest.raises(ValidationError):
+        SystemExtraction.model_validate({
+            "systems": [{
+                "kind": "IdentificationSystem",
+                "attributes": {"description": "cookie session"},
+                "evidence": [{"name": "Set-Cookie", "endpoint": "/a"}],
+            }]
+        })
+
+
+def test_N17_a_base_url_witness_maps_to_the_writer_label():
+    from polymerhus.analysis.analyser_types import (
+        SystemDefinition,
+        SystemExtraction,
+        system_extraction_to_batch,
+    )
+
+    batch = system_extraction_to_batch(SystemExtraction(systems=[
+        SystemDefinition(
+            kind="ReverseProxy",
+            attributes=SystemAttributes(description="nginx"),
+            evidence=[BaseURLWitness(url="https://a")],
+        )
+    ]))
+    assert batch.systems[0].evidence[0].label == "BaseURL"
+    assert batch.systems[0].evidence[0].identity == {"url": "https://a"}

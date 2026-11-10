@@ -152,7 +152,8 @@ The auth verdict's `probe_source` names the source that actually supplied the pr
 - `session.auth_probe` when the loaded session carries its own oracle;
 - `account.auth_probe` when the account's configured probe supplies it;
 - `session.root_url` when the root URL is the fallback;
-- `overview.auth_probe.url` when the legacy overview probe supplies it;
+- `target.root_url` when only the target URL is available;
+- `overview.auth_probe.url` is the one-shot default, used only when no live source supplied a probe;
 - `legacy_surface_gate` when the surface gate is the last resort;
 - `anonymous` for an anonymous session.
 

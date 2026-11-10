@@ -49,6 +49,7 @@ from polymerhus.analysis.analyser_types import (
     L1DeltaBatch,
     SystemExtraction,
     SystemLinking,
+    TypistDelta,
     system_extraction_to_batch,
     system_linking_to_batch,
 )
@@ -436,19 +437,6 @@ def _reflection_prompt(chunk: Chunk, inventory: dict | None, *,
     )
 
 
-def _witness_guide() -> str:
-    """The witness labels a System may be grounded on, each with the identity keys
-    the sole-writer MATCHes it on (#354). Rendered from the writer's
-    `EVIDENCE_L0_LABELS` and the read side's `l0_stream.L0_IDENTITY_KEYS`, so the
-    prompt can never drift from what the writer accepts."""
-    from polymerhus.analysis.l0_stream import L0_IDENTITY_KEYS
-    from polymerhus.analysis.l1_curator import EVIDENCE_L0_LABELS
-
-    return "; ".join(
-        f"{label} ({'/'.join(L0_IDENTITY_KEYS.get(label, ()))})" for label in EVIDENCE_L0_LABELS
-    )
-
-
 def _systems_prompt(inventory: dict | None) -> str:
     from polymerhus.analysis.l1_curator import vocabulary_prompt
 
@@ -480,11 +468,12 @@ def _systems_prompt(inventory: dict | None) -> str:
         # does not hold writes no edge.
         "WITNESS EVERY SYSTEM (`evidence`). Each `systems` entry carries an `evidence` "
         "list naming the L0 node(s) whose observation actually witness that mechanism - "
-        "the header, technology, certificate or endpoint you read it on. Each witness is "
-        "ONE typed object: an endpoint is `{method, path, baseurl}`; a header is "
-        "`{name, endpoint, baseurl}`; a technology is `{name, version}`; a certificate is "
-        "`{subject_cn}`. Give the identity keys the node ACTUALLY carries (omit one you "
-        "cannot read - never send null or blank) and enough of them to name ONE node. Each "
+        "the header, technology, certificate, endpoint or base URL you read it on. Each "
+        "witness is ONE typed object: an endpoint is `{method, path, baseurl}`; a header "
+        "is `{name, endpoint, baseurl}`; a technology is `{name, version}`; a certificate "
+        "is `{subject_cn}`; a base URL is `{url}`. Every key in the chosen shape is "
+        "REQUIRED - never omit one and never send null or blank. If you cannot read a "
+        "required key, choose a different witness or omit that witness. Each "
         "witness becomes one `EVIDENCED_BY` edge from the System to that L0 node; a witness "
         "the graph does not hold writes NO edge, so never invent a node, and NEVER drop a "
         "System for lack of one - a claim with no witness in the slice is still emitted, "
@@ -674,17 +663,17 @@ def type_mechanisms(
         extraction, extraction_failed = structured_turn(
             invoke_fn,
             [HumanMessage(content=_systems_prompt(inventory))],
-            schema=SystemExtraction,
+            schema=TypistDelta,
             system_prompt=None,
             tool_name="SystemExtraction",
             role="mechanism_typist",
             chunk_id=chunk.chunk_id,
         )
         if extraction_failed and failure_fn is not None:
-            failure_fn("mechanism_typist", chunk.chunk_id, 0)
+            failure_fn("mechanism_typist.extraction", chunk.chunk_id, 0)
         if isinstance(extraction, L1DeltaBatch):
             systems_batch = extraction
-        elif extraction is not None:
+        elif isinstance(extraction, SystemExtraction):
             systems_batch = system_extraction_to_batch(extraction)
         else:
             systems_batch = L1DeltaBatch()
@@ -695,17 +684,17 @@ def type_mechanisms(
         linking, linking_failed = structured_turn(
             invoke_fn,
             [HumanMessage(content=_linking_prompt(systems_batch, primary, secondary, owned, inventory))],
-            schema=SystemLinking,
+            schema=TypistDelta,
             system_prompt=None,
             tool_name="SystemLinking",
             role="mechanism_typist",
             chunk_id=chunk.chunk_id,
         )
         if linking_failed and failure_fn is not None:
-            failure_fn("mechanism_typist", chunk.chunk_id, 0)
+            failure_fn("mechanism_typist.linking", chunk.chunk_id, 0)
         if isinstance(linking, L1DeltaBatch):
             link_batch = linking
-        elif linking is not None:
+        elif isinstance(linking, SystemLinking):
             link_batch = system_linking_to_batch(linking)
         else:
             link_batch = L1DeltaBatch()

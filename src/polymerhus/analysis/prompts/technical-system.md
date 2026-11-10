@@ -36,7 +36,7 @@ Every `systems` entry carries an `evidence` list of TYPED L0 witnesses - the hea
 
 - A witness is a NODE, not a sentence, and it is typed by the L0 kind: an endpoint is `{method, path, baseurl}`; a header is `{name, endpoint, baseurl}`; a technology is `{name, version}`; a certificate is `{subject_cn}`. A reference the graph can be MATCHed on, never free text.
 - Name nodes the graph holds. The reference is `MATCH`ed as you write it: a witness that is not in the graph writes **no edge**, and the system is never fabricated to receive one.
-- Give the identity keys the node ACTUALLY carries - omit one you cannot read, never a null or blank - and give enough of them to name ONE node (a Header's `name` alone matches every endpoint's header of that name).
+- Give every key of the chosen typed shape. Every key is REQUIRED: never omit one and never send a null or blank. If you cannot read a required key, choose a different witness or omit that witness.
 - A claim with no witness in the slice is STILL emitted, with an empty `evidence` list: withholding a System you cannot ground is your judgment at hypothesise-time, never a reason to drop it here, and never a reason to invent a node.
 - On EXTEND, name the witness behind the NEW facts you folded in: the edges already in the graph stay (the write never deletes one).
 
@@ -77,7 +77,7 @@ If you still withhold the link, name the exact status code and request shape tha
 
 Technical Systems are ubiquitous across application domains, so these span *asset kinds*, not business domains. Each shows the hypothesise->verify->type shape. Reason from your own slice; never copy kinds or slugs literally.
 
-**Example 1 - a session cookie (define IdentificationSystem).** Asset: a response `Set-Cookie: sid=…; HttpOnly`. Observation insight: "session id in a cookie, no `Secure` flag." Hypothesise: this evidences an identification/session System. Verify: the cookie is the direct witness (not a fingerprint) - confident. Type: new `IdentificationSystem`, description notes "cookie-based session, missing Secure flag → interceptable over cleartext"; link `IDENTIFIED_BY` to the services these responses serve. Carry `evidence` = the response `Header` node the graph holds for that cookie (`{label: Header, identity: {name: <the header's name>, endpoint: <the path it was seen on>, baseurl: <the host>}}`) - the description says what you judged, the evidence says what witnesses it.
+**Example 1 - a session cookie (define IdentificationSystem).** Asset: a response `Set-Cookie: sid=…; HttpOnly`. Observation insight: "session id in a cookie, no `Secure` flag." Hypothesise: this evidences an identification/session System. Verify: the cookie is the direct witness (not a fingerprint) - confident. Type: new `IdentificationSystem`, description notes "cookie-based session, missing Secure flag → interceptable over cleartext"; link `IDENTIFIED_BY` to the services these responses serve. Carry `evidence` = the response `Header` node the graph holds for that cookie (`{name: <the header's name>, endpoint: <the path it was seen on>, baseurl: <the host>}`) - the description says what you judged, the evidence says what witnesses it.
 
 **Example 2 - a login challenge (define AuthenticationMechanism).** Asset: `WWW-Authenticate: Bearer` on a 401. Observation: "token-based auth challenge." Hypothesise: an authentication mechanism System. Verify: the challenge header is specific to auth. Type: new `AuthenticationMechanism`, description "bearer-token auth; token handling is the trust seam"; link `AUTHENTICATED_BY`.
 
@@ -101,7 +101,7 @@ links:
     relation: AUTHORIZED_BY
 ```
 
-`evidence` names the 403 `Endpoint` node - `{label: Endpoint, identity: {method: GET, path: /api/admin/users, baseurl: <the host>}}` - the anonymous `POST /api/register` `Endpoint` - `{label: Endpoint, identity: {method: POST, path: /api/register, baseurl: <the host>}}` - and the shell `Endpoint` when the graph holds it. Do not reverse-engineer the role hierarchy (that is deep profiling, a later phase). Stop at existence + linkage.
+`evidence` names the 403 `Endpoint` node - `{method: GET, path: /api/admin/users, baseurl: <the host>}` - the anonymous `POST /api/register` `Endpoint` - `{method: POST, path: /api/register, baseurl: <the host>}` - and the shell `Endpoint` when the graph holds it. Do not reverse-engineer the role hierarchy (that is deep profiling, a later phase). Stop at existence + linkage.
 
 **Example 7 - mint a System and set its description to a VERBATIM text (imitate this shape).** Asset: `POST /graphql` returning `application/json`, technology "Apollo Server". Observation: "introspection answered on a production host." Hypothesise a `GraphQLApi` System. Verify: the path, the JSON content type and the technology are each specific to a GraphQL surface - confident. Type: new `GraphQLApi`, and set `description` to EXACTLY this kind of text (this length, this adversarial emphasis; never copy its words): `GraphQL API at POST /graphql (Apollo Server). Introspection is answered on a production host, so the full schema - types, fields, mutations - is enumerable unaided; aliasing and batched queries are the next levers to test.` Link `EXPOSED_VIA`.
 

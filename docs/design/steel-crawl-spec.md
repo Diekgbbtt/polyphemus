@@ -290,14 +290,21 @@ It marks the shared player `addressable=false`.
 - The gateway mounts the account's auth context with
   `browser(command="start", account=<account>)`.
   It validates the oracle in that session, signs in or mints on failure, and
-  calls `browser(command="end", persist_context=true)`.
-  A successful end captures and saves the state under the context reference.
-  The gateway then writes
-  `accounts.<account>.browser_context.ref = <context-ref>`.
+  calls `browser(command="end")` without `persist_context`.
+  It then persists the session through `auth_store`:
+  `accounts.<account>.snapshot` and/or `accounts.<account>.tokens`.
+  The account identifier is the full path the read returned; a new account is a
+  create at `accounts.<account>`.
+- The preflight mints the pool context (`browser_context.ref`) for every account
+  the bootstrap produced, and the crawl mounts that reference.
+  The preflight runs after the bootstrap, so a bootstrap-minted account is
+  included.
 - The crawl mounts the same context reference and calls
   `browser(command="end")` in its finalize close.
 - The `start` command restores cookies and localStorage from the pool store;
   all four captured fields are evidence on the end record.
+  The auth-store snapshot/tokens are the request-replayable record for every
+  consumer that does not mount a browser.
 - One MCP session is one lease.
   A mount by the same execution unit answers `session_in_use`.
   A missing lease answers `no_session`, which maps to `SessionMissing`.

@@ -597,6 +597,10 @@ def split_url(url: str) -> tuple[str, str] | None:
     slash, or a differently cased host never mints a second endpoint identity.
     Only an absolute HTTP(S) URL has a graph endpoint: a `data:` URI, a
     `javascript:` URI, or any other scheme returns `None` and never mints one.
+    This deliberately reuses `_urls.base_and_path`'s absolute-URL CONTRACT but
+    not its normaliser: Steel's `state.normalize_url` folds the host casing,
+    default port, duplicate slashes, and trailing slash that the crawl's state
+    keys already use, so both sides of the manifest agree on one endpoint key.
     """
     parts = urlsplit(normalize_url(url))
     if parts.scheme not in {"http", "https"} or not parts.netloc:

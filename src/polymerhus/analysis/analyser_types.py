@@ -14,7 +14,7 @@ here from the LLM's `evidence_refs` plus system provenance.
 """
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from polymerhus.analysis.l1_types import (
     L1_SINGLETON,
@@ -158,6 +158,8 @@ class EndpointWitness(BaseModel):
     path: str = Field(description="L0 path.")
     baseurl: str = Field(description="L0 base URL.")
 
+    model_config = ConfigDict(extra="forbid")
+
 
 class HeaderWitness(BaseModel):
     """An L0 Header that witnesses a System."""
@@ -166,6 +168,8 @@ class HeaderWitness(BaseModel):
     endpoint: str = Field(description="The endpoint path the header was seen on.")
     baseurl: str = Field(description="L0 base URL.")
 
+    model_config = ConfigDict(extra="forbid")
+
 
 class TechnologyWitness(BaseModel):
     """An L0 Technology that witnesses a System."""
@@ -173,14 +177,32 @@ class TechnologyWitness(BaseModel):
     name: str = Field(description="Technology name.")
     version: str = Field(default="", description="Observed version, or empty.")
 
+    model_config = ConfigDict(extra="forbid")
+
 
 class CertificateWitness(BaseModel):
     """An L0 Certificate that witnesses a System."""
 
     subject_cn: str = Field(description="Certificate subject common name.")
 
+    model_config = ConfigDict(extra="forbid")
 
-Witness = EndpointWitness | HeaderWitness | TechnologyWitness | CertificateWitness
+
+class BaseURLWitness(BaseModel):
+    """An L0 BaseURL that witnesses a System."""
+
+    url: str = Field(description="L0 base URL.")
+
+    model_config = ConfigDict(extra="forbid")
+
+
+Witness = (
+    EndpointWitness
+    | HeaderWitness
+    | TechnologyWitness
+    | CertificateWitness
+    | BaseURLWitness
+)
 
 
 class SystemAttributes(BaseModel):
@@ -244,6 +266,12 @@ class SystemLinking(BaseModel):
     links: list[SystemLink] = Field(
         description="One typed Service-to-System link per evidenced pair."
     )
+
+
+# The typist binds BOTH structured tools on every turn (reflection, extraction,
+# linking), so the request shape never toggles. The prompt says which tool to
+# call; the response format carries both.
+TypistDelta = SystemExtraction | SystemLinking
 
 
 def proposals_to_deltas(
@@ -351,6 +379,8 @@ def witness_to_l0_ref(witness) -> L0Ref:
             "name": witness.name,
             "version": witness.version,
         })
+    if isinstance(witness, BaseURLWitness):
+        return L0Ref(label="BaseURL", identity={"url": witness.url})
     return L0Ref(label="Certificate", identity={"subject_cn": witness.subject_cn})
 
 

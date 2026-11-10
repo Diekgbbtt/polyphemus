@@ -118,7 +118,7 @@ Persist the authenticated session through `auth_store`, on the account identifie
 - `accounts.<account>.tokens` with one entry per token: `{value, location: cookie | header | storage, target?, expiry?}`.
 
 A new account is a create at `accounts.<account>`.
-An existing account is a field merge at the same path.
+For an existing account write the deeper field path (`accounts.<account>.snapshot` or `accounts.<account>.tokens`); the account root is create-only.
 The tool contract defines the exact field shapes; read it before the first write.
 Do not paste a secret into a prompt or a note.
 

@@ -332,11 +332,45 @@ def is_static_base_path(path: str, *, extension: str = "") -> bool:
     path traversal.
     """
     segments = set(_path_segments(path or "/"))
+    # A user-content segment wins over the generic static/build roots, but not
+    # over the framework's own static tree or a verified CDN transform. This is
+    # the recall bias: `/uploads/static/logo.png` is still user media.
+    hard_static = (
+        {"_next", "static"} <= segments
+        or bool(segments & {"cdn", "cdn-cgi"})
+    )
+    if not hard_static and segments & PRESERVE_SEGMENTS:
+        return False
     if segments & DROP_SEGMENTS:
         return True
     # `_next` alone is not noise (`/_next/data/...` can be real API surface);
     # the framework's static tree is the `_next/static` pair.
     if {"_next", "static"} <= segments:
+        return True
+    return (
+        extension.lower() in (IMAGE_EXTS | MEDIA_EXTS)
+        and bool(segments & TEMPLATE_IMAGE_SEGMENTS)
+    )
+
+
+def is_static_stream_path(path: str, *, extension: str = "") -> bool:
+    """True when the ANALYSIS STREAM should drop `path` as confidently static.
+
+    This is the narrower stream gate (2026-11-10): only the framework static
+    trees, `/assets`/`/static`, verified CDN paths, and template/theme/skin
+    images. Recon's broader classifier keeps its vendor/build roots, but the
+    stream does not widen its drop to `/api/vendor/...` or `/api/build/...`.
+    The recall bias still wins: a user-content segment overrides a generic
+    static root, except for the `_next/static` tree and a verified CDN.
+    """
+    segments = set(_path_segments(path or "/"))
+    hard_static = (
+        {"_next", "static"} <= segments
+        or bool(segments & {"cdn", "cdn-cgi"})
+    )
+    if not hard_static and segments & PRESERVE_SEGMENTS:
+        return False
+    if hard_static or bool(segments & {"assets", "static"}):
         return True
     return (
         extension.lower() in (IMAGE_EXTS | MEDIA_EXTS)

@@ -131,6 +131,7 @@ Call `browser(command="end")` without `persist_context` when the browser is no l
 It stops the browser and releases the session; the bootstrap does not write the pool store.
 Persist the authenticated session through `auth_store` writes: `accounts.<account>.snapshot` with `{cookies, headers, params, captured_at}` and/or `accounts.<account>.tokens` with `{value, location, target, expiry}`.
 The account identifier is the full `accounts.<name>` path the read returned; a new account is a create.
+For an existing account write the deeper field path (`accounts.<account>.snapshot` or `.tokens`); the account root is create-only.
 The preflight mints `browser_context.ref`; the bootstrap does not write it.
 The mechanics are the `steel-browser` skill; this skill owns only the login PROCEDURE.
 

@@ -160,6 +160,8 @@ def unit_spec_from_profile(text: str) -> dict:
                 "service_slug": endpoint.group(4).strip(),
             })
     kind, _, slug = unit_id.partition(":")
+    if not kind or not slug:
+        return {}
     match = (
         {"business_function_slug": slug}
         if kind == "Service"
@@ -594,7 +596,11 @@ def threat_downstream(threat: dict, spec_rows: list[dict]) -> dict:
         spec_threat = str(spec.get("threat_id") or "").strip()
         spec_unit = str(spec.get("unit_id") or "").strip()
         same_threat = _threat_id_matches(spec_threat, threat_id)
-        same_unit = not unit_id or not spec_unit or spec_unit == unit_id
+        same_unit = (
+            spec_unit == unit_id
+            if (unit_id and spec_unit)
+            else (not unit_id)
+        )
         fallback = (
             not spec_threat
             and dispatch
@@ -803,12 +809,6 @@ SEVERITY_BANDS = ("none", "low", "medium", "high", "critical")
 def schema_version(model: dict) -> int:
     """A model document's `schema_version`, 0 when absent or unreadable."""
     value = as_dict(model).get("schema_version")
-    return value if isinstance(value, int) and not isinstance(value, bool) else 0
-
-
-def threat_schema(threat: dict) -> int:
-    """The schema version `load_models` stamped on a threat record, 0 unknown."""
-    value = as_dict(threat).get("_schema")
     return value if isinstance(value, int) and not isinstance(value, bool) else 0
 
 

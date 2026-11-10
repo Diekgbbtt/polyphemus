@@ -40,7 +40,7 @@ from polymerhus.recon.domain.noise_filter import (
     JS_EXTS,
     MEDIA_EXTS,
     STATIC_EXTS,
-    is_static_base_path,
+    is_static_stream_path,
 )
 from polymerhus.recon.domain.types import AssetDelta, JobSpec, Observation
 
@@ -54,8 +54,10 @@ logger = logging.getLogger(__name__)
 # collapse, and the micro-family grouping, and it counts EVERY streamed asset
 # type: Endpoint, Parameter, Header, Secret, and every other type the stream
 # carries. 120 is the operating point: large enough to keep a recon job's
-# coherent family set in one dispatch, small enough that a malformed tool call
-# cannot hide a whole job's judgments in one generation.
+# coherent family set in one dispatch, small enough to bound a chunk's context.
+# This cap is capacity hygiene; the model-facing contract and the one repair are
+# the fix for the recorded malformed-call failure, which occurred on a 52-asset
+# chunk and is not split by this threshold.
 CHUNK_MAX_ASSETS = 120
 
 # The family-internal order: the ANCHOR first, then what it owns (the operator's
@@ -95,7 +97,7 @@ _FAMILY_RANK: dict[str, int] = {
 # Signals, all case-insensitive on the bare path (query string and fragment stripped
 # first, so a cache-busted `/app.js?v=2` is still recognised):
 #   - a never-surface FILE EXTENSION (the hard-drop families);
-#   - a confident static BASE PATH from `noise_filter.is_static_base_path`, matched
+#   - a confident static BASE PATH from `noise_filter.is_static_stream_path`, matched
 #     on whole segments - never substrings, so `/api/static-data/x` is real API
 #     surface and stays.
 _HARD_DROP_EXTS = STATIC_EXTS | JS_EXTS | {"wasm"}
@@ -198,7 +200,7 @@ def is_noise_endpoint(asset: AssetDelta) -> bool:
     bare = path.split("?", 1)[0].split("#", 1)[0].lower()
     if _endpoint_extension(bare) in _HARD_DROP_EXTS:
         return True
-    return is_static_base_path(bare, extension=_endpoint_extension(bare))
+    return is_static_stream_path(bare, extension=_endpoint_extension(bare))
 
 
 def is_connectivity_asset(asset: AssetDelta) -> bool:

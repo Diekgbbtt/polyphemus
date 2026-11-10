@@ -111,6 +111,24 @@ def test_confidently_static_image_base_paths_drop(path):
     assert classify_endpoint(path) == "static"
 
 
+@pytest.mark.parametrize("path", [
+    "/uploads/static/logo.png",
+    "/uploads/theme/logo.png",
+    "/user-content/assets/x.png",
+    "/media/build/clip.mp4",
+])
+def test_user_content_wins_over_a_generic_static_root(path):
+    assert classify_endpoint(path) == "surface"
+
+
+@pytest.mark.parametrize("path", [
+    "/_next/static/media/logo.png",
+    "/cdn-cgi/image/width=100/logo.png",
+])
+def test_a_hard_static_tree_still_drops_a_media_segment(path):
+    assert classify_endpoint(path) == "static"
+
+
 # --- media / archive recall bias (AMV-8 category 1) ------------------------
 
 @pytest.mark.parametrize("ext", [

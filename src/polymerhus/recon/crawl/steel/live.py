@@ -873,9 +873,13 @@ def crawl_session_probe_with_source(
     configured = getattr(ctx, "auth_probe", None)
     if isinstance(configured, str) and configured:
         return configured, "account.auth_probe"
-    root = crawl_session_root(ctx, loaded)
-    if root:
+    root = getattr(loaded, "root_url", None)
+    if isinstance(root, str) and root:
         return root, "session.root_url"
+    if ctx.root_url:
+        return ctx.root_url, "session.root_url"
+    if ctx.target_url:
+        return ctx.target_url, "target.root_url"
     return None, ""
 
 

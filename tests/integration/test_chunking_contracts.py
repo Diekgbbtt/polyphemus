@@ -304,11 +304,14 @@ def test_C27i_recall_biased_media_drop_under_a_presentational_segment():
     assets = [
         _ep("/assets/logo.png"),
         _ep("/static/hero.jpg"),
-        _ep("/downloads/assets/report.pdf"),   # an `assets` segment anywhere -> dropped
+        _ep("/downloads/assets/report.pdf"),   # a user-content segment wins
         _ep("/orders/42"),
     ]
     (chunk,) = chunks_for_job(JOB, assets)
-    assert {a.identity["path"] for a in chunk.assets} == {"/orders/42"}
+    assert {a.identity["path"] for a in chunk.assets} == {
+        "/downloads/assets/report.pdf",
+        "/orders/42",
+    }
 
 
 def test_C27j_gate_families_are_single_sourced_from_noise_filter():
@@ -529,6 +532,9 @@ def test_D3b_a_family_above_the_hard_cap_splits():
 
 
 def test_the_default_cap_is_120_and_counts_every_streamed_asset_type():
+    from polymerhus.analysis import chunking
+
+    assert chunking.CHUNK_MAX_ASSETS == 120
     assets = []
     for index in range(121):
         path = f"/api/orders/{index}"
@@ -574,6 +580,8 @@ def test_chunk_stream_filters_static_image_base_paths_and_keeps_uploads():
         _ep("/template/default/index/img/banner/1.jpg"),
         _ep("/uploads/20181224/abc.jpg"),
         _ep("/api/orders"),
+        _ep("/api/vendor/list"),
+        _ep("/api/build/status"),
     ]
     chunks = chunks_for_job(JOB, assets)
     paths = {
@@ -585,3 +593,5 @@ def test_chunk_stream_filters_static_image_base_paths_and_keeps_uploads():
     assert "/template/default/index/img/banner/1.jpg" not in paths
     assert "/uploads/20181224/abc.jpg" in paths
     assert "/api/orders" in paths
+    assert "/api/vendor/list" in paths
+    assert "/api/build/status" in paths

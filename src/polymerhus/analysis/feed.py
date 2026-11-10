@@ -109,6 +109,8 @@ class FeedStats(BaseModel):
     consumer: str = "none"
     l0_assets_read: int = 0
     dispatches_entered: int = 0
+    generation_failures: int = 0
+    generation_failure_details: tuple[str, ...] = ()
 
     # THE stall predicate (#34 AST-DEC-09). `advance_blocked_s_max` is the longest
     # any single `push` held the recon job loop, measured at the seam itself.
@@ -227,6 +229,7 @@ class QueuedAnalysisFeed:
         # carries zero dispatches - reading only `_last_census` would report 0 for a
         # run that did real work, since the terminal pass always lands last (FIFO).
         self._dispatches_entered = 0
+        self._generation_failures: list[str] = []
         # Lifecycle events. `_done` is set when the consumer reaches a terminal state
         # (marker consumed, or graceful stop); `_stop_event` requests a graceful stop.
         self._done = asyncio.Event()
@@ -300,6 +303,16 @@ class QueuedAnalysisFeed:
                     self._passes += 1
                     if result is not None:
                         self._last_census = getattr(result, "census", None)
+                        details = tuple(
+                            getattr(
+                                self._last_census,
+                                "generation_failure_details",
+                                (),
+                            ) or ()
+                        )
+                        for detail in details:
+                            if detail not in self._generation_failures:
+                                self._generation_failures.append(detail)
                         entered = getattr(self._last_census, "dispatches_entered", 0) or 0
                         self._dispatches_entered += entered
                         if entered:
@@ -377,6 +390,8 @@ class QueuedAnalysisFeed:
             analysis_drained=drained, consumer=self._consumer_state(),
             l0_assets_read=self._l0_assets_read,
             dispatches_entered=self._dispatches_entered,
+            generation_failures=len(self._generation_failures),
+            generation_failure_details=tuple(self._generation_failures),
             **self._timings.as_stats(),
         )
 

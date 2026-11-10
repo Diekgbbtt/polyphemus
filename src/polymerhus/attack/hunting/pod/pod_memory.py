@@ -57,6 +57,7 @@ import yaml
 
 from polymerhus.app.atomic_write import write_text_atomic
 from polymerhus.app.data_root import project_dir
+from polymerhus.app.memory.store import project_lock
 from polymerhus.attack.hunting.spec_contract import spec_identifier
 
 # The hunting module's data seam (D84-33): the `test-executor-pod/` bucket
@@ -422,7 +423,6 @@ class PodMemoryStore:
         serving (O3)."""
         if kind not in POD_NOTE_KINDS:
             raise ValueError(f"unknown pod note kind {kind!r}; known: {POD_NOTE_KINDS}")
-        records = self._read_notes_records()
         stored = {
             "key": note_key(spec_id, order, note_name),
             "spec_id": spec_id,
@@ -437,8 +437,13 @@ class PodMemoryStore:
             "evidence": evidence,
             "provenance": provenance or {},
         }
-        records.append(stored)
-        self._write_notes_records(records)
+        # The pod-export store shares this one notes file. Both writers take the
+        # SAME lock key (the notes file path), so a read-modify-write pair never
+        # loses the other writer's record.
+        with project_lock(str(self._notes_file())):
+            records = self._read_notes_records()
+            records.append(stored)
+            self._write_notes_records(records)
         return stored["key"]
 
     # -- read ----------------------------------------------------------------
