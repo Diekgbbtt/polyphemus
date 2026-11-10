@@ -89,8 +89,9 @@ Log in only when the oracle fails.
 Pace the login per the mechanics skill's cadence rules, and settle with a condition rather than a fixed pause or network idle: `browser(command="exec", input="wait --url <authenticated_landing_substr>")` or `browser(command="exec", input="wait --text <marker>")`, because `navigate --wait-until networkidle` never settles on a continuously-active page and burns its whole timeout.
 Those waits only settle the page; the oracle still decides pass or fail.
 Wait on the challenge's own marker with a bounded `--timeout`, then escalate to the operator: the post-gate state cannot appear until the human acts, so a wait on it burns its whole timeout.
-Call `browser(command="end", persist_context=true)` on every path; it captures, saves, stops, and releases.
-After a successful end, record `browser_context.ref = <context-ref>` in the account.
+Call `browser(command="end")` on every path; it stops and releases without writing the pool store.
+Persist the authenticated session through `auth_store`: write `accounts.<account>.snapshot` (cookies/headers/params/captured_at) and/or `accounts.<account>.tokens` (value/location/target/expiry) on the full account path the store read returned.
+The preflight mints `browser_context.ref`; the bootstrap does not write it.
 
 ## Report back
 
@@ -99,6 +100,6 @@ Cite secret names only: no secret VALUE in the report or in the skill.
 
 ## Deliverable
 
-- Store facts via the seed face: the typed overview (`login_endpoint`, `required_headers`, `mechanism`, `defences`, `fingerprinting`, `technical_conditions` with one role shape per role, `anti-bot`, `http-client-replayability`, the legacy `auth_probe` only when an account declares neither) and, per account named `<username>-<minting_context>` (the credential username with its email location suffix stripped, plus the run or flow that minted it, never the procedure), `role`, `root_url`, `auth_probe`, `credentials`, `tokens` (with locations), the `browser_context` reference after a successful `browser(command="end", persist_context=true)`, `snapshot`, and the `procedure` label joining the account to the skill procedure.
+- Store facts via the seed face: the typed overview (`login_endpoint`, `required_headers`, `mechanism`, `defences`, `fingerprinting`, `technical_conditions` with one role shape per role, `anti-bot`, `http-client-replayability`, the legacy `auth_probe` only when an account declares neither) and, per account named `<username>-<minting_context>` (the credential username with its email location suffix stripped, plus the run or flow that minted it, never the procedure), `role`, `root_url`, `auth_probe`, `credentials`, `tokens` (with locations), `snapshot`, and the `procedure` label joining the account to the skill procedure. The bootstrap writes the session through `accounts.<account>.snapshot` and/or `.tokens`; `browser_context.ref` is preflight-minted.
 - The project skill at `<data_root>/<project_id>/skills/<skill_name>/SKILL.md`, with the mandatory block embedded verbatim and target-specific ordered steps (tool plus why per step), sign-up and sign-in as separate named procedures per role, each role's oracle verification step, and secret values cited by name only.
 - Report: the roles found and the mint order; the mode decision with its forcing evidence; the `anti-bot` name or null; the replayability verdict and continuation facts; every session's root and oracle path with both polarities; the token names/locations if a browser was used; the written skill path; and any error verbatim.

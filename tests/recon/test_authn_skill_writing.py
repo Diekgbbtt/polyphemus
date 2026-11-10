@@ -199,7 +199,10 @@ def test_bootstrap_prompt_cites_the_mechanics_skill():
 def test_browser_discipline_mounts_the_auth_context_and_logs_in_only_on_failure():
     body = _body()
     assert 'browser(command="start", account=<account>)' in body
-    assert 'browser(command="end", persist_context=true)' in body
+    assert 'browser(command="end")' in body
+    assert "persist_context=true" not in body
+    assert "accounts.<account>.snapshot" in body
+    assert "accounts.<account>.tokens" in body
     assert "session_in_use" in body
     assert "no_session" in body
     assert "Log in when the mounted session does not pass the oracle" in body
@@ -212,7 +215,10 @@ def test_bootstrap_prompt_mounts_the_stable_key_and_restores_state():
         encoding="utf-8"
     )
     assert 'browser(command="start", account=<account>)' in prompt
-    assert 'browser(command="end", persist_context=true)' in prompt
+    assert 'browser(command="end")' in prompt
+    assert "persist_context=true" not in prompt
+    assert "accounts.<account>.snapshot" in prompt
+    assert "accounts.<account>.tokens" in prompt
     assert "session_in_use" in prompt
     assert "no_session" in prompt
     assert "restores its cookies and localStorage" in prompt
