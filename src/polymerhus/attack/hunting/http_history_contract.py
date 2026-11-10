@@ -11,7 +11,8 @@ deliberately in the hands of the agent that can honour it:
     (`derived_from` / `replay_kind`) into the capture plane.
 
 The hunter's orchestrator surface deliberately carries NONE of them (spec 3.4,
-G3: exactly `hunts_store` / `notes` / `graph_view`) and the pod's triager
+G3 plus the approved `js_context` reader: `hunts_store` / `notes` /
+`graph_view` / `js_context`) and the pod's triager
 carries none either (D84-27: the critic never touches the target) - the split is
 the design, not a missing binding.
 

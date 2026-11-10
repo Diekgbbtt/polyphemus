@@ -185,7 +185,11 @@ def _auth_binding(role_id: str, project_id: str, auth_store) -> Any:
 
 
 def _surface_tools(
-    role_id: str, project_id: str | None, run_id: str = ""
+    role_id: str,
+    project_id: str | None,
+    run_id: str = "",
+    *,
+    js_context_selection=None,
 ) -> tuple:
     """The adjacent-surface read/probe tools bound on a proposer turn.
 
@@ -205,15 +209,38 @@ def _surface_tools(
     project scope binds nothing (the session always starts)."""
     if role_id not in ("assigner", "mechanism_typist") or not project_id:
         return ()
+
+    def js_tools() -> tuple:
+        try:
+            from polymerhus.app.js_context.tool import (  # noqa: PLC0415
+                build_js_context_tool,
+            )
+
+            return (
+                build_js_context_tool(
+                    project_id=project_id,
+                    selection=js_context_selection,
+                ),
+            )
+        except Exception:  # noqa: BLE001 - preserve sibling tools
+            logger.warning(
+                "proposer_turn: js_context unbuildable; preserving sibling tools",
+                exc_info=True,
+            )
+            return ()
+
     if role_id == "assigner":
         try:
             from polymerhus.analysis.graph_tools import build_http_history_tools
 
-            return tuple(build_http_history_tools(project_id))
+            history = tuple(build_http_history_tools(project_id))
         except Exception:  # noqa: BLE001 - fail-open: no surface tools bound
-            logger.warning("proposer_turn: assigner http-history unbuildable; binding none",
+            logger.warning(
+                "proposer_turn: assigner http-history unbuildable; "
+                "preserving js_context",
                            exc_info=True)
-            return ()
+            history = ()
+        return history + js_tools()
     try:
         from polymerhus.analysis.graph_tools import build_surface_tools
 
@@ -222,11 +249,12 @@ def _surface_tools(
             with_exec=(role_id == "mechanism_typist"),
         ))
     except Exception:  # noqa: BLE001 - fail-open: no surface tools bound
-        logger.warning("proposer_turn: surface tools unbuildable; binding none",
+        logger.warning(
+            "proposer_turn: surface tools unbuildable; preserving js_context",
                        exc_info=True)
-        return ()
+        surface = ()
     if role_id != "mechanism_typist":
-        return surface
+        return surface + js_tools()
     try:
         from polymerhus.app.config import config
         from polymerhus.app.llm.browser_tools import build_browser_tool
@@ -240,8 +268,8 @@ def _surface_tools(
     except Exception:  # noqa: BLE001 - the browser is one optional capability
         logger.warning("proposer_turn: browser tool unbuildable; binding none",
                        exc_info=True)
-        return surface
-    return surface + (browser,)
+        return surface + js_tools()
+    return surface + js_tools() + (browser,)
 
 
 def _prose_tools(role_id: str, *, tools_bound: bool = False) -> tuple:
@@ -290,8 +318,16 @@ def _prose_tools(role_id: str, *, tools_bound: bool = False) -> tuple:
         return ()
 
 
-def session_invoke_fn(role_id: str, run_id: str, checkpointer, project_id: str | None = None,
-                      auth_store=None):
+def session_invoke_fn(
+    role_id: str,
+    run_id: str,
+    checkpointer,
+    project_id: str | None = None,
+    auth_store=None,
+    *,
+    js_context_selection=None,
+    js_context_tracker=None,
+):
     """The stateful production seam: a callable `(messages, *, schema)` that runs
     one turn of `role_id` on its own per-run session, resuming from its checkpoint.
 
@@ -356,7 +392,12 @@ def session_invoke_fn(role_id: str, run_id: str, checkpointer, project_id: str |
         # role with no surface tools stays byte-identical to the pre-change requests.
         auth = _auth_binding(role_id, project_id, auth_store)
         auth_tools = tuple(auth.tools) if auth is not None else ()
-        surface = _surface_tools(role_id, project_id, run_id)
+        surface = _surface_tools(
+            role_id,
+            project_id,
+            run_id,
+            js_context_selection=js_context_selection,
+        )
         tools = (surface + auth_tools if resolved_schema is not None
                  else surface + auth_tools
                  + _prose_tools(role_id, tools_bound=bool(surface or auth_tools)))
@@ -385,6 +426,10 @@ def session_invoke_fn(role_id: str, run_id: str, checkpointer, project_id: str |
         kwargs: dict[str, Any] = {}
         if tools:
             kwargs["tools"] = tools
+        if js_context_tracker is not None:
+            kwargs["on_turn"] = lambda turn: js_context_tracker.observe_turn(
+                role_id, turn.messages
+            )
         turn_middleware = middleware + (
             list(auth.middleware) if auth is not None else [])
         try:

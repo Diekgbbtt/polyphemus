@@ -5,7 +5,8 @@ The surface replicates the orchestrator's minimalised tool contract
 / `notes` / `graph_view`, read/write cmds, no back-edge tool, no budget tool,
 tool names reused verbatim (R3). The hunter adds `kb_query`, `exec` (GP8d), the
 web-vulnerability suite pair `skill_list` / `skill_load` (S3 8.7), and the two
-HTTP-history reads. The tools are `BaseTool` subclasses per the pod's tool
+HTTP-history reads. A JS-bound run also receives the shared read-only
+`js_context` reader. The tools are `BaseTool` subclasses per the pod's tool
 pattern (`pod/tools.py`: `KbRetrieveTool` / `ExecTool`, `extra="forbid"` args
 schemas). Every tool is a seam holder: the injected collaborator (the
 `HunterMemoryStore`, the `graph_view` / `kb_query` / `exec` callables, the suite
@@ -1208,6 +1209,7 @@ def build_hunter_tools(
     suite_read_fn: Callable[[str], str] | None = None,
     suite_parents: Mapping[str, str] | None = None,
     suite=None,
+    js_context_tool: BaseTool | None = None,
 ) -> list[BaseTool]:
     """Assemble the bound hunter tool list for the harness `create_agent`
     binding.
@@ -1244,7 +1246,7 @@ def build_hunter_tools(
             classes=suite_classes, read_fn=suite_read_fn,
             parents=suite_parents, suite=suite)
 
-    return [
+    tools = [
         HuntsStoreTool(store=store, project_id=project_id, hunt_key=hunt_key,
                        run_id=run_id, target_identity=target_identity),
         notes_tool_for(store=store, project_id=project_id, hunt_key=hunt_key),
@@ -1255,6 +1257,9 @@ def build_hunter_tools(
         HttpHistorySearchTool(http_search_fn=http_search_fn, project_id=project_id),
         HttpHistoryGetTool(http_get_fn=http_get_fn, project_id=project_id),
     ]
+    if js_context_tool is not None:
+        tools.append(js_context_tool)
+    return tools
 
 
 __all__ = [

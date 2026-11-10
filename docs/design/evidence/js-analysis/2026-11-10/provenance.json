@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "frozen_on": "2026-11-10",
+  "description": "Selected existing sanitized artifacts; no new evaluation or claim rewrite. Original data paths are provenance, not additional tracked files.",
+  "artifacts": [
+    {
+      "file": "published.yml",
+      "source_path": "data/js-analysis-mvp-eval/2026-11-10-js-origin-publication-repair/replay-root/js-current-comfyui-af39fe95/js-client-side/jsctx_84add79b3039f9e08f49b3db794b186a81237abc/current-native-af39fe95.yml",
+      "sha256": "9251a411db72716a0b5fe17cead786ff55bf7cb3dc2596f2671d60c772997623",
+      "bytes": 6803
+    },
+    {
+      "file": "producer-result.json",
+      "source_path": "data/js-analysis-mvp-eval/2026-11-10-js-comfyui-unmetered-quality/evidence/js-unmetered-export-af39fe95/observed-run.json",
+      "sha256": "a66351ff503dc8bd7fa2bac0a86b14413f10e97ce134cbbc3e07dfd56467404b",
+      "bytes": 6251
+    },
+    {
+      "file": "producer-semantic-review.json",
+      "source_path": "data/js-analysis-mvp-eval/2026-11-10-js-comfyui-unmetered-quality/evidence/js-unmetered-export-af39fe95/behavior-quality-review.json",
+      "sha256": "7cbefc09bb8d97c8de21df9ae5a3a6dc7be513b590c795402dd25c3293bb7fe0",
+      "bytes": 6087
+    },
+    {
+      "file": "publication-replay.json",
+      "source_path": "data/js-analysis-mvp-eval/2026-11-10-js-origin-publication-repair/replay-result.json",
+      "sha256": "e08a9252d260db7f68f2e1f5d1f82da4755e178d7ea8f18c89e7f80ed0b4b9de",
+      "bytes": 4130
+    },
+    {
+      "file": "retention-probe.json",
+      "source_path": "data/js-analysis-mvp-eval/2026-11-10-js-origin-publication-repair/retention-result.json",
+      "sha256": "85ad4239e66a36658dac2801ec5b65d928e788036c12484e79d6a934b79385a3",
+      "bytes": 1443
+    },
+    {
+      "file": "consumer-result.json",
+      "source_path": "data/js-analysis-mvp-eval/2026-11-10-js-consumer-quality/evidence/consumer-summary.json",
+      "sha256": "e706f11d0ea97a0b901abd9797377d9fe913b2bdfb727bbbc32de0f8162bb305",
+      "bytes": 5446
+    },
+    {
+      "file": "consumer-semantic-review.json",
+      "source_path": "data/js-analysis-mvp-eval/2026-11-10-js-consumer-quality/evidence/semantic-review.json",
+      "sha256": "37ebb8951a52d626e5b704239edccf6f3db0e1e540edd4d11ae961bf803ddedc",
+      "bytes": 4114
+    },
+    {
+      "file": "consumer-transcript.json",
+      "source_path": "data/js-analysis-mvp-eval/2026-11-10-js-consumer-quality/evidence/js-consumer-export-68a1851b/evidence/transcript.json",
+      "sha256": "650e9aafd1700594b13c6c03cd4f17c8d1c3e2b406f1476f1b3ea64a3f3b0279",
+      "bytes": 11015
+    }
+  ]
+}

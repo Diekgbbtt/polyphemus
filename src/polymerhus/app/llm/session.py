@@ -894,6 +894,7 @@ def stateful_turn(
     usage_scope: str | None = None,
     context: dict | None = None,
     tools: Sequence = (),
+    on_turn: Callable[[SessionTurn], None] | None = None,
 ):
     """The UBIQUITOUS stateful-agent invocation (#94): one turn of a sequentially
     dispatched agent that RESUMES from its OWN per-instance checkpoint and appends this
@@ -938,6 +939,15 @@ def stateful_turn(
             extra_tags=extra_tags, usage_scope=usage_scope,
             context=context, tools=tools,
         )
+        if on_turn is not None:
+            try:
+                on_turn(turn)
+            except Exception:
+                logger.warning(
+                    "stateful_turn %s turn observer failed (fail-open)",
+                    role_id,
+                    exc_info=True,
+                )
         # T2 (#214): the blackloop signature - the streamed cut, or a turn that
         # completed EMPTY-CONTENT while still emitting reasoning (the silent-empty
         # shape - a reasoned-but-empty result is a blackloop, never a legitimate

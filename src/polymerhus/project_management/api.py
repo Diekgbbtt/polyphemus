@@ -714,10 +714,19 @@ class HuntingLaunch(BaseModel):
     The caller-supplied candidate batch is RETIRED (T3 #376): a run's unit set is
     its INTAKE - the L1 inventory read at run start, ordered by live L1 edge
     count / aggregated endpoints / unit id and frozen for the run (S1 7.1-7.2) -
-    so the pass has no wire input. The body stays as the endpoint's typed request
-    shape (today it carries nothing) instead of being dropped: the launch
-    contract is T5's, and what retired is the candidate path, not the launch.
+    so the pass has no candidate wire input. The optional `producing_run_id`
+    selects the JS workflow whose settled Analysis context this run consumes;
+    it is never a latest-run fallback for ambiguous producers.
     """
+
+    producing_run_id: str | None = Field(
+        default=None,
+        max_length=200,
+        description=(
+            "Optional explicit JS-producing recon run. When omitted, admission "
+            "accepts only one active JS workflow; it never guesses among many."
+        ),
+    )
 
 
 @router.post("/projects/{project_id}/hunting", status_code=201)
@@ -740,9 +749,14 @@ async def launch_hunting(project_id: str, body: HuntingLaunch) -> dict:
 
     Fail-closed on the control plane: while `polymerhus.app.runtime` has not
     landed the launch is a 503, NOT an in-process run - a real orchestration
-    pass (LLM turns) must never ride the uvicorn request loop."""
+    pass (LLM turns) must never ride the uvicorn request loop. An active JS
+    workflow is admitted (or refused with a coded 409) before the hunting row
+    opens."""
     from polymerhus.app.clients import pg
     from polymerhus.attack.hunting import runtime as hunting_runtime
+    from polymerhus.attack.hunting.js_context_admission import (
+        resolve_js_context_admission,
+    )
 
     if not await asyncio.to_thread(pg.project_exists, project_id):
         raise HTTPException(status_code=404, detail="unknown project")
@@ -752,13 +766,29 @@ async def launch_hunting(project_id: str, body: HuntingLaunch) -> dict:
             status_code=503,
             detail="hunting control-plane runtime has not landed",
         )
+    try:
+        js_context_admission = await asyncio.to_thread(
+            resolve_js_context_admission,
+            project_id,
+            body.producing_run_id,
+        )
+    except Exception as exc:  # noqa: BLE001 - coded pre-run refusal
+        _admission_refused_503(exc)
     await _hunting_live_run_guard(project_id)
 
     hunting_run_id = await asyncio.to_thread(pg.create_hunting_run, project_id)
     try:
         hunting_runtime.schedule_hunting(
             hunting_runtime.start_hunting(
-                project_id, run_id=hunting_run_id,
+                project_id,
+                run_id=hunting_run_id,
+                producing_run_id=body.producing_run_id,
+                js_context_selection=(
+                    js_context_admission.selection
+                    if js_context_admission is not None
+                    else None
+                ),
+                js_context_admission=js_context_admission,
             ),
             name=f"hunting:{hunting_run_id}",
         )
@@ -909,6 +939,16 @@ async def resume_hunting_run(project_id: str, hunting_run_id: str) -> dict:
             status_code=409, detail=decision.reason, headers=headers)
 
     prior_status = str(row.get("status"))
+    from polymerhus.attack.hunting.js_context_admission import (
+        resolve_js_context_admission,
+    )
+
+    try:
+        js_admission = await asyncio.to_thread(
+            resolve_js_context_admission, project_id, None, hunting_run=row,
+        )
+    except Exception as exc:  # noqa: BLE001 - coded refusal before the claim
+        _admission_refused_503(exc)
     prior_stats = dict(row.get("stats") or {})
     prior_pause_stats = {
         key: prior_stats[key] for key in PAUSE_STATS_KEYS if key in prior_stats
@@ -955,7 +995,10 @@ async def resume_hunting_run(project_id: str, hunting_run_id: str) -> dict:
 
     coro = None
     try:
-        coro = hunting_runtime.start_hunting(project_id, run_id=hunting_run_id)
+        coro = hunting_runtime.start_hunting(
+            project_id, run_id=hunting_run_id, resume=True,
+            js_context_admission=js_admission,
+        )
         hunting_runtime.schedule_hunting(
             coro,
             name=f"hunting:{hunting_run_id}",
@@ -1118,6 +1161,8 @@ class HuntingModellerLaunch(BaseModel):
     this endpoint schedules the pass, it never fakes the pass's output.
     """
 
+    producing_run_id: str | None = Field(default=None, max_length=200)
+
 
 class HuntingPodLaunch(BaseModel):
     """Pod-only launch body (identity-based refactor, 2026-08-25 operator
@@ -1147,6 +1192,7 @@ async def launch_modeller_only(project_id: str, body: HuntingModellerLaunch) -> 
     from polymerhus.app.clients import pg
     from polymerhus.attack.hunting import runtime as hunting_runtime
     from polymerhus.attack.hunting.mover import threat_modeller_session_id
+    from polymerhus.attack.hunting.js_context_admission import resolve_js_context_admission
 
     if not await asyncio.to_thread(pg.project_exists, project_id):
         raise HTTPException(status_code=404, detail="unknown project")
@@ -1157,13 +1203,27 @@ async def launch_modeller_only(project_id: str, body: HuntingModellerLaunch) -> 
             detail="hunting control-plane runtime has not landed",
         )
 
-    run_id = str(uuid.uuid4())
     try:
+        js_admission = await asyncio.to_thread(
+            resolve_js_context_admission, project_id, body.producing_run_id,
+        )
+    except Exception as exc:  # noqa: BLE001 - refuse before scheduling
+        _admission_refused_503(exc)
+    await _hunting_live_run_guard(project_id)
+    run_id = str(uuid.uuid4())
+    coro = None
+    try:
+        coro = hunting_runtime.launch_modeller(
+            project_id, run_id=run_id, producing_run_id=body.producing_run_id,
+            js_context_admission=js_admission,
+        )
         hunting_runtime.schedule_hunting(
-            hunting_runtime.launch_modeller(project_id, run_id=run_id),
+            coro,
             name=threat_modeller_session_id(run_id),
         )
     except Exception as exc:  # noqa: BLE001 - map admission refusal, re-raise the rest
+        if coro is not None:
+            coro.close()
         _admission_refused_503(exc)
     return {
         "component": "threat_modeller",
@@ -1609,10 +1669,15 @@ def _admission_refused_503(exc: Exception):
     while a module is paused or draining) onto a clean HTTP status instead
     of an unhandled 500 - the operator-intent surface must say *why* the launch
     was not admitted. `RuntimeLoopNotRunning` (a revive during the shutdown
-    window, when the worker loop is already cleared) is likewise a clean 503."""
+    window, when the worker loop is already cleared) is likewise a clean 503.
+    A settled-analysis precondition is a 409: the runtime is healthy, but this
+    launch is not ready to run yet."""
     from polymerhus.app.runtime import (
         ModuleAdmissionRefused,
         RuntimeLoopNotRunning,
+    )
+    from polymerhus.attack.hunting.js_context_admission import (
+        JsContextAdmissionError,
     )
 
     if isinstance(exc, ModuleAdmissionRefused):
@@ -1624,6 +1689,15 @@ def _admission_refused_503(exc: Exception):
         raise HTTPException(
             status_code=503,
             detail="module runtime is not running",
+        ) from exc
+    if isinstance(exc, JsContextAdmissionError):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": exc.code,
+                "error": exc.code,
+                "gaps": list(exc.gaps),
+            },
         ) from exc
     raise exc
 

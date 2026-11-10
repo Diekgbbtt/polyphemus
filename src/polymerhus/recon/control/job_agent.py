@@ -283,6 +283,11 @@ def pod_completion_notify(inbox, *, kind: str = "pod_complete", source: str | No
     def notify(pod_input, job, run_id, phase, export):
         if run_id is None:
             return  # no run context (test-invoked graphs): nothing addressable
+        if job.executor == "js_specialist":
+            thread_id=(export.stats or {}).get('thread_id')
+            if thread_id:
+                hook(thread_id,export)
+            return
         from polymerhus.recon.domain.pod import pod_session
 
         address = pod_session(run_id, phase, job,
@@ -304,6 +309,7 @@ async def run_job(
     extra: dict,
     agent=None,
     notify_fn=None,
+    specialist_executor=None,
 ) -> list[PodExport]:
     """Convenience async wrapper: invoke the compiled job agent and return
     its collected pod_exports. The Foundation pod subgraph is sync-invokable
@@ -315,6 +321,24 @@ async def run_job(
     `run_coro_blocking` (pod exec) cleanly takes its `asyncio.run` path.
     `notify_fn` (a job graph's #94 delivery seam) is threaded into the
     compiled agent when `agent` is not supplied."""
+    from polymerhus.recon.control.jobs import RETIRED_JS_JOBS
+    if job is not None and job.tool in RETIRED_JS_JOBS:
+        raise ValueError(f"retired JS job {job.tool}; use js_analysis")
+    if job is not None and job.executor == "js_specialist":
+        from langchain_core.runnables import RunnableLambda
+        from polymerhus.recon.control.js_analysis_job import run_js_analysis_job
+        from polymerhus.app.observability import get_langfuse_callbacks
+        async def execute(_):
+            exports = await (specialist_executor or run_js_analysis_job)(
+                input_assets=input_assets,run_id=run_id,phase=phase,extra=extra)
+            if notify_fn is not None and exports:
+                try:
+                    notify_fn({'input_asset': input_assets[0] if input_assets else {}, 'extra': extra}, job,run_id,phase,exports[0])
+                except Exception:
+                    logger.warning('JS completion notification failed')
+            return exports
+        return await RunnableLambda(execute,name="js_analysis").ainvoke({},config={
+            "callbacks":get_langfuse_callbacks(),"metadata":{**pod_trace_metadata(run_id,phase,job.tool),"executor":"js_specialist"}})
     graph = agent or build_job_agent(
         pod_invoke=default_pod_invoke, preprocess_fn=default_preprocess_fn,
         notify_fn=notify_fn,

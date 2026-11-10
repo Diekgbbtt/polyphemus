@@ -22,7 +22,7 @@ A branch is a namespace, never a skill, so no branch root carries a `SKILL.md`.
 
 - `web-vulnerability-testing/` holds the well-formed suite: a class or technique-family parent at level 1 and its variants at level 2 (165 skills across 41 groups: 38 classes - 28 decomposing class parents, 9 new standalone classes, and the standalone `graphql` - the R7 cross-cutting group `two-principal-authz`, never counted among the classes, and the `defence-bypass` and `proxy-techniques` families).
   The stream that produced it is W0-W7; its records live in `skills-unspurious/`.
-- `internal/` holds the six product skills the agents load directly: the two tool wrappers under `internal/tools/` (`lightrag-query`, `steel-browser`) and the four single-agent specialisations (`authorization-pyramid`, `webapp-clientside-semantic-model`, `webpage-analysis`, `webpage-profile`).
+- `internal/` holds the twelve product skills the agents load directly: the eight tool wrappers under `internal/tools/` (`lightrag-query`, `steel-browser`, and the six `js-*` specialist procedures) and the four single-agent specialisations (`authorization-pyramid`, `webapp-clientside-semantic-model`, `webpage-analysis`, `webpage-profile`).
   The 33 tool, technology, and Windows corpus skills that the #232 copy brought into the live root were stale copy artifacts and were removed by the same ruling.
 - `meta/` holds the meta family, whose path-shaped names are part of the loader contract.
 - `target-specific-procedure/` holds the per-project procedures: the bootstrapper-authored `authn`/sign-in/sign-up procedures, the evolved skill versions, and the newly mined project-specific skills.
@@ -154,6 +154,12 @@ Keep frontmatter valid YAML: an unquoted `: ` inside a plain-scalar description 
 | `authorization-pyramid` | **authored** | reverse-engineering a service's role-to-permission structure via the inverse-pyramid probe |
 | `lightrag-query` | **authored** | the hunting agent's methodology-KB query discipline (`query_lightrag` / `kb_query`) |
 | `steel-browser` | **authored** | the browser operation mechanics over the exec surface (session lifecycle, session-state capture and restore, auth-material replication and gate, ref flow, batch text entry, waiting, inline eval, bounded reads, one-shot scrape, spidering); one runtime-agnostic skill, no server-side identity bundle |
+| `js-inventory-intake` | **authored** | selecting the bounded JavaScript inventory through the specialist's shared Exec bridge |
+| `js-code-acquisition` | **authored** | acquiring scanner leads and preserving response-byte provenance, integrity and gaps |
+| `js-sourcemap-recovery` | **authored** | recovering and indexing source-map material without introducing replay |
+| `js-bundle-structure` | **authored** | indexing modules, symbols, spans and ESM imports for later evidence correlation |
+| `js-evidence-triage` | **authored** | turning delivered source reads into a bounded question-and-span shortlist |
+| `js-behavior-reconstruction` | **authored** | saving source-supported behavioral records within the protected closure budget |
 | `webapp-clientside-semantic-model` | **authored** | client-side semantic modeling from browser-observable artifacts before security analysis |
 | `webpage-analysis` | **authored** | web-application architectural profiling (navigation x rendering, independent) |
 | `webpage-profile` | **authored + verified** | L1-spine webpage classification (L1D-31a: independent dimensions, fingerprint-insufficiency) |
@@ -161,6 +167,6 @@ Keep frontmatter valid YAML: an unquoted `: ` inside a plain-scalar description 
 | `meta/meta-write-skill` | **authored (#234, content-stable)** | procedure shape, frontmatter shape, references pointers |
 | `meta/authn-skill-writing` | **authored** | authoring a project's per-project `authn` skill: posture probe, sign-in/sign-up execution, and the store/skill two-plane split |
 
-The live root's other 9 skills - the six internal skills (the two tool wrappers and the four single-agent specialisations) and the three `meta/` skills - are governed by the same data-section conformance sweep.
+The live root's other 15 skills - the twelve internal skills (the eight tool wrappers and the four single-agent specialisations) and the three `meta/` skills - are governed by the same data-section conformance sweep.
 
 Roadmap detail + priorities: `docs/design/jobs-tools-skills-taxonomy.md` section 6.

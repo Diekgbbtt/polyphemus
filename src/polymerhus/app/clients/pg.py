@@ -99,6 +99,48 @@ _HUNTING_SCHEMA_MIGRATIONS = (
     "stats JSONB NOT NULL DEFAULT '{}'::jsonb",
 )
 
+_JS_RETENTION_SCHEMA_MIGRATIONS = (
+    "CREATE TABLE IF NOT EXISTS js_artifacts ("
+    "  project_id TEXT NOT NULL,"
+    "  sha256 TEXT NOT NULL,"
+    "  size_bytes BIGINT NOT NULL CHECK (size_bytes >= 0),"
+    "  archive_ref TEXT NOT NULL,"
+    "  state TEXT NOT NULL CHECK (state IN ('reserved', 'retained', 'gap')),"
+    "  failure_reason TEXT,"
+    "  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),"
+    "  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),"
+    "  retained_at TIMESTAMPTZ,"
+    "  PRIMARY KEY (project_id, sha256)"
+    ")",
+    "CREATE INDEX IF NOT EXISTS js_artifacts_project_state_idx "
+    "ON js_artifacts (project_id, state)",
+    "CREATE TABLE IF NOT EXISTS js_evidence_links ("
+    "  link_id TEXT PRIMARY KEY,"
+    "  project_id TEXT NOT NULL,"
+    "  sha256 TEXT NOT NULL,"
+    "  run_id TEXT NOT NULL,"
+    "  origin TEXT NOT NULL,"
+    "  auth_context_ref TEXT NOT NULL DEFAULT '',"
+    "  lead_id TEXT NOT NULL DEFAULT '',"
+    "  selector_type TEXT NOT NULL DEFAULT '',"
+    "  selector_id TEXT NOT NULL DEFAULT '',"
+    "  read_id TEXT NOT NULL DEFAULT '',"
+    "  start_byte BIGINT,"
+    "  end_byte BIGINT,"
+    "  behavior_id TEXT NOT NULL,"
+    "  behavior_revision INTEGER NOT NULL,"
+    "  rationale TEXT NOT NULL DEFAULT '',"
+    "  status TEXT NOT NULL CHECK (status IN ('pending', 'retained', 'gap')),"
+    "  failure_reason TEXT,"
+    "  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),"
+    "  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),"
+    "  FOREIGN KEY (project_id, sha256) "
+    "    REFERENCES js_artifacts(project_id, sha256)"
+    ")",
+    "CREATE INDEX IF NOT EXISTS js_evidence_links_behavior_idx "
+    "ON js_evidence_links (project_id, run_id, behavior_id, behavior_revision)",
+)
+
 # Hunting-run statuses (#110). `running` is the only live state; the rest are
 # terminal: `complete` = orchestration persisted its terminal report, `stopped` =
 # phase-1 operator stop, `failed` = the run errored but persisted (fail-open),
@@ -124,6 +166,288 @@ def ensure_hunting_schema() -> None:
     with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
         for stmt in _HUNTING_SCHEMA_MIGRATIONS:
             cur.execute(stmt)
+
+
+def ensure_js_retention_schema() -> None:
+    """Apply the additive JS retained-evidence schema."""
+    with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
+        for stmt in _JS_RETENTION_SCHEMA_MIGRATIONS:
+            cur.execute(stmt)
+
+
+def _lock_js_retention_project(cur, project_id: str) -> None:
+    """Serialize all artifact state transitions for one project."""
+    cur.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+        (project_id,),
+    )
+
+
+def _connect_js_retention(timeout_ms: int | None = None):
+    kwargs = {}
+    if timeout_ms is not None:
+        timeout_ms = max(1, int(timeout_ms))
+        kwargs["connect_timeout"] = max(1, min(3, (timeout_ms + 999) // 1000))
+        kwargs["options"] = (
+            f"-c statement_timeout={timeout_ms} "
+            f"-c lock_timeout={timeout_ms}"
+        )
+    return psycopg.connect(config.POSTGRES_DSN, **kwargs)
+
+
+def reserve_js_artifact(
+    *,
+    project_id: str,
+    sha256: str,
+    size_bytes: int,
+    archive_ref: str,
+    quota_bytes: int,
+    timeout_ms: int | None = None,
+) -> dict:
+    """Reserve one project/hash byte charge under a PostgreSQL project lock."""
+    with _connect_js_retention(timeout_ms) as conn, conn.cursor() as cur:
+        _lock_js_retention_project(cur, project_id)
+        cur.execute(
+            "SELECT size_bytes, state FROM js_artifacts "
+            "WHERE project_id = %s AND sha256 = %s FOR UPDATE",
+            (project_id, sha256),
+        )
+        row = cur.fetchone()
+        if row and (int(row[0]) != size_bytes or row[1] == "retained"):
+            return {
+                "status": (
+                    "already_retained"
+                    if row[1] == "retained"
+                    and int(row[0]) == size_bytes
+                    else "version_conflict"
+                ),
+                "state": row[1],
+                "size_bytes": int(row[0]),
+            }
+        if row and row[1] == "reserved":
+            return {
+                "status": "already_reserved",
+                "state": "reserved",
+                "size_bytes": size_bytes,
+            }
+        cur.execute(
+            "SELECT COALESCE(SUM(size_bytes), 0) FROM js_artifacts "
+            "WHERE project_id = %s AND state IN ('reserved', 'retained')",
+            (project_id,),
+        )
+        used = int(cur.fetchone()[0])
+        if used + size_bytes > quota_bytes:
+            return {
+                "status": "quota_exceeded",
+                "state": "gap",
+                "used_bytes": used,
+                "quota_bytes": quota_bytes,
+            }
+        cur.execute(
+            "INSERT INTO js_artifacts "
+            "(project_id, sha256, size_bytes, archive_ref, state, failure_reason) "
+            "VALUES (%s, %s, %s, %s, 'reserved', NULL) "
+            "ON CONFLICT (project_id, sha256) DO UPDATE SET "
+            "size_bytes = EXCLUDED.size_bytes, archive_ref = EXCLUDED.archive_ref, "
+            "state = 'reserved', failure_reason = NULL, updated_at = now()",
+            (project_id, sha256, size_bytes, archive_ref),
+        )
+        return {
+            "status": "reserved",
+            "state": "reserved",
+            "used_bytes": used,
+            "quota_bytes": quota_bytes,
+        }
+
+
+def confirm_js_artifact(
+    *,
+    project_id: str,
+    sha256: str,
+    size_bytes: int,
+    timeout_ms: int | None = None,
+) -> dict:
+    with _connect_js_retention(timeout_ms) as conn, conn.cursor() as cur:
+        _lock_js_retention_project(cur, project_id)
+        cur.execute(
+            "SELECT size_bytes, state FROM js_artifacts "
+            "WHERE project_id = %s AND sha256 = %s FOR UPDATE",
+            (project_id, sha256),
+        )
+        row = cur.fetchone()
+        if not row or int(row[0]) != size_bytes:
+            return {"status": "version_conflict", "state": None}
+        if row[1] == "retained":
+            return {"status": "already_retained", "state": "retained"}
+        if row[1] != "reserved":
+            return {"status": "reservation_not_active", "state": row[1]}
+        cur.execute(
+            "UPDATE js_artifacts SET state = 'retained', retained_at = now(), "
+            "failure_reason = NULL, updated_at = now() "
+            "WHERE project_id = %s AND sha256 = %s",
+            (project_id, sha256),
+        )
+        return {"status": "retained", "state": "retained"}
+
+
+def fail_js_artifact(
+    *,
+    project_id: str,
+    sha256: str,
+    size_bytes: int,
+    archive_ref: str,
+    reason: str,
+    timeout_ms: int | None = None,
+) -> dict:
+    with _connect_js_retention(timeout_ms) as conn, conn.cursor() as cur:
+        _lock_js_retention_project(cur, project_id)
+        cur.execute(
+            "SELECT state FROM js_artifacts "
+            "WHERE project_id = %s AND sha256 = %s FOR UPDATE",
+            (project_id, sha256),
+        )
+        row = cur.fetchone()
+        if row and row[0] == "retained":
+            return {"status": "already_retained", "state": "retained"}
+        cur.execute(
+            "INSERT INTO js_artifacts "
+            "(project_id, sha256, size_bytes, archive_ref, state, failure_reason) "
+            "VALUES (%s, %s, %s, %s, 'gap', %s) "
+            "ON CONFLICT (project_id, sha256) DO UPDATE SET "
+            "size_bytes = EXCLUDED.size_bytes, archive_ref = EXCLUDED.archive_ref, "
+            "state = 'gap', failure_reason = EXCLUDED.failure_reason, "
+            "retained_at = NULL, updated_at = now()",
+            (project_id, sha256, size_bytes, archive_ref, reason[:240]),
+        )
+        return {"status": "gap", "state": "gap", "reason": reason[:240]}
+
+
+def mark_js_artifact_unavailable(
+    *,
+    project_id: str,
+    sha256: str,
+    reason: str,
+    timeout_ms: int | None = None,
+) -> dict:
+    """Record explicit loss/corruption of previously claimed bytes."""
+    with _connect_js_retention(timeout_ms) as conn, conn.cursor() as cur:
+        _lock_js_retention_project(cur, project_id)
+        cur.execute(
+            "UPDATE js_artifacts SET state = 'gap', failure_reason = %s, "
+            "retained_at = NULL, updated_at = now() "
+            "WHERE project_id = %s AND sha256 = %s",
+            (reason[:240], project_id, sha256),
+        )
+        return {"status": "gap", "state": "gap", "reason": reason[:240]}
+
+
+def upsert_js_evidence_link(
+    *,
+    link: dict,
+    timeout_ms: int | None = None,
+) -> dict:
+    with _connect_js_retention(timeout_ms) as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO js_evidence_links "
+            "(link_id, project_id, sha256, run_id, origin, auth_context_ref, "
+            " lead_id, selector_type, selector_id, read_id, start_byte, end_byte, "
+            " behavior_id, behavior_revision, rationale, status, failure_reason) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+            "ON CONFLICT (link_id) DO UPDATE SET "
+            "status = CASE WHEN js_evidence_links.status = 'retained' "
+            "THEN 'retained' ELSE EXCLUDED.status END, "
+            "failure_reason = CASE WHEN js_evidence_links.status = 'retained' "
+            "THEN NULL ELSE EXCLUDED.failure_reason END, "
+            "rationale = EXCLUDED.rationale, updated_at = now() "
+            "RETURNING status",
+            (
+                link["link_id"],
+                link["project_id"],
+                link["sha256"],
+                link["run_id"],
+                link["origin"],
+                link.get("auth_context_ref", ""),
+                link.get("lead_id", ""),
+                link.get("selector_type", ""),
+                link.get("selector_id", ""),
+                link.get("read_id", ""),
+                link.get("start_byte"),
+                link.get("end_byte"),
+                link["behavior_id"],
+                int(link["behavior_revision"]),
+                link.get("rationale", "")[:512],
+                link["status"],
+                (link.get("failure_reason") or None),
+            ),
+        )
+        return {"status": cur.fetchone()[0]}
+
+
+def js_retention_snapshot(
+    *,
+    project_id: str,
+    run_id: str,
+    auth_context_ref: str,
+    behavior_id: str,
+    behavior_revision: int,
+    timeout_ms: int | None = None,
+) -> dict:
+    with _connect_js_retention(timeout_ms) as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT l.link_id, l.sha256, l.origin, l.auth_context_ref, "
+            "l.lead_id, l.selector_type, l.selector_id, l.read_id, "
+            "l.start_byte, l.end_byte, l.rationale, l.status, "
+            "l.failure_reason, a.size_bytes, a.archive_ref, a.state, "
+            "a.failure_reason "
+            "FROM js_evidence_links l JOIN js_artifacts a "
+            "ON a.project_id = l.project_id AND a.sha256 = l.sha256 "
+            "WHERE l.project_id = %s AND l.run_id = %s "
+            "AND l.behavior_id = %s "
+            "AND l.behavior_revision = %s AND l.auth_context_ref = %s "
+            "ORDER BY l.created_at, l.link_id",
+            (
+                project_id,
+                run_id,
+                behavior_id,
+                behavior_revision,
+                auth_context_ref,
+            ),
+        )
+        links = []
+        for row in cur.fetchall():
+            effective_status = (
+                row[11]
+                if row[15] == "retained"
+                else "gap"
+                if row[15] == "gap"
+                else "pending"
+            )
+            links.append({
+                "link_id": row[0],
+                "sha256": row[1],
+                "origin": row[2],
+                "auth_context_ref": row[3],
+                "lead_id": row[4],
+                "selector_type": row[5],
+                "selector_id": row[6],
+                "read_id": row[7],
+                "start_byte": row[8],
+                "end_byte": row[9],
+                "rationale": row[10],
+                "status": effective_status,
+                "association_status": row[11],
+                "failure_reason": row[12] or row[16],
+                "size_bytes": row[13],
+                "archive_ref": row[14],
+                "artifact_state": row[15],
+                "artifact_failure_reason": row[16],
+            })
+        return {
+            "links": links,
+            "retained_count": sum(link["status"] == "retained" for link in links),
+            "pending_count": sum(link["status"] == "pending" for link in links),
+            "gap_count": sum(link["status"] == "gap" for link in links),
+        }
 
 
 def set_run_stats(run_id: str, stats: dict) -> None:
@@ -654,6 +978,41 @@ def list_running_analysis_runs() -> list[dict]:
             }
             for r in cur.fetchall()
         ]
+
+
+def list_active_js_context_producers(project_id: str) -> list[str]:
+    """Return the distinct recon runs with a live Analysis JS integration pass.
+
+    This is the bounded implicit-launch resolver: only an Analysis run still in
+    `draining` with a persisted native JS input qualifies. The caller refuses
+    multiple matches and never falls back to a project-wide latest run.
+    """
+    with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT DISTINCT a.run_id "
+            "FROM analysis_runs a "
+            "JOIN recon_runs r ON r.run_id = a.run_id "
+            "JOIN recon_jobs j ON j.run_id = a.run_id "
+            "WHERE a.project_id = %s AND a.status = 'draining' "
+            "AND r.status NOT IN ('failed', 'stopped') "
+            "AND j.job = 'js_analysis' "
+            "ORDER BY a.run_id",
+            (project_id,),
+        )
+        return [row[0] for row in cur.fetchall()]
+
+
+def run_has_js_analysis(run_id: str) -> bool:
+    """True when the recon plan selected the native JS job for this run."""
+    with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT EXISTS ("
+            "SELECT 1 FROM recon_jobs "
+            "WHERE run_id = %s AND job = 'js_analysis'"
+            ")",
+            (run_id,),
+        )
+        return bool(cur.fetchone()[0])
 
 
 def list_running_hunting_runs() -> list[dict]:

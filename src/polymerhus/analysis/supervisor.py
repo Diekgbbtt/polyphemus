@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 from typing import Annotated, Callable, TypedDict
 
 from langgraph.graph import END, START, StateGraph
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from langgraph.types import Command
 
 from polymerhus.analysis.analyser_types import L1DeltaBatch
@@ -410,6 +410,10 @@ class PassCensus(BaseModel):
     started_at: str = ""
     finished_at: str = ""
     duration_s: float = 0.0
+    js_context_input_id: str | None = None
+    js_context_status: str | None = None
+    js_context_gaps: list[str] = Field(default_factory=list)
+    js_context_reused: bool = False
 
 
 PassResult.model_rebuild()
@@ -497,6 +501,10 @@ async def analyse_chunked(
     store=None,
     session_checkpointer=None,
     auth_store=None,
+    js_stats_write_fn=None,
+    js_stats_read_fn=None,
+    js_context_tracker=None,
+    run_supervisor_fn=None,
     observe: bool = True,
 ) -> "PassResult":
     """The CHUNK-FED analyser (#34, completed by #48, payload-fed by #74): consume
@@ -526,6 +534,9 @@ async def analyse_chunked(
     from polymerhus.analysis.chunking import admit_for_role, chunks_for_job
     from polymerhus.analysis.l1_inventory import read_l1_inventory
     from polymerhus.analysis.pod import AnalyserExport
+    from polymerhus.analysis.js_context_application import (
+        JsContextApplicationTracker,
+    )
     from polymerhus.app.llm.checkpoints import get_session_checkpointer
 
     inventory_fn = inventory_fn or read_l1_inventory
@@ -557,7 +568,12 @@ async def analyse_chunked(
     from polymerhus.recon.domain.types import JobSpec
     pseudo_job = JobSpec(tool=chunk.job or f"stream-{chunk.run_id}", skill="analysis",
                          command_template="", produces=[], consumes="BaseURL")
-    chunks = chunks_for_job(pseudo_job, assets, observations)
+    chunks = chunks_for_job(
+        pseudo_job,
+        assets,
+        observations,
+        js_context_input=chunk.js_context_input,
+    )
     if not chunks:
         # Valid empty: nothing in this payload to judge (the terminal drain marker
         # is such a chunk by construction). `unprocessed_after=0` says exactly that:
@@ -570,6 +586,72 @@ async def analyse_chunked(
                               unprocessed_after=0, terminal=terminal,
                               **_window(_t0, _started_at)),
         )
+
+    tracker = js_context_tracker
+    if tracker is None and chunk.js_context_input is not None:
+        tracker = JsContextApplicationTracker(chunk.js_context_input)
+
+    write_js_stats = js_stats_write_fn
+    read_js_stats = js_stats_read_fn
+    if tracker is not None and (write_js_stats is None or read_js_stats is None):
+        from polymerhus.app.clients import pg
+
+        write_js_stats = write_js_stats or pg.set_run_stats
+        read_js_stats = read_js_stats or pg.get_run
+    if tracker is not None and not assets and read_js_stats is not None:
+        try:
+            existing_run = read_js_stats(run_id)
+            existing = (
+                (existing_run or {}).get("stats", {}).get(
+                    "js_context_application"
+                )
+                if isinstance(existing_run, dict)
+                else None
+            )
+        except Exception:
+            logger.warning(
+                "analyser could not read prior JS application for run %s",
+                run_id,
+                exc_info=True,
+            )
+            existing = None
+        if (
+            isinstance(existing, dict)
+            and existing.get("input_id") == chunk.js_context_input.input_id
+            and existing.get("project_id") == project_id
+            and existing.get("producing_run_id") == run_id
+            and existing.get("status")
+            in {"settled_success", "settled_gap", "not_applicable"}
+        ):
+            return PassResult(
+                export=AnalyserExport(),
+                census=PassCensus(
+                    l0_assets_read=0,
+                    fresh_assets_read=0,
+                    unprocessed_after=0,
+                    chunks_built=len(chunks),
+                    dispatches_scheduled=0,
+                    dispatches_entered=0,
+                    terminal=terminal,
+                    js_context_input_id=chunk.js_context_input.input_id,
+                    js_context_status=existing["status"],
+                    js_context_gaps=list(existing.get("gaps") or []),
+                    js_context_reused=True,
+                    **_window(_t0, _started_at),
+                ),
+            )
+    if tracker is not None and write_js_stats is not None:
+        try:
+            write_js_stats(
+                run_id,
+                {"js_context_application": tracker.pending()},
+            )
+        except Exception:
+            logger.warning(
+                "analyser could not persist pending JS application for run %s",
+                run_id,
+                exc_info=True,
+            )
 
     totals = {"aggregates": 0, "systems": 0}
 
@@ -592,9 +674,21 @@ async def analyse_chunked(
     # injected `invoke_fn`/`typist_invoke_fn` still wins.
     session_cp = session_checkpointer if session_checkpointer is not None else get_session_checkpointer()
     invoke_fn = invoke_fn or assigner_stateful_invoke_fn(
-        run_id, session_cp, project_id, auth_store=auth_store)
+        run_id,
+        session_cp,
+        project_id,
+        auth_store=auth_store,
+        js_context_selection=chunk.js_context_input,
+        js_context_tracker=tracker,
+    )
     typist_invoke_fn = typist_invoke_fn or typist_stateful_invoke_fn(
-        run_id, session_cp, project_id, auth_store=auth_store)
+        run_id,
+        session_cp,
+        project_id,
+        auth_store=auth_store,
+        js_context_selection=chunk.js_context_input,
+        js_context_tracker=tracker,
+    )
 
     assigner_inner = make_assigner_body(invoke_fn=invoke_fn, inventory_fn=inventory_fn)
 
@@ -621,7 +715,7 @@ async def analyse_chunked(
     }
     builder = build_supervisor_graph(proposer_bodies=proposer_bodies, write_fn=_counting_write)
     schedule = build_schedule(chunks, run_id, roles=("assigner", "mechanism_typist"))
-    await (run_supervisor(
+    supervisor_state = await (run_supervisor_fn or run_supervisor)(
         project_id, run_id, schedule, builder=builder,
         checkpointer=checkpointer, store=store, observe=observe,
         # The chunk shape IS the diagnosis when a step writes nothing, so it rides
@@ -644,14 +738,38 @@ async def analyse_chunked(
             "langfuse_session_id": run_id,
             "recon_run_id": run_id,
         },
-    ))
+    )
+    js_summary = None
+    if tracker is not None:
+        tracker.observe_receipts(supervisor_state.get("receipts") or [])
+        js_summary = tracker.settle()
+        if write_js_stats is not None:
+            try:
+                write_js_stats(
+                    run_id,
+                    {"js_context_application": js_summary},
+                )
+            except Exception:
+                logger.warning(
+                    "analyser could not persist settled JS application for run %s",
+                    run_id,
+                    exc_info=True,
+                )
     census = PassCensus(
         l0_assets_read=len(assets), fresh_assets_read=len(assets),
         unprocessed_after=0,  # this pass consumed the whole payload it was pushed
         chunks_built=len(chunks),
         dispatches_scheduled=len(schedule), dispatches_entered=entered["n"],
         aggregates_written=totals["aggregates"], systems_written=totals["systems"],
-        terminal=terminal, **_window(_t0, _started_at),
+        terminal=terminal,
+        js_context_input_id=(
+            chunk.js_context_input.input_id
+            if chunk.js_context_input is not None
+            else None
+        ),
+        js_context_status=(js_summary or {}).get("status"),
+        js_context_gaps=(js_summary or {}).get("gaps") or [],
+        **_window(_t0, _started_at),
     )
     logger.info(
         "analyser chunked run=%s terminal=%s chunks=%d scheduled=%d entered=%d "

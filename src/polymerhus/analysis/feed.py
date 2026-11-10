@@ -48,6 +48,7 @@ import time
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from polymerhus.app.js_context.selection import JsContextInput
 from polymerhus.recon.domain.types import AssetDelta, Observation
 
 logger = logging.getLogger(__name__)
@@ -90,6 +91,7 @@ class L0Chunk(BaseModel):
     phase: int = -1
     assets: list[AssetDelta] = Field(default_factory=list)
     observations: list[Observation] = Field(default_factory=list)
+    js_context_input: JsContextInput | None = None
     terminal: bool = False
 
 
@@ -159,8 +161,14 @@ class InlineAnalysisFeed:
         self._advanced = 0
         self._passes = 0
         self._timings = _Timings()
+        self._js_input_ids: set[str] = set()
 
     async def push(self, chunk: L0Chunk) -> None:
+        if chunk.js_context_input is not None:
+            input_id = chunk.js_context_input.input_id
+            if input_id in self._js_input_ids:
+                return
+            self._js_input_ids.add(input_id)
         self._advanced += 1
         started = time.monotonic()
         try:
@@ -218,6 +226,7 @@ class QueuedAnalysisFeed:
         self._last_census = None
         self._task: asyncio.Task | None = None
         self._timings = _Timings()
+        self._js_input_ids: set[str] = set()
         # Non-vacuity across the run: did ANY pass enter a dispatch? The drained claim
         # needs this because the terminal marker is a no-op by construction.
         self._observed_any = False
@@ -240,6 +249,11 @@ class QueuedAnalysisFeed:
         the FIFO is unbounded by operator decision (a bound would reintroduce the
         recon<->analysis coupling this redesign removes). Async only to match the
         inline feed's signature; it never awaits."""
+        if chunk.js_context_input is not None:
+            input_id = chunk.js_context_input.input_id
+            if input_id in self._js_input_ids:
+                return
+            self._js_input_ids.add(input_id)
         self._advanced += 1
         started = time.monotonic()
         self._queue.put_nowait(chunk)
@@ -302,7 +316,15 @@ class QueuedAnalysisFeed:
                         self._last_census = getattr(result, "census", None)
                         entered = getattr(self._last_census, "dispatches_entered", 0) or 0
                         self._dispatches_entered += entered
-                        if entered:
+                        context_settled = (
+                            getattr(
+                                self._last_census,
+                                "js_context_status",
+                                None,
+                            )
+                            in {"settled_success", "settled_gap"}
+                        )
+                        if entered or context_settled:
                             self._observed_any = True
                         self._l0_assets_read += len(chunk.assets)
                 except asyncio.CancelledError:

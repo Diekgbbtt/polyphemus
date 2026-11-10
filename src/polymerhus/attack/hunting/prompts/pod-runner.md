@@ -28,6 +28,7 @@ Drive each stretch as ONE reasoning threat: perceive a tool result, interpret it
 - load_skill - load a skill listed in your system prompt by name; the body arrives with the usage protocol.
 - record_skill_lesson - record ONE skill-usage lesson as the usage protocol directs.
 - graph_view - the read-only L0/L1 view: locate the target's surface before you author a probe.
+- js_context - the project-bound, read-only JavaScript analysis selected for this run. Follow the tool contract when published behaviours bear on the probe; missing context is a gap, never an assumption.
 - auth_store - the read-only project authentication context: read it before you type an authenticated request; never write it.
 
 # Memory

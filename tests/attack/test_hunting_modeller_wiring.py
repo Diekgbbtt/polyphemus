@@ -143,6 +143,7 @@ class _FakeControl:
 
 
 def _patch_pg(monkeypatch, fake):
+    monkeypatch.setattr("polymerhus.app.clients.pg.list_active_js_context_producers", lambda _: [])
     monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_stats", fake.set_hunting_run_stats)

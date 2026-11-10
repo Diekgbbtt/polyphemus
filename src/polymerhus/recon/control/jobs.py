@@ -13,6 +13,19 @@ earlier phase.
 from polymerhus.recon.domain.types import AssetSelector, ConsumptionOptions, JobSpec
 from polymerhus.recon.config import KATANA_DEPTH
 
+JS_INTAKE_PRODUCERS = frozenset({"katana", "ffuf", "steel_crawl"})
+RETIRED_JS_JOBS = frozenset({"jsluice", "webpack_chunks"})
+
+
+def validate_job_names(names):
+    retired = set(names) & RETIRED_JS_JOBS
+    if retired:
+        raise ValueError(f"retired JS jobs {sorted(retired)}; use js_analysis")
+    unknown = [name for name in names if name not in JOBS]
+    if unknown:
+        raise ValueError(f"unknown job(s): {unknown}")
+
+
 DOMAIN = "Domain"  # pre-seeded root asset type (the project's target domain)
 
 # The httpx flag set every reprofile probe exec draws from: the all-GET exec in
@@ -337,47 +350,15 @@ JOBS: dict[str, JobSpec] = {
         # (`kr` takes repeated -H "k: v" flags, the shared default format).
         use_auth=True,
     ),
-    "jsluice": JobSpec(
-        tool="jsluice",
-        skill="js_secret_scan",
-        # Batched: the per-pod command is built from the pod's bundle batch by
-        # polymerhus.recon.control.batching.build_batch_command (fetch + jsluice urls/secrets
-        # + sourcemap extraction), NOT from this template. Left empty because a
-        # batched job never routes through fill_template.
+    "js_analysis": JobSpec(
+        tool="js_analysis",
+        skill="js_analysis",
         command_template="",
-        produces=["Endpoint", "Secret"],
-        # jsluice consumes the discovered JS bundles (the `.js`/`.mjs` Endpoints
-        # katana crawls up), NOT the HTML BaseURL root - the D17 defect fix. The
-        # selector is path-suffix, not content-type, because katana-minted `.js`
-        # Endpoints carry no content_type (D17/Q5).
-        consumes="Endpoint",
-        consumes_where=AssetSelector(field="path", op="ends_with", values=[".js", ".mjs"]),
-        # #37 option B: bundles reduce + pack into batch pods via the unified
-        # derivation (`pack="batches"`). `skip_external` (operator 2026-10-16):
-        # never fetch/scan a bundle the chaining marked external.
-        consumption=ConsumptionOptions(pack="batches", skip_external=True),
-        use_auth=False,
-    ),
-    "webpack_chunks": JobSpec(
-        tool="webpack_chunks",
-        skill="js_secret_scan",
-        # Batched: the per-pod command is built from the pod's bundle batch by
-        # polymerhus.recon.control.batching.build_webpack_chunks_command
-        # (fetch + chunk-map extraction), NOT from this template. Left empty
-        # because a batched job never routes through fill_template.
-        command_template="",
-        produces=["Endpoint"],
-        # #185: resolve webpack code-splitting chunk maps. It consumes the JS
-        # bundle Endpoints the crawler mints (the manifest/runtime bundle carries
-        # the static `{id: hash}` chunk map), fetches each, resolves the lazy
-        # chunk URLs, and mints them as Endpoints so the following jsluice phase
-        # scans the chunk bodies (and their relative API literals) it would
-        # otherwise never see. Same path selector and batch seam as jsluice - the
-        # bundles are the input.
-        consumes="Endpoint",
-        consumes_where=AssetSelector(field="path", op="ends_with", values=[".js", ".mjs"]),
-        consumption=ConsumptionOptions(pack="batches", skip_external=True),
-        use_auth=False,
+        produces=["BaseURL", "Endpoint", "Parameter", "Secret"],
+        consumes="JSInventory",
+        consumption=ConsumptionOptions(source="js_intake"),
+        executor="js_specialist",
+        use_auth=True,
     ),
     "graphql-cop": JobSpec(
         tool="graphql-cop",
@@ -513,22 +494,7 @@ PHASES: list[list[str]] = [
     # they now run after the reprofile pass so they can gate on the JS-derived
     # API surface, not just httpx's originals.
     ["katana", "ffuf", "steel_crawl"],
-    # #185 webpack chunk-map resolver. It consumes the `.js`/`.mjs` Endpoints
-    # the crawler mints (the manifest/runtime bundle carries the static
-    # `{id: hash}` chunk map), resolves the lazy chunk URLs, and mints them as
-    # Endpoints. It MUST sit after the crawler (its bundle producer) and BEFORE
-    # jsluice, so the phase barrier resolves jsluice's inputs AFTER the chunk
-    # Endpoints exist - otherwise jsluice never scans the chunk bodies and the
-    # lazy-loaded API surface stays invisible (the #185 defect).
-    ["webpack_chunks"],
-    # jsluice consumes the `.js`/`.mjs` Endpoints the phase-4 crawler (katana)
-    # produces, so it MUST run in a later phase than it - the phase
-    # barrier resolves a job's inputs before any same-phase job runs, so keeping
-    # jsluice in phase 4 would feed it only httpx's endpoints, not katana's
-    # bundles (the D17 defect). #185: it now also sees the lazy-chunk Endpoints
-    # webpack_chunks minted in the phase just before it. Its own recovered
-    # Endpoints then reach arjun.
-    ["jsluice"],
+    ["js_analysis"],
     # Reprofile pass (D27): re-probe every BaseURL a crawler minted without a
     # `profile` - katana/ffuf endpoints and the JS-derived API hosts jsluice
     # recovers from bundles - and classify each webapp/restapi/graphql_api the
@@ -577,6 +543,8 @@ def _available_types_by_phase(subset: set[str] | None = None) -> list[tuple[list
         result.append((phase_jobs, set(available)))
         for job_name in phase_jobs:
             available.update(JOBS[job_name].produces)
+            if job_name in JS_INTAKE_PRODUCERS:
+                available.add("JSInventory")
     return result
 
 
@@ -586,9 +554,7 @@ def validate_job_subset(subset: list[str]) -> None:
     "Subdomain" - always satisfied by the probe target `pipeline._inject_seed_host`
     injects into every Subdomain-consuming job, nor "BaseURL" - pre-curated by a
     target-scoped crawl subset)."""
-    unknown = [j for j in subset if j not in JOBS]
-    if unknown:
-        raise ValueError(f"unknown job(s): {unknown}")
+    validate_job_names(subset)
 
     subset_set = set(subset)
     for phase_jobs, available in _available_types_by_phase(subset_set):

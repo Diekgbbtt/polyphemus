@@ -534,9 +534,6 @@ def validate_launch(project_id: str, jobs: list[str] | None) -> None:
     if not pg.project_exists(project_id):
         raise ProjectNotFound(project_id)
     if jobs is not None:
-        unknown = [j for j in jobs if j not in JOBS]
-        if unknown:
-            raise ValueError(f"unknown job(s): {unknown}")
         validate_job_subset(jobs)  # ValueError on an incoherent subset
     seed = resolve_seed(pg.load_settings(project_id) or {})
     if not seed:

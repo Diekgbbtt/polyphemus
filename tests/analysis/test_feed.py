@@ -23,6 +23,7 @@ from polymerhus.analysis.feed import (
     resolve_feed_mode,
 )
 from polymerhus.analysis.supervisor import PassCensus, PassResult
+from polymerhus.app.js_context.selection import publication_input
 from polymerhus.recon.domain.types import AssetDelta, Observation
 
 
@@ -138,6 +139,42 @@ def test_chunk_payload_rides_the_fifo_unchanged():
     assert [o.evidence for o in seen["observations"]] == ["acao *"]
 
 
+def test_repeated_finalization_of_the_same_js_input_is_one_handoff():
+    selection = publication_input(
+        project_id="p1",
+        producing_run_id="r1",
+        publication={
+            "status": "published",
+            "context_id": "jsctx_" + "a" * 40,
+            "document_id": "document-1",
+            "document_sha256": "b" * 64,
+        },
+    )
+    seen = []
+
+    async def record(chunk):
+        if not chunk.terminal:
+            seen.append(chunk.js_context_input.input_id)
+        return _census(terminal=chunk.terminal)
+
+    async def scenario():
+        feed = QueuedAnalysisFeed("p1", "r1", pass_fn=record).start()
+        for _ in range(2):
+            await feed.push(
+                L0Chunk(
+                    project_id="p1",
+                    run_id="r1",
+                    job="js_analysis",
+                    js_context_input=selection,
+                )
+            )
+        return await _drain(feed)
+
+    stats = _run(scenario())
+    assert seen == [selection.input_id]
+    assert stats.advanced == 1
+
+
 # --- analysis never fails recon ----------------------------------------------
 
 def test_a_pass_that_always_raises_never_escapes():
@@ -203,6 +240,46 @@ def test_a_run_that_observed_nothing_does_not_claim_drained():
     stats = _run(scenario())
     assert stats.passes >= 1                # a pass DID run...
     assert stats.analysis_drained is False  # ...and still claims nothing
+
+
+def test_reused_settled_js_application_is_observed_work_without_dispatch():
+    async def reused(chunk):
+        return PassResult(
+            export=None,
+            census=PassCensus(
+                terminal=chunk.terminal,
+                unprocessed_after=0,
+                js_context_status=(
+                    None if chunk.terminal else "settled_success"
+                ),
+                js_context_reused=not chunk.terminal,
+            ),
+        )
+
+    async def scenario():
+        feed = QueuedAnalysisFeed("p1", "r1", pass_fn=reused).start()
+        await feed.push(
+            L0Chunk(
+                project_id="p1",
+                run_id="r1",
+                job="js_analysis",
+                js_context_input=publication_input(
+                    project_id="p1",
+                    producing_run_id="r1",
+                    publication={
+                        "status": "published",
+                        "context_id": "jsctx_" + "a" * 40,
+                        "document_id": "document-1",
+                        "document_sha256": "b" * 64,
+                    },
+                ),
+            )
+        )
+        return await _drain(feed)
+
+    stats = _run(scenario())
+    assert stats.dispatches_entered == 0
+    assert stats.analysis_drained is True
 
 
 def test_scheduled_but_never_entered_does_not_claim_drained():

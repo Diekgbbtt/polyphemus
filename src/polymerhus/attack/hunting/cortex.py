@@ -52,7 +52,11 @@ def with_cortex(base_prompt: str) -> str:
     through, so the map is identical for all four roles and can never be
     half-injected. The base prompt is the role's own reasoning discipline; the
     cortex is additive, never a replacement."""
-    return f"{base_prompt.rstrip()}\n\n{cognitive_architecture_map()}"
+    base = base_prompt.rstrip()
+    cortex = cognitive_architecture_map()
+    if base.endswith(cortex):
+        return base
+    return f"{base}\n\n{cortex}"
 
 
 __all__ = ["cognitive_architecture_map", "with_cortex"]

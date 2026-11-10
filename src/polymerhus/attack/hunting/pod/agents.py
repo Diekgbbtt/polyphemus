@@ -210,7 +210,7 @@ async def default_runner_step_fn(spec: dict, messages: list, tool_calls: int) ->
                                hc.variant_ref or "", graph_view_fn=hc.graph_view_fn,
                                capture_context=hc.capture_context,
                                replay_fn=hc.replay_fn,
-                               project_id=getattr(hc.capture_context, "project_id", "") or "",
+                               project_id=hc.project_id,
                                browser_tool=hc.browser_tool)
     harness_mw = build_harness_middleware(log=hc.log,
                                           variant_ref=hc.variant_ref or "",
@@ -222,14 +222,14 @@ async def default_runner_step_fn(spec: dict, messages: list, tool_calls: int) ->
     # description into this turn's system prompt.
     binding = auth_capable_binding(
         ctx.address.role_id, task_skills=hc.task_skills,
-        project_id=getattr(hc.capture_context, "project_id", "") or None,
+        project_id=hc.project_id or None,
         with_readonly_auth_store=True)
     mw = list(pod_middleware()) + [harness_mw] + binding.middleware
     turn = await arun_session_turn(
         ctx.address.role_id, ctx.address, list(messages),
         checkpointer=ctx.checkpointer, tools=tools + binding.tools, middleware=mw,
         context=binding.context,
-        usage_scope=getattr(hc.capture_context, "project_id", "") or "",
+        usage_scope=hc.project_id,
         system_prompt=load_pod_runner_skill(), model_factory=hc.model_factory)
     new_obs = len(hc.log.raw_observations) - before_obs
     content = str(getattr(turn, "content", None) or "")
@@ -265,6 +265,7 @@ async def default_triager_fn(spec: dict, observation: RawObservation,
         tools = triager_react_tools(hc.memory_store, hc.spec_id,
                                     log=hc.log, variant_ref=hc.variant_ref or "",
                                     graph_view_fn=hc.graph_view_fn,
+                                    project_id=hc.project_id,
                                     browser_tool=hc.browser_tool)
         delta = _dicts_to_lc(list(messages))
         from polymerhus.app.auth.seams import auth_capable_binding  # noqa: PLC0415
@@ -273,13 +274,13 @@ async def default_triager_fn(spec: dict, observation: RawObservation,
         # baseline at the binding (the same ONE seam the runner uses).
         binding = auth_capable_binding(
             ctx.address.role_id, task_skills=hc.task_skills,
-            project_id=getattr(hc.capture_context, "project_id", "") or None,
+            project_id=hc.project_id or None,
             with_readonly_auth_store=True)
         result = stateful_turn(
             ctx.address.role_id, ctx.address, delta,
             checkpointer=ctx.checkpointer, schema=TriagerDecision,
             tools=tools + binding.tools, context=binding.context,
-            usage_scope=getattr(hc.capture_context, "project_id", "") or "",
+            usage_scope=hc.project_id,
             system_prompt=load_pod_triager_skill(),
             middleware=list(pod_middleware()) + binding.middleware,
             model_factory=hc.model_factory)
@@ -473,6 +474,7 @@ def runner_react_tools(exec_fn, memory_store, spec_id, log, variant_ref, *,
         except Exception:  # noqa: BLE001 - evidence recording never gates the tool
             pass
 
+    tools += _js_context_tools(project_id)
     if browser_tool is not None:
         tools.append(browser_tool)
     if replay_fn is not None:
@@ -492,7 +494,7 @@ def runner_react_tools(exec_fn, memory_store, spec_id, log, variant_ref, *,
 
 def triager_react_tools(memory_store, spec_id, *, kb_fn=None, kb_lookup=None,
                         log=None, variant_ref="", graph_view_fn=None,
-                        browser_tool=None):
+                        project_id="", browser_tool=None):
     """The Triager's bound-tool set (D84-27): notes read + the always-bound
     `query_lightrag` KB tool + the shared `graph_view` L0/L1 tool (#197) + the
     one `browser` tool (read-only commands by prompt). The critic never
@@ -507,6 +509,7 @@ def triager_react_tools(memory_store, spec_id, *, kb_fn=None, kb_lookup=None,
     tools = [PodNoteTool(store=memory_store, spec_id=spec_id)]
     tools += [KbQueryTool(log=log, variant_ref=variant_ref)]
     tools += _graph_view_tools(graph_view_fn)
+    tools += _js_context_tools(project_id)
     if browser_tool is not None:
         tools.append(browser_tool)
     return tools
@@ -521,3 +524,26 @@ def _graph_view_tools(graph_view_fn=None) -> list:
     )
 
     return [build_graph_view_tool(graph_view_fn)]
+
+
+def _js_context_tools(project_id: str) -> list:
+    """Bind the shared read-only JS context when this run has one selected."""
+    if not project_id:
+        return []
+    try:
+        from polymerhus.attack.hunting.js_context_admission import (
+            current_js_context_selection,
+        )
+        from polymerhus.app.js_context.tool import build_js_context_tool
+
+        selection = current_js_context_selection()
+        if selection is None:
+            return []
+        return [
+            build_js_context_tool(
+                project_id=project_id,
+                selection=selection,
+            )
+        ]
+    except Exception:  # noqa: BLE001 - JS context is additive
+        return []

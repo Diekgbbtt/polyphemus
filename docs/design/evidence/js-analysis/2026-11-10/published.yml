@@ -1,0 +1,185 @@
+schema_version: 1
+context:
+  project_id: js-current-comfyui-af39fe95
+  run_id: current-native-af39fe95
+  origin:
+    status: known
+    value: http://comfyui-manager:8288
+  auth_ref: ''
+  coverage:
+    status: partial
+    gaps:
+    - analysis_completed
+    - behavior_candidate_links_unavailable
+    - behavior_retention_partial_or_gap
+    - command_rejected
+    - command_returned_nonzero
+    - invalid_specialist_request
+    - inventory_pages_remaining
+    - map_not_found
+    - output_budget_exhausted
+    - recovery_partial_or_failed
+    - relative_operation_unknown
+    - retention_metadata_missing:read_30c0d2ee53870ddd3548130e5e9ac1c4
+    - retention_metadata_missing:read_c60d1c60e593ecb4c9c234e682adaf92
+    - retention_metadata_missing:read_d49881b2e46a8e1833548a16e5fcbf52
+    - structure_index_unsupported
+    - structure_partial_or_failed
+    - triage_pending_spans
+    - unsupported_format
+behaviors:
+- behavior_id: behavior_9c0864d3473abd9a2936c2e1d9ff46e6
+  revision: 1
+  reconstruction_level: reconstructed
+  question_ref: span_2aa29ff4f6d1875eb6a368c29d2cc538
+  question: How does audioService trigger file upload / media URLs (trigger -> URL/body
+    construction -> fetchApi -> effect) and what base-URL/header transformation is
+    applied by the imported index chunk?
+  priority: high
+  lead_id: lead_12ff87ef523e571a14e9b2a8
+  record_sha256: 409bab4d6223f9ec6edfed04c07d55187c55438e3ebb02dbb07a4d5b294f042b
+  redaction_policy: js-source-redaction-v1
+  redaction_count: 0
+  steps:
+  - kind: trigger
+    text: Caller invokes convertBlobToFileAndSubmit(blob) with a recorded audio Blob.
+    read_ids:
+    - read_d49881b2e46a8e1833548a16e5fcbf52
+  - kind: transform
+    text: Wraps blob in a File named recording-<Date.now()>.wav and builds FormData
+      with image=file, subfolder=audio, type=temp.
+    read_ids:
+    - read_d49881b2e46a8e1833548a16e5fcbf52
+  - kind: request
+    text: POST /upload/image through api.fetchApi with that FormData and no explicit
+      headers.
+    read_ids:
+    - read_d49881b2e46a8e1833548a16e5fcbf52
+  - kind: response
+    text: Only status 200 accepted; response JSON parsed and its name field read.
+    read_ids:
+    - read_d49881b2e46a8e1833548a16e5fcbf52
+  - kind: effect
+    text: Returns string audio/<name> [temp] used as a later input value referring
+      to the temp upload.
+    read_ids:
+    - read_d49881b2e46a8e1833548a16e5fcbf52
+  - kind: error
+    text: 'Non-200 status: alert added to toast store and Error thrown with status
+      and statusText; upload not retried here.'
+    read_ids:
+    - read_d49881b2e46a8e1833548a16e5fcbf52
+  assumptions:
+  - text: fetchApi comes from the api module import; its URL prefix and header logic
+      were not available in this file.
+    status: unverified
+    read_ids:
+    - read_d49881b2e46a8e1833548a16e5fcbf52
+  gaps:
+  - fetchApi implementation (base URL prefix, headers such as any client-supplied
+    user identity) unread
+  - server-side upload validation/authorization unverified
+  - invoking UI caller not inspected
+- behavior_id: behavior_cda85e07330ca54ca965c4dc52ce2451
+  revision: 1
+  reconstruction_level: reconstructed
+  question_ref: span_4d736b9586f17ad7bceb0f3872695fd9
+  question: 'Where does api.user (sent as Comfy-User header) originate: login flow,
+    localStorage persistence, and any server-assisted identity?'
+  priority: high
+  lead_id: lead_bfd97b295a2795ed91e6209f
+  record_sha256: 7d3ea89eff19e214649b07fc86e65e80d84f68ca4c72f29bcb2c540249ab4e2c
+  redaction_policy: js-source-redaction-v1
+  redaction_count: 0
+  steps:
+  - kind: trigger
+    text: User-store initialize() runs, fetching server user config via api.getUserConfig()
+      and reading persisted localStorage key Comfy.userId.
+    read_ids:
+    - read_c60d1c60e593ecb4c9c234e682adaf92
+  - kind: transform
+    text: login({userId,username}) sets store userId and writes localStorage Comfy.userId
+      and Comfy.userName; logout deletes both keys.
+    read_ids:
+    - read_c60d1c60e593ecb4c9c234e682adaf92
+  - kind: call
+    text: watchEffect assigns api.user = userId only when server config exposes users
+      and a userId value exists.
+    read_ids:
+    - read_c60d1c60e593ecb4c9c234e682adaf92
+  - kind: request
+    text: fetchApi copies caller-supplied headers, injects Comfy-User = this.user,
+      and fetches api_base + /api + path with cache no-cache.
+    read_ids:
+    - read_30c0d2ee53870ddd3548130e5e9ac1c4
+  - kind: effect
+    text: The client-chosen user id therefore accompanies every fetchApi request,
+      including the /prompt status poll, /extensions, and the audio POST /upload/image
+      call.
+    read_ids:
+    - read_30c0d2ee53870ddd3548130e5e9ac1c4
+    - read_d49881b2e46a8e1833548a16e5fcbf52
+  - kind: effect
+    text: On a server config without users, api.user stays the empty constructor default,
+      so the header value is empty.
+    read_ids:
+    - read_c60d1c60e593ecb4c9c234e682adaf92
+    - read_30c0d2ee53870ddd3548130e5e9ac1c4
+  assumptions:
+  - text: Whether the server validates/authorizes the Comfy-User header is server-side
+      and unverified here.
+    status: unverified
+    read_ids:
+    - read_30c0d2ee53870ddd3548130e5e9ac1c4
+  gaps:
+  - getUserConfig/createUser implementations and their URL construction not read
+  - where initialize() is invoked and multiuser enablement conditions are server-side
+evidence:
+- read_id: read_30c0d2ee53870ddd3548130e5e9ac1c4
+  lead_id: lead_bfd97b295a2795ed91e6209f
+  selector:
+    type: match
+    id: match_94797c8c44b0faadc0248520e3128340
+  content_sha256: b38db679c4df5f132c05a04081cf45269c7b796c760a81abcc1ccbd19e5aa022
+  range:
+    start: 13728
+    end: 17824
+  redaction_policy: js-source-redaction-v1
+  delivery_status: delivered
+  availability: receipt_only
+  retention_status: missing
+  artifact_ref: null
+  limitations:
+  - retention_metadata_missing
+- read_id: read_c60d1c60e593ecb4c9c234e682adaf92
+  lead_id: lead_bfd97b295a2795ed91e6209f
+  selector:
+    type: match
+    id: match_bc142c0ed121998393e376dbb8b23e8b
+  content_sha256: b38db679c4df5f132c05a04081cf45269c7b796c760a81abcc1ccbd19e5aa022
+  range:
+    start: 1507172
+    end: 1511268
+  redaction_policy: js-source-redaction-v1
+  delivery_status: delivered
+  availability: receipt_only
+  retention_status: missing
+  artifact_ref: null
+  limitations:
+  - retention_metadata_missing
+- read_id: read_d49881b2e46a8e1833548a16e5fcbf52
+  lead_id: lead_12ff87ef523e571a14e9b2a8
+  selector:
+    type: source
+    id: src_82969ea0fc1115a3e8afbcd8
+  content_sha256: 0fa19be4ffc1dbf667c2e62ddfce3f80a684a41033a90dd6a1592f128037723c
+  range:
+    start: 0
+    end: 2153
+  redaction_policy: js-source-redaction-v1
+  delivery_status: delivered
+  availability: receipt_only
+  retention_status: missing
+  artifact_ref: null
+  limitations:
+  - retention_metadata_missing

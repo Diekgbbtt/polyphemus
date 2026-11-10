@@ -65,6 +65,16 @@ RUN python3 -m venv /opt/venv \
 ENV GOPATH="/root/go"
 ENV PATH="/opt/localbin:/root/go/bin:/opt/venv/bin:${PATH}"
 
+# Stable Exec CLI and private-broker byte worker; no app package/data mount.
+COPY src/polymerhus/recon/js_intake/cli.py /opt/polymerhus-js/cli.py
+COPY src/polymerhus/recon/js_acquisition/kali_worker.py /opt/polymerhus-js/kali_worker.py
+COPY src/polymerhus/recon/domain/parsers/_secrets.py /opt/polymerhus-js/_secrets.py
+COPY src/polymerhus/recon/js_acquisition/scan_worker.py /opt/polymerhus-js/scan_worker.py
+COPY src/polymerhus/recon/scripts/jsluice_scan.py /opt/polymerhus-js/jsluice_scan.py
+COPY src/polymerhus/recon/js_intake/redaction.py /opt/polymerhus-js/redaction.py
+RUN python3 /opt/polymerhus-js/cli.py --help >/dev/null
+RUN PYTHONPATH=/opt/polymerhus-js python3 -c "import scan_worker, jsluice_scan"
+
 # Go tools with no Kali package (installed to /root/go/bin, which the exec
 # server's PATH primes ahead of the system PATH):
 #  httpx    - ProjectDiscovery HTTP probe (apt has no httpx package)

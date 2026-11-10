@@ -41,6 +41,7 @@ from datetime import datetime, timezone
 
 from polymerhus.app.config import config
 from polymerhus.app.clients.pg import touch_run_heartbeat as _touch_heartbeat
+from polymerhus.app.js_context.selection import gap_input, publication_input
 from polymerhus.recon.control.auth_feed import (
     project_browser_auth,
     project_browser_context,
@@ -87,6 +88,82 @@ def _exec_window(t0: float, started_at: str) -> dict:
         "exec_finished_at": _utc_now_iso(),
         "exec_seconds": round(time.monotonic() - t0, 3),
     }
+
+
+def _js_context_input_from_exports(
+    pod_exports: list,
+    *,
+    project_id: str,
+    run_id: str,
+    auth_ref: str,
+    origin: dict | None,
+):
+    """Freeze native JS publication stats without reading mutable current."""
+    publications = [
+        value
+        for export in pod_exports
+        if isinstance(
+            (value := (export.stats or {}).get("context_publication")),
+            dict,
+        )
+    ]
+    if len(publications) > 1:
+        unique = {
+            (
+                value.get("status"),
+                value.get("context_id"),
+                value.get("document_id"),
+                value.get("document_sha256"),
+            )
+            for value in publications
+        }
+        if len(unique) > 1:
+            return gap_input(
+                project_id=project_id,
+                producing_run_id=run_id,
+                status="unavailable",
+                gaps=["context_publication_conflict"],
+                auth_ref=auth_ref,
+                origin=origin,
+            )
+    if publications:
+        return publication_input(
+            project_id=project_id,
+            producing_run_id=run_id,
+            publication=publications[0],
+            auth_ref=auth_ref,
+            origin=origin,
+        )
+    if not pod_exports:
+        return gap_input(
+            project_id=project_id,
+            producing_run_id=run_id,
+            status="unavailable",
+            gaps=["js_analysis_not_dispatched"],
+            auth_ref=auth_ref,
+            origin=origin,
+        )
+    failed = [export for export in pod_exports if export.verdict == "failed"]
+    if failed:
+        gap = (failed[0].stats or {}).get("gap")
+        if not isinstance(gap, str):
+            gap = "js_analysis_failed"
+        return gap_input(
+            project_id=project_id,
+            producing_run_id=run_id,
+            status="failed",
+            gaps=[gap],
+            auth_ref=auth_ref,
+            origin=origin,
+        )
+    return gap_input(
+        project_id=project_id,
+        producing_run_id=run_id,
+        status="unavailable",
+        gaps=["context_publication_missing"],
+        auth_ref=auth_ref,
+        origin=origin,
+    )
 
 
 def _merge_scan_stats(target: dict, fragment: dict) -> dict:
@@ -342,6 +419,7 @@ async def run_pipeline(
     feed_mode: str | None = None,
     pass_fn=None,
     with_analysis: bool = True,
+    input_provider=None,
 ) -> None:
     """Drive the full (or subset) phase plan for `project_id` under `run_id`.
 
@@ -533,12 +611,48 @@ async def run_pipeline(
         if gateway_verdict is not None and gateway_verdict.replayability_resolved:
             logger.warning("run %s in-loop replayability resolved to %s (persisted to the overview by the loop)",
                            run_id, gateway_verdict.replayability)
+        from polymerhus.recon.control.jobs import JS_INTAKE_PRODUCERS
+        from polymerhus.recon.control.js_analysis_job import prepare_js_inventory
+
+        producer_outcomes = {
+            name: {"status": "pending", "pods": None}
+            for phase in plan
+            for name in phase
+            if name in JS_INTAKE_PRODUCERS
+        }
+        js_consumer_selected = any("js_analysis" in phase for phase in plan)
         for phase_idx, phase_jobs in enumerate(plan):
             job_configs: dict[str, tuple] = {}
             for name in phase_jobs:
                 job = JOBS[name]
                 try:
-                    if phase_idx == 0:
+                    if job.consumption.source == "js_intake":
+                        input_assets = [
+                            await asyncio.to_thread(
+                                input_provider or prepare_js_inventory,
+                                project_id=project_id,
+                                run_id=run_id,
+                                context_ref=auth_account or "",
+                                scope_domains=[scope["seed_host"]],
+                                allow_http_replay=not (
+                                    gateway_verdict
+                                    and gateway_verdict.branch == "browser_only"
+                                ),
+                                producer_outcomes=producer_outcomes,
+                            )
+                        ]
+                    elif (
+                        gateway_verdict
+                        and gateway_verdict.branch == "browser_only"
+                        and name == "steel_crawl"
+                    ):
+                        browser_target = (
+                            probe_target
+                            if "://" in probe_target
+                            else "https://" + probe_target
+                        )
+                        input_assets = [{"url": browser_target}]
+                    elif phase_idx == 0:
                         # A phase-0 Domain consumer (subfinder/whois, and the
                         # exact-mode Domain root) seeds from `seed_assets`. When
                         # the gated/subset plan opens on a Subdomain consumer
@@ -589,6 +703,18 @@ async def run_pipeline(
                             input_assets = _services_to_probe_targets(input_assets)
 
                     extra = {"project_id": project_id}
+                    application_origin = target_origin(settings)
+                    if application_origin:
+                        extra["application_origin"] = {
+                            "status": "known",
+                            "value": application_origin,
+                        }
+                    if (
+                        name == "steel_crawl"
+                        and js_consumer_selected
+                        and auth_account
+                    ):
+                        extra["js_capture_enabled"] = True
                     if job.use_auth and job.configurator_mode == "agent":
                         # The crawl gets every valid account independently of
                         # the gateway's single request account. The selected
@@ -685,13 +811,64 @@ async def run_pipeline(
                             extra["apex_registrable"] = scope["apex"]
 
                     await asyncio.to_thread(
-                        registry.upsert_job, run_id, phase_idx, name, "in_progress"
+                        registry.upsert_job,
+                        run_id,
+                        phase_idx,
+                        name,
+                        "in_progress",
+                        stats=(
+                            {"js_selected": True}
+                            if job.consumption.source == "js_intake"
+                            else None
+                        ),
                     )
                 except Exception as exc:  # best-effort: a setup blip degrades
                     # only this job, it must never leave the run stuck non-terminal.
+                    setup_stats = {}
+                    if job.consumption.source == "js_intake":
+                        context_input = gap_input(
+                            project_id=project_id,
+                            producing_run_id=run_id,
+                            status="unavailable",
+                            gaps=["js_analysis_setup_failed"],
+                            auth_ref=auth_account or "",
+                        )
+                        setup_stats["js_context_input"] = (
+                            context_input.as_dict()
+                        )
+                        if feed is not None:
+                            try:
+                                await feed.push(
+                                    L0Chunk(
+                                        project_id=project_id,
+                                        run_id=run_id,
+                                        job=name,
+                                        phase=phase_idx,
+                                        js_context_input=context_input,
+                                    )
+                                )
+                            except Exception:
+                                logger.warning(
+                                    "analysis context setup-gap push raised for "
+                                    "run %s job %s",
+                                    run_id,
+                                    name,
+                                    exc_info=True,
+                                )
                     await asyncio.to_thread(
-                        registry.upsert_job, run_id, phase_idx, name, "degraded", error=str(exc)
+                        registry.upsert_job,
+                        run_id,
+                        phase_idx,
+                        name,
+                        "degraded",
+                        stats=setup_stats or None,
+                        error=str(exc),
                     )
+                    if name in producer_outcomes:
+                        producer_outcomes[name] = {
+                            "status": "degraded",
+                            "pods": None,
+                        }
                     continue
                 job_configs[name] = (job, input_assets, extra)
 
@@ -710,10 +887,52 @@ async def run_pipeline(
                         job, input_assets, run_id=run_id, phase=phase_idx, extra=extra
                     )
                 except Exception as exc:  # best-effort: never abort the pipeline
+                    job_stats = _exec_window(exec_t0, exec_started_at)
+                    if job.consumption.source == "js_intake":
+                        context_input = gap_input(
+                            project_id=project_id,
+                            producing_run_id=run_id,
+                            status="unavailable",
+                            gaps=["js_analysis_dispatch_failed"],
+                            auth_ref=auth_account or "",
+                            origin=extra.get("application_origin"),
+                        )
+                        job_stats["js_context_input"] = (
+                            context_input.as_dict()
+                        )
+                        if feed is not None:
+                            try:
+                                await feed.push(
+                                    L0Chunk(
+                                        project_id=project_id,
+                                        run_id=run_id,
+                                        job=name,
+                                        phase=phase_idx,
+                                        js_context_input=context_input,
+                                    )
+                                )
+                            except Exception:
+                                logger.warning(
+                                    "analysis context gap push raised for run "
+                                    "%s job %s",
+                                    run_id,
+                                    name,
+                                    exc_info=True,
+                                )
                     await asyncio.to_thread(
-                        registry.upsert_job, run_id, phase_idx, name, "degraded",
-                        stats=_exec_window(exec_t0, exec_started_at), error=str(exc)
+                        registry.upsert_job,
+                        run_id,
+                        phase_idx,
+                        name,
+                        "degraded",
+                        stats=job_stats,
+                        error=str(exc),
                     )
+                    if name in producer_outcomes:
+                        producer_outcomes[name] = {
+                            "status": "degraded",
+                            "pods": None,
+                        }
                     return
 
                 total = len(pod_exports)
@@ -726,6 +945,12 @@ async def run_pipeline(
                     status = "degraded"
                 else:
                     status = "success"
+
+                if name in producer_outcomes:
+                    producer_outcomes[name] = {
+                        "status": status,
+                        "pods": total,
+                    }
 
                 # Per-job data lineage (D12): consumed = number of input
                 # assets this job was asked to process; produced_* = assets /
@@ -744,6 +969,29 @@ async def run_pipeline(
                     "produced_observations": produced_observations,
                     **_exec_window(exec_t0, exec_started_at),
                 }
+                context_input = None
+                if job.consumption.source == "js_intake":
+                    job_stats["js_selected"] = True
+                    job_stats["executions"] = total
+                    job_stats["pods"] = 0
+                    job_stats["input_coverage"] = (
+                        input_assets[0].get("coverage")
+                        if input_assets
+                        else None
+                    )
+                    job_stats["execution"] = [
+                        export.stats
+                        for export in pod_exports
+                        if export.stats
+                    ]
+                    context_input = _js_context_input_from_exports(
+                        pod_exports,
+                        project_id=project_id,
+                        run_id=run_id,
+                        auth_ref=auth_account or "",
+                        origin=extra.get("application_origin"),
+                    )
+                    job_stats["js_context_input"] = context_input.as_dict()
                 commands = [
                     e.stats.get("command")
                     for e in pod_exports
@@ -803,13 +1051,18 @@ async def run_pipeline(
                 # and the terminal drain pass is cumulative, so any genuinely-new asset
                 # the reprofile probe incidentally mints is still observed by the next
                 # produced job's pass or the terminal drain pass.
-                if feed is not None and (produced_assets or produced_observations) \
+                if feed is not None and (
+                    produced_assets
+                    or produced_observations
+                    or context_input is not None
+                ) \
                         and not job.endpoint_profiling:
                     chunk = L0Chunk(
                         project_id=project_id,
                         run_id=run_id, job=name, phase=phase_idx,
                         assets=[a for e in pod_exports for a in e.assets],
                         observations=[o for e in pod_exports for o in e.observations],
+                        js_context_input=context_input,
                     )
                     try:
                         await feed.push(chunk)

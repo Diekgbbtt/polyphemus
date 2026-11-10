@@ -1,0 +1,139 @@
+{
+  "schema_version": 1,
+  "method": "Manual semantic comparison of each saved record with the exact delivered byte ranges identified by its valid read receipts. Both cited reads for behavior_9c0864d3473abd9a2936c2e1d9ff46e6 and behavior_cda85e07330ca54ca965c4dc52ce2451 had zero redactions, so the persisted source bytes equal the delivered display bytes in those ranges.",
+  "behaviors": [
+    {
+      "behavior_id": "behavior_9c0864d3473abd9a2936c2e1d9ff46e6",
+      "record_sha256": "409bab4d6223f9ec6edfed04c07d55187c55438e3ebb02dbb07a4d5b294f042b",
+      "question": "How does audioService trigger file upload / media URLs and what base-URL/header transformation is applied by the imported index chunk?",
+      "delivered_reads": [
+        {
+          "read_id": "read_d49881b2e46a8e1833548a16e5fcbf52",
+          "content_sha256": "0fa19be4ffc1dbf667c2e62ddfce3f80a684a41033a90dd6a1592f128037723c",
+          "start_byte": 0,
+          "end_byte": 2153,
+          "redactions": 0,
+          "status": "delivered"
+        }
+      ],
+      "claim_review": [
+        {
+          "kind": "trigger",
+          "status": "supported",
+          "finding": "The delivered source defines convertBlobToFileAndSubmit(blob)."
+        },
+        {
+          "kind": "transform",
+          "status": "supported",
+          "finding": "It creates recording-<Date.now()>.wav and appends image, subfolder=audio and type=temp to FormData."
+        },
+        {
+          "kind": "request",
+          "status": "supported",
+          "finding": "It calls api.fetchApi('/upload/image', {method: 'POST', body}) without explicit headers."
+        },
+        {
+          "kind": "response",
+          "status": "supported",
+          "finding": "It accepts status 200, parses JSON and reads the name field."
+        },
+        {
+          "kind": "effect",
+          "status": "supported",
+          "finding": "It returns audio/<name> [temp]."
+        },
+        {
+          "kind": "error",
+          "status": "supported",
+          "finding": "Non-200 status adds an alert and throws; no local retry is present."
+        }
+      ],
+      "overall": "supported_partial",
+      "utility": "Concrete upload trigger, request body, success condition, error path and returned temp reference. The initial record correctly leaves fetchApi base/header handling unverified; that part is supplied by the second behavior."
+    },
+    {
+      "behavior_id": "behavior_cda85e07330ca54ca965c4dc52ce2451",
+      "record_sha256": "7d3ea89eff19e214649b07fc86e65e80d84f68ca4c72f29bcb2c540249ab4e2c",
+      "question": "Where does api.user, sent as the Comfy-User header, originate?",
+      "delivered_reads": [
+        {
+          "read_id": "read_30c0d2ee53870ddd3548130e5e9ac1c4",
+          "content_sha256": "b38db679c4df5f132c05a04081cf45269c7b796c760a81abcc1ccbd19e5aa022",
+          "start_byte": 13728,
+          "end_byte": 17824,
+          "redactions": 0,
+          "status": "delivered"
+        },
+        {
+          "read_id": "read_c60d1c60e593ecb4c9c234e682adaf92",
+          "content_sha256": "b38db679c4df5f132c05a04081cf45269c7b796c760a81abcc1ccbd19e5aa022",
+          "start_byte": 1507172,
+          "end_byte": 1511268,
+          "redactions": 0,
+          "status": "delivered"
+        },
+        {
+          "read_id": "read_d49881b2e46a8e1833548a16e5fcbf52",
+          "content_sha256": "0fa19be4ffc1dbf667c2e62ddfce3f80a684a41033a90dd6a1592f128037723c",
+          "start_byte": 0,
+          "end_byte": 2153,
+          "redactions": 0,
+          "status": "delivered"
+        }
+      ],
+      "claim_review": [
+        {
+          "kind": "initialize",
+          "status": "supported",
+          "finding": "initialize() reads api.getUserConfig() and localStorage Comfy.userId."
+        },
+        {
+          "kind": "login_logout",
+          "status": "supported",
+          "finding": "login writes userId/userName; logout deletes both keys."
+        },
+        {
+          "kind": "header_assignment",
+          "status": "supported",
+          "finding": "watchEffect assigns api.user only when server config exposes users and a userId exists."
+        },
+        {
+          "kind": "fetch_composition",
+          "status": "supported_with_nuance",
+          "finding": "fetchApi injects Comfy-User and fetches api_base + /api + path. It supplies cache=no-cache by default, but a caller-provided cache value in the spread object can override it."
+        },
+        {
+          "kind": "identity_effect",
+          "status": "supported",
+          "finding": "The value is client-selected and persisted locally; it is not proved server-authorized."
+        },
+        {
+          "kind": "example_extensions",
+          "status": "insufficient_evidence",
+          "finding": "/prompt and /upload/image are supported by the delivered ranges; /extensions is not present in the cited ranges and cannot be verified from the selected delivery alone."
+        },
+        {
+          "kind": "server_without_users",
+          "status": "supported",
+          "finding": "The constructor default is an empty user; without users the watch effect does not assign a value."
+        },
+        {
+          "kind": "server_validation",
+          "status": "not_claimed_as_verified",
+          "finding": "The record explicitly leaves server validation unverified."
+        }
+      ],
+      "overall": "supported_with_one_unverified_example",
+      "utility": "Explains client-controlled identity propagation into every fetchApi request and correctly avoids claiming server authorization. One illustrative endpoint is overbroad relative to the delivered ranges."
+    }
+  ],
+  "summary": {
+    "supported": 11,
+    "supported_with_nuance": 1,
+    "insufficient_evidence": 1,
+    "not_claimed_as_verified": 1,
+    "incorrect": 0,
+    "material_false_claims": 0,
+    "assessment": "Both records contain concrete, source-backed behavioral information beyond endpoint discovery. The pair jointly covers upload construction and the API wrapper's user-header behavior without asserting server trust."
+  }
+}

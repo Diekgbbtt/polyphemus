@@ -194,6 +194,7 @@ Read the set back with `hunts_store command: "read"` when you need the persisted
   A re-iteration rewrites the same note with `action=update`.
   The note exits are `phase:grounding`, `phase:slice`, `phase:collect`, `phase:discriminate`, and `phase:well_formedness`.
 - `graph_view`: the read-only L0/L1 target-knowledge view.
+- `js_context`: the project-bound, read-only published client-side analysis selected for this hunting run. Follow its own contract; treat source-supported behaviours as context and keep unread or unavailable evidence as gaps.
 - `kb_query`: the methodology KB.
 - `exec`: live probes; the target-front availability rule above binds every call.
 - `browser`: one web-browser tool over the shared pool. `command` is `start` (optional `url`, optional `account` for the authenticated context), `exec` (the bare browser command grammar in `input`), or `end` (capture, save, stop, release; `persist_context` updates the account's decoupled auth context). Open it only for a client-side rendered page, a JS-heavy target, or a native client-side primitive; a plain HTTP read belongs to `exec`, `graph_view`, or the HTTP-history pair. End the session when the browser is not needed anymore. The full mechanics are the `steel-browser` skill.

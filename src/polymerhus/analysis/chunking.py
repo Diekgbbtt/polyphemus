@@ -35,6 +35,7 @@ import logging
 
 from pydantic import BaseModel, ConfigDict
 
+from polymerhus.app.js_context.selection import JsContextInput
 from polymerhus.recon.domain.noise_filter import (
     IMAGE_EXTS,
     JS_EXTS,
@@ -146,6 +147,7 @@ class Chunk(BaseModel):
     observations: tuple[Observation, ...] = ()
     batch_index: int = 0
     batch_total: int = 1
+    js_context_input: JsContextInput | None = None
 
 
 def admit_for_role(chunk: Chunk, role: str) -> tuple[AssetDelta, ...]:
@@ -311,6 +313,7 @@ def chunks_for_job(
     observations: list[Observation] | None = None,
     *,
     max_assets: int = CHUNK_MAX_ASSETS,
+    js_context_input: JsContextInput | None = None,
 ) -> list[Chunk]:
     """Stream a job's L0 delta into ordered, topology-cohesive `Chunk`s (#13,
     reshaped by #34 D8, the profile gate removed by #48 section 6, the family
@@ -353,7 +356,15 @@ def chunks_for_job(
             logger.warning("chunking: skipped a malformed asset", exc_info=True)
             continue
     if not items:
-        return []  # empty delta -> no chunk (valid)
+        if js_context_input is None:
+            return []  # empty delta -> no chunk (valid)
+        return [
+            Chunk(
+                chunk_id=f"{source_job}:0",
+                source_job=source_job,
+                js_context_input=js_context_input,
+            )
+        ]
 
     # 2. collapse the per-transaction repeats: first (type, identity) wins.
     deduped: list[AssetDelta] = []
@@ -402,6 +413,7 @@ def chunks_for_job(
             observations=_observations_for(tuple(window), observations),
             batch_index=idx,
             batch_total=total,
+            js_context_input=js_context_input,
         )
         for idx, window in enumerate(windows)
     ]

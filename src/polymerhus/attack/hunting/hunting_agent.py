@@ -619,6 +619,21 @@ def build_hunting_agent(
             )
             if target_url else None
         )
+        from polymerhus.attack.hunting.js_context_admission import (
+            current_js_context_selection,
+        )
+        from polymerhus.app.js_context.tool import build_js_context_tool
+
+        # The factory can outlive a run scope. Bind one reader for THIS hunt,
+        # then use that same tool in both declaration and execution maps.
+        selection = current_js_context_selection()
+        js_context_tool = None
+        if selection is not None:
+            if not project_id or selection.project_id != project_id:
+                raise ValueError("js_context_project_mismatch")
+            js_context_tool = build_js_context_tool(
+                project_id=project_id, selection=selection,
+            )
         tools = build_hunter_tools(
             store=memory_store, project_id=project_id, hunt_key=hunt_key,
             run_id=run_id, target_identity=target_identity,
@@ -626,6 +641,7 @@ def build_hunting_agent(
             http_search_fn=http_search_fn, http_get_fn=http_get_fn,
             suite_classes=suite_classes, suite_read_fn=suite_read_fn,
             suite_parents=suite_parents,
+            js_context_tool=js_context_tool,
         )
         state: dict = {"state": "grounding", "specs": [], "trail": []}
 

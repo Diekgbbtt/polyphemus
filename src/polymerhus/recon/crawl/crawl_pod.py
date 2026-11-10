@@ -36,6 +36,7 @@ loop.
 from __future__ import annotations
 
 import json
+import logging
 import re
 
 from typing import Optional
@@ -53,8 +54,20 @@ from polymerhus.recon.domain.parsers import get_parser
 from polymerhus.recon.domain.parsers._urls import registrable_domain
 from polymerhus.recon.domain.curator import curate
 from polymerhus.recon.domain.pod import default_triage_fn, _input_asset_url
+from polymerhus.recon.js_intake import JsIntakeStore
+from polymerhus.recon.js_intake.context import input_context_ref
 
 _EMPTY_MANIFEST_KEYS = ("endpoints", "js_urls")
+_LOGGER = logging.getLogger(__name__)
+_JS_CONTENT_TYPES = {
+    "application/ecmascript",
+    "application/javascript",
+    "application/node",
+    "application/x-javascript",
+    "text/ecmascript",
+    "text/javascript",
+}
+_JS_SUFFIXES = (".js", ".mjs", ".cjs")
 
 
 class CrawlPodState(PodState, total=False):
@@ -140,6 +153,138 @@ def _session_error(manifest: dict, reason: str) -> dict:
     }
 
 
+def _manifest_run(manifest: dict | None) -> dict:
+    if not isinstance(manifest, dict):
+        return {}
+    run = manifest.get("run")
+    return run if isinstance(run, dict) else {}
+
+
+def _manifest_completeness(manifest: dict | None) -> str:
+    run = _manifest_run(manifest)
+    return "partial" if run.get("partial") is True else "complete"
+
+
+def _manifest_auth(manifest: dict | None, extra: dict) -> tuple[str, str | None]:
+    """Resolve auth from the session's manifest, never from the target URL."""
+    run = _manifest_run(manifest)
+    account = run.get("account")
+    if isinstance(account, str) and account:
+        return "authenticated", account
+    selected = extra.get("auth_account")
+    if isinstance(selected, str) and selected:
+        return "authenticated", selected
+    return "anonymous", None
+
+
+def _header(headers: object, name: str) -> str | None:
+    if not isinstance(headers, dict):
+        return None
+    wanted = name.lower()
+    for key, value in headers.items():
+        if isinstance(key, str) and key.lower() == wanted and isinstance(value, str):
+            return value
+    return None
+
+
+def _is_js_flow(flow) -> bool:
+    if str(getattr(flow, "resource_type", "") or "").lower() == "script":
+        return True
+    url = str(getattr(flow, "url", "") or "")
+    if urlsplit(url).path.lower().endswith(_JS_SUFFIXES):
+        return True
+    mime = (
+        _header(getattr(flow, "response_headers", None), "content-type")
+        or str(getattr(flow, "mime_type", "") or "")
+    )
+    return mime.split(";", 1)[0].strip().lower() in _JS_CONTENT_TYPES
+
+
+def _record_captured_js_flows(
+    *,
+    capture_store,
+    project_id: str,
+    run_id: str,
+    pod_id: str,
+    session,
+    flows,
+) -> int:
+    """Project the crawler's existing CDP capture into the JS byte store.
+
+    This consumes the same once-only capture the HTTP-history edge receives.
+    A debugger record is not a request: only a real matching CDP flow can
+    produce bytes, and a truncated or bodyless flow stays an explicit gap.
+    """
+    if capture_store is None or not flows or session.anonymous:
+        return 0
+    auth_ref = session.account or session.browser_context_ref
+    if not auth_ref:
+        return 0
+    ordered = sorted(
+        (flow for flow in flows if _is_js_flow(flow)),
+        key=lambda flow: (
+            float(getattr(flow, "received_at", 0.0) or 0.0),
+            str(getattr(flow, "request_id", "") or ""),
+        ),
+    )
+    recorded = 0
+    for sequence, flow in enumerate(ordered, start=1):
+        exact_url = str(getattr(flow, "url", "") or "")
+        if not exact_url:
+            continue
+        status = int(getattr(flow, "status", 0) or 0)
+        content_type = (
+            _header(getattr(flow, "response_headers", None), "content-type")
+            or getattr(flow, "mime_type", None)
+        )
+        sourcemap = _header(
+            getattr(flow, "response_headers", None), "sourcemap"
+        )
+        x_sourcemap = _header(
+            getattr(flow, "response_headers", None), "x-sourcemap"
+        )
+        body = getattr(flow, "response_body", None)
+        common = {
+            "project_id": project_id,
+            "run_id": run_id,
+            "pod_id": pod_id,
+            "crawl_id": str(getattr(flow, "page_id", "") or run_id),
+            "auth_context_ref": auth_ref,
+            "exact_url": exact_url,
+            "status": status,
+            "content_type": (
+                content_type if isinstance(content_type, str) else None
+            ),
+            "sequence": sequence,
+            "sourcemap_header": sourcemap,
+            "x_sourcemap_header": x_sourcemap,
+        }
+        if not 200 <= status < 300:
+            capture_store.record_gap(
+                **common,
+                reason=f"http_status_{status or 'unknown'}",
+            )
+        elif getattr(flow, "body_truncated", False):
+            capture_store.record_gap(
+                **common,
+                reason="capture_body_truncated",
+            )
+        elif getattr(flow, "error", None):
+            capture_store.record_gap(
+                **common,
+                reason="response_error",
+            )
+        elif not isinstance(body, (bytes, bytearray)) or not body:
+            capture_store.record_gap(
+                **common,
+                reason="response_body_unavailable",
+            )
+        else:
+            capture_store.record_bytes(**common, body=bytes(body))
+        recorded += 1
+    return recorded
+
+
 def _session_coverage_observation(
     input_asset: dict, entry: dict
 ) -> Observation:
@@ -184,6 +329,7 @@ def live_run_crawl_fn(
     scope: list[str],
     browser_auth=None,
     extra=None,
+    capture_store=None,
 ):
     """The production `steel_crawl` collaborator: the deterministic engine.
 
@@ -245,6 +391,10 @@ def live_run_crawl_fn(
     max_duration_s = float(
         os.environ.get("STEEL_CRAWL_MAX_DURATION_S", "1800")
     )
+    if capture_store is None and bool(extra.get("js_capture_enabled")):
+        from polymerhus.recon.js_acquisition import SteelCaptureStore  # noqa: PLC0415
+
+        capture_store = SteelCaptureStore(root=DATA_ROOT)
 
     def run_one(session: CrawlSession) -> dict:
         session_run_id = _session_run_id(run_id, session)
@@ -279,6 +429,18 @@ def live_run_crawl_fn(
             coverage={"scope": session_scope},
         )
         result = run_live_crawl(context)
+        if capture_store is not None and not session.anonymous:
+            selected_account = str(extra.get("auth_account") or "")
+            account = session.account or session.browser_context_ref or ""
+            if not selected_account or account == selected_account:
+                _record_captured_js_flows(
+                    capture_store=capture_store,
+                    project_id=project_id,
+                    run_id=run_id,
+                    pod_id=session_name,
+                    session=session,
+                    flows=result.flows,
+                )
         return result.manifest.model_dump(mode="json")
 
     results = run_crawl_sessions(
@@ -290,6 +452,9 @@ def live_run_crawl_fn(
             for result in results
             if result.manifest is not None
         ],
+        # Internal handoff only: the pod graph links scanner leads to the
+        # existing CDP capture occurrences through this same store.
+        "capture_store": capture_store,
         "sessions": [
             {
                 "account": result.session.account,
@@ -313,6 +478,11 @@ def _session_run_id(run_id: str, session: CrawlSession) -> str:
 
 def _host_of(url: str) -> str:
     return (url or "").split("://", 1)[-1].split("/", 1)[0].split(":", 1)[0].lower()
+
+
+def _safe_session_suffix(value: object) -> str:
+    text = re.sub(r"[^A-Za-z0-9_-]+", "-", str(value or "session"))
+    return text.strip("-_") or "session"
 
 
 def _resolve_crawl_scope(extra: dict, target: str) -> list[str]:
@@ -344,7 +514,15 @@ def _resolve_crawl_scope(extra: dict, target: str) -> list[str]:
     return scope
 
 
-def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn):
+def build_crawl_pod(
+    *,
+    run_crawl_fn,
+    parse_fn,
+    triage_fn,
+    curate_fn,
+    intake_store=None,
+    capture_store=None,
+):
     """Build the compiled crawl-pod subgraph, injecting the side-effecting
     collaborators: run_crawl_fn(target, scope=scope, browser_auth=...,
     extra=...) -> manifest dict, parse_fn(stdout) ->
@@ -368,8 +546,88 @@ def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn):
 
     try:
         accepts_extra = "extra" in inspect.signature(run_crawl_fn).parameters
+        accepts_capture = (
+            "capture_store" in inspect.signature(run_crawl_fn).parameters
+        )
     except (TypeError, ValueError):
         accepts_extra = False
+        accepts_capture = False
+
+    def record_intake(
+        state: CrawlPodState,
+        manifest: dict | None,
+        *,
+        terminal_result: str,
+        output_completeness: str,
+        auth_label: str | None = None,
+        auth_ref: str | None = None,
+        pod_id: str | None = None,
+        capture_store_override=None,
+    ):
+        run_id = state.get("run_id")
+        session_id = state.get("session_id")
+        if intake_store is None or not run_id or not session_id:
+            return None
+        extra = state.get("extra") or {}
+        if auth_label is None or auth_ref is None:
+            auth_label, auth_ref = _manifest_auth(manifest, extra)
+        manifest_run = _manifest_run(manifest)
+        session_name = manifest_run.get("session_name")
+        pod_id = (
+            pod_id
+            or (
+                str(session_name)
+                if isinstance(session_name, str) and session_name
+                else str(session_id)
+            )
+        )
+        try:
+            path = intake_store.record_manifest(
+                project_id=state.get("project_id") or run_id,
+                run_id=run_id,
+                pod_id=pod_id,
+                producer="steel_crawl",
+                input_context_ref=input_context_ref(
+                    state.get("input_asset") or {},
+                    state.get("asset_context") or "",
+                ),
+                manifest=manifest,
+                terminal_result=terminal_result,
+                output_completeness=output_completeness,
+                auth_context_label=auth_label,
+                auth_context_ref=auth_ref,
+            )
+            active_capture_store = (
+                capture_store_override
+                if capture_store_override is not None
+                else capture_store
+            )
+            if active_capture_store is not None:
+                records = [
+                    json.loads(line)
+                    for line in path.read_text(encoding="utf-8").split("\n")
+                    if line.strip()
+                ]
+                for lead in records[1:]:
+                    if lead.get("record_type") != "lead":
+                        continue
+                    active_capture_store.link_leads(
+                        project_id=state.get("project_id") or run_id,
+                        run_id=run_id,
+                        pod_id=pod_id,
+                        auth_context_ref=lead.get("auth_context_ref") or None,
+                        exact_url=str(lead.get("exact_url") or ""),
+                        lead_ids=[str(lead.get("lead_id"))],
+                    )
+            return path
+        except Exception:  # noqa: BLE001 - intake is side output
+            _LOGGER.warning(
+                "JavaScript intake side output failed for Steel pod %s; "
+                "continuing graph path",
+                pod_id,
+                exc_info=True,
+            )
+            return None
 
     def crawl(state: CrawlPodState) -> dict:
         input_asset = state.get("input_asset") or {}
@@ -388,9 +646,20 @@ def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn):
         }
         if accepts_extra:
             kwargs["extra"] = extra
+        if accepts_capture:
+            kwargs["capture_store"] = capture_store
         try:
             result = run_crawl_fn(target, **kwargs)
         except Exception as exc:  # noqa: BLE001 - best-effort, never raise
+            auth_label, auth_ref = _manifest_auth(None, extra)
+            record_intake(
+                state,
+                None,
+                terminal_result="failed",
+                output_completeness="failed",
+                auth_label=auth_label,
+                auth_ref=auth_ref,
+            )
             return {
                 "manifest": None,
                 "manifests": [],
@@ -398,19 +667,70 @@ def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn):
                 "crawl_error": str(exc),
             }
 
+        active_capture_store = capture_store
+        if (
+            isinstance(result, dict)
+            and result.get("capture_store") is not None
+        ):
+            active_capture_store = result["capture_store"]
         manifests, sessions = _normalize_crawl_result(result)
         kept: list[dict] = []
         errors: list[dict] = []
-        for manifest in manifests:
+        for manifest_index, manifest in enumerate(manifests):
+            manifest_run = _manifest_run(manifest)
+            session_name = manifest_run.get("session_name")
+            pod_id = (
+                str(session_name)
+                if isinstance(session_name, str) and session_name
+                else (
+                    str(state.get("session_id"))
+                    if len(manifests) == 1
+                    else f"{state.get('session_id')}--session-{manifest_index + 1}"
+                )
+            )
             if _manifest_is_empty(manifest):
+                record_intake(
+                    state,
+                    manifest,
+                    terminal_result="success",
+                    output_completeness="unknown",
+                    pod_id=pod_id,
+                    capture_store_override=active_capture_store,
+                )
                 errors.append(_session_error(manifest, "empty crawl manifest"))
                 continue
             kept.append(manifest)
+            record_intake(
+                state,
+                manifest,
+                terminal_result="success",
+                output_completeness=_manifest_completeness(manifest),
+                pod_id=pod_id,
+                capture_store_override=active_capture_store,
+            )
             partial = _manifest_partial(manifest)
             if partial is not None:
                 errors.append(_session_error(manifest, partial))
         for session in sessions:
             if isinstance(session, dict) and session.get("error"):
+                account = session.get("account")
+                record_intake(
+                    state,
+                    None,
+                    terminal_result="failed",
+                    output_completeness="failed",
+                    auth_label=(
+                        "authenticated"
+                        if isinstance(account, str) and account
+                        else "anonymous"
+                    ),
+                    auth_ref=account if isinstance(account, str) else None,
+                    pod_id=(
+                        f"{state.get('session_id')}--"
+                        f"{_safe_session_suffix(account or session.get('role'))}"
+                    ),
+                    capture_store_override=active_capture_store,
+                )
                 errors.append(
                     {
                         "account": session.get("account"),
@@ -536,6 +856,7 @@ crawl_pod = build_crawl_pod(
     parse_fn=get_parser("steel_crawl"),
     triage_fn=default_triage_fn,
     curate_fn=curate,
+    intake_store=JsIntakeStore(),
 )
 
 

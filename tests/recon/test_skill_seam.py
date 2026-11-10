@@ -52,6 +52,14 @@ EXEMPT_ROLES = {
 BOUND_ROLES = {
     "triager": ("webpage-analysis", "webpage-profile", "steel-browser"),
     "job_orchestrator": ("steel-browser",),
+    "js_specialist": (
+        "js-inventory-intake",
+        "js-code-acquisition",
+        "js-sourcemap-recovery",
+        "js-bundle-structure",
+        "js-evidence-triage",
+        "js-behavior-reconstruction",
+    ),
     "mechanism_typist": ("steel-browser",),
     "hunting_hunter": ("lightrag-query", "steel-browser"),
     "pod_runner": ("lightrag-query", "steel-browser"),

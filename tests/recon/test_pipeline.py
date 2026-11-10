@@ -476,60 +476,49 @@ def test_reprofile_job_stats_surface_endpoints_total():
     assert rp["stats"]["endpoints_total"] == 2
 
 
-def test_batched_jsluice_job_gets_filtered_read_and_apex_for_downstream_batching():
-    """D17/Q5+Q6 + C3: the jsluice job's read is filtered by its `consumes_where`
-    (only `.js`/`.mjs` Endpoints reach it) - the pipeline's job - and the pipeline
-    supplies `extra["apex_registrable"]` for the reduce+pack the JOB AGENT now
-    performs downstream (asserted in test_job_agent.py). jsluice is not a
-    discovery job, so it runs even though the bare `houseofhr.com` target is
-    exact-mode under the D14 scope gate."""
-    seen_inputs = {}
-    seen_extra = {}
-    where_seen = {}
+def test_native_inventory_input_is_not_a_graph_label(monkeypatch):
+    from polymerhus.recon.control.authn_loop import GatewayVerdict
+    from polymerhus.app.llm import checkpoints
 
-    async def run_job(job, input_assets, *, run_id, phase, extra):
-        seen_inputs[job.tool] = input_assets
-        seen_extra[job.tool] = extra
-        return [PodExport(input_asset={}, verdict="success")]
+    async def _noop_flush(*args, **kwargs):
+        return None
 
-    # A read_assets that honors the optional `where` selector, returning a mix
-    # of many .js bundles across two first-party hosts plus non-JS noise.
-    def read_assets(node_type, project_id, where=None):
-        where_seen[node_type] = where
-        if node_type != "Endpoint":
-            return [{"name": "www.houseofhr.com"}]
-        assets = [{"path": "/app.css", "url": "https://a.houseofhr.com/app.css"}]
-        for i in range(60):
-            assets.append({"path": f"/b{i}.js", "url": f"https://a.houseofhr.com/b{i}.js"})
-        from polymerhus.recon.domain.selectors import apply_selector
-        return apply_selector(assets, where)
+    async def _noop_heartbeat(run_id):
+        return None
 
-    registry = FakeRegistry()
-    settings = {"target_domain": "houseofhr.com"}
+    async def _inline_to_thread(fn, /, *args, **kwargs):
+        return fn(*args, **kwargs)
 
-    asyncio.run(
-        pipeline.run_pipeline(
-            "projX",
-            run_id="runX",
-            job_subset=["subfinder", "httpx", "jsluice"],
-            run_job=run_job,
-            load_settings=make_load_settings(settings),
-            registry=registry,
-            read_assets=read_assets,
-        )
-    )
+    monkeypatch.setattr(checkpoints, "flush_run_scoped", _noop_flush)
+    monkeypatch.setattr(pipeline, "_heartbeat_loop", _noop_heartbeat)
+    monkeypatch.setattr(asyncio, "to_thread", _inline_to_thread)
 
-    # The Endpoint read carried the jsluice path-suffix selector.
-    sel = where_seen["Endpoint"]
-    assert sel is not None and sel.field == "path" and set(sel.values) == {".js", ".mjs"}
+    class _Gateway:
+        async def run_gateway(self, **kwargs):
+            return GatewayVerdict(
+                outcome="anonymous",
+                rationale="deterministic native inventory fixture",
+            )
 
-    # C3: the pipeline passes the RAW filtered .js assets (no .css noise) to
-    # run_job and supplies apex_registrable in extra; the batch reduce+pack now
-    # happens inside the job agent's preprocess (not the pipeline).
-    js_inputs = seen_inputs["jsluice"]
-    assert len(js_inputs) == 60
-    assert all(pi["url"].endswith(".js") for pi in js_inputs)
-    assert seen_extra["jsluice"]["apex_registrable"] == "houseofhr.com"
+        async def stop(self):
+            return None
+
+    seen=[]
+    async def job_runner(job, inputs, **kwargs):
+        if job.tool=='js_analysis':
+            assert inputs==[{'resource':'JSInventory','state':'empty','coverage':{}}]
+        return []
+    def inventory_provider(**kwargs):
+        seen.append(kwargs)
+        return {'resource':'JSInventory','state':'empty','coverage':{}}
+    read=make_read_assets()
+    asyncio.run(pipeline.run_pipeline('p',run_id='r',job_subset=['httpx','katana','js_analysis'],
+        run_job=job_runner,input_provider=inventory_provider,load_settings=lambda p:{'target_seed':'*.example.com'},
+        registry=FakeRegistry(),read_assets=read,
+        orchestrator_factory=lambda run_id: _Gateway()))
+    assert len(seen)==1
+    assert all(kind!='JSInventory' for kind,p in read.calls)
+
 
 
 # --- D14 scope gate + D11 apex probe --------------------------------------

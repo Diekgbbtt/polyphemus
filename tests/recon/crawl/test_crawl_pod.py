@@ -347,6 +347,8 @@ def test_crawl_pod_invoke_builds_pod_state_and_scopes_project_id(monkeypatch):
     assert captured["project_id"] == "proj-42"
     assert captured["input_asset"] == {"url": "https://app.example.com"}
     assert captured["job"] is STEEL_CRAWL_JOB
+    assert captured["run_id"] == "run-9"
+    assert captured["phase"] == 4
 
 
 def test_default_crawl_pod_module_level_instance_is_import_safe():

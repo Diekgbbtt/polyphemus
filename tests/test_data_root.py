@@ -118,3 +118,29 @@ def test_scaffold_enumerates_the_fixed_hunting_sub_layout(tmp_path: Path) -> Non
         "hunting/test-executor-pod",
     ):
         assert (project_dir_ / rel).is_dir(), f"missing fixed dir {rel}"
+
+
+def test_scaffold_carries_the_js_intake_bucket(tmp_path: Path) -> None:
+    project_dir_ = ensure_project("proj-1", root=tmp_path / "data")
+
+    assert (project_dir_ / "recon" / "js-intake").is_dir()
+
+
+def test_scaffold_carries_the_js_analysis_bucket(tmp_path: Path) -> None:
+    project_dir_ = ensure_project("proj-1", root=tmp_path / "data")
+
+    assert (project_dir_ / "recon" / "js_analysis").is_dir()
+
+
+def test_scaffold_carries_the_js_retained_artifact_bucket(tmp_path: Path) -> None:
+    project_dir_ = ensure_project("proj-1", root=tmp_path / "data")
+
+    assert (project_dir_ / "recon" / "js-artifacts" / "blobs").is_dir()
+
+
+def test_scaffold_carries_the_js_client_side_publication_bucket(
+    tmp_path: Path,
+) -> None:
+    project_dir_ = ensure_project("proj-1", root=tmp_path / "data")
+
+    assert (project_dir_ / "js-client-side").is_dir()

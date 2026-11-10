@@ -23,7 +23,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from polymerhus.recon.control.jobs import JOBS
+from polymerhus.recon.control.jobs import JOBS, RETIRED_JS_JOBS, validate_job_names
 from polymerhus.recon.domain.types import JobSpec, PodExport
 
 logger = logging.getLogger(__name__)
@@ -48,6 +48,7 @@ class ReconScope(BaseModel):
     or a hunt's yellow `insufficient-evidence` gap) so the routed result knows
     what to refine."""
 
+    inventory_reference: str | None = None
     unit_id: str | None = None
     targets: list[str | dict] = Field(default_factory=list)
     auth_context: dict | None = None
@@ -148,6 +149,12 @@ async def request_targeted_recon(
         except Exception:  # registry write must never crash the caller either
             logger.warning("request_targeted_recon: registry write failed for cid=%s", cid, exc_info=True)
 
+    try:
+        if request.job in RETIRED_JS_JOBS:
+            validate_job_names([request.job])
+    except ValueError as exc:
+        _record('skipped',error=str(exc))
+        return TargetedReconResult(correlation_id=cid,requester_id=rid,origin=origin,status='error',error=str(exc))
     job: JobSpec | None = JOBS.get(request.job)
     if job is None:
         # Unknown tool: no registered pod machinery to reuse -> degrade, never raise.
@@ -156,8 +163,25 @@ async def request_targeted_recon(
         _record("skipped", error=msg)
         return TargetedReconResult(correlation_id=cid, requester_id=rid, origin=origin, status="error", error=msg)
 
-    input_assets = _build_input_assets(request.scope)
-    extra = _build_extra(request.scope)
+    if job.consumption.source == 'js_intake':
+        from polymerhus.recon.js_intake.reader import resolve_js_intake_reference
+        from polymerhus.recon.control.js_analysis_job import prepare_js_inventory
+        try:
+            binding=resolve_js_intake_reference(request.scope.inventory_reference or '')
+            if (binding.project_id,binding.run_id)!=(project_id,run_id):
+                raise ValueError('js_inventory_scope_mismatch')
+            unit=prepare_js_inventory(project_id=project_id,run_id=run_id,context_ref=binding.context_ref,
+                scope_domains=binding.scope_domains,allow_http_replay=binding.allow_http_replay)
+            input_assets=[unit]
+        except ValueError:
+            msg='js_analysis requires a valid same-run scoped inventory_reference'
+            _record('degraded',error=msg)
+            return TargetedReconResult(correlation_id=cid,requester_id=rid,origin=origin,status='degraded',error=msg)
+    else:
+        input_assets = _build_input_assets(request.scope)
+    extra = {} if job.consumption.source == 'js_intake' else _build_extra(request.scope)
+    if job.consumption.source == 'js_intake' and len(binding.scope_domains)==1:
+        extra['scope_domain']=binding.scope_domains[0]
     # The pod derives its write scope from extra["project_id"] (job_agent.py:213
     # `extra.get("project_id", run_id)`), exactly as the pipeline injects it
     # (pipeline.py:310). Without this the targeted job would curate L0 nodes under

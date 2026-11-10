@@ -169,6 +169,7 @@ async def _noop_pod_builder(spec, **kw):
 
 
 def _patch_pg(monkeypatch, fake):
+    monkeypatch.setattr("polymerhus.app.clients.pg.list_active_js_context_producers", lambda _: [])
     monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_stats", fake.set_hunting_run_stats)
@@ -415,6 +416,13 @@ def test_provider_abort_stops_the_runs_sessions_before_the_terminal(monkeypatch)
     dispatching, every hunter/pod), DRAINS them, and only then stamps
     `interrupted`."""
     from polymerhus.app.llm.provider_failure import ProviderUnavailableError
+
+    async def live_surfer(*args, **kwargs):
+        # This assertion concerns stopping a LIVE child. The empty real surfer
+        # may already quiesce before the fast injected provider abort is handled.
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr("polymerhus.attack.hunting.surfer.run_surfer_loop", live_surfer)
 
     fake = _FakePg()
     _patch_pg(monkeypatch, fake)

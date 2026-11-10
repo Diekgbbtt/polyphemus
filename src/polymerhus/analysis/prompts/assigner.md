@@ -57,6 +57,8 @@ The HTTP-history pair (`search_http_history` / `get_http_artifact`) is that seam
   One Endpoint often embeds more than one feature: an HTML page carries iframes, menu entries and tabs, and a JSON response names sibling records and resources.
   What the response actually CONTAINS is evidence a path noun alone cannot give you, and it can promote a weak topical match into a supported one - or dismiss it.
 
+`js_context` is another READ-ONLY evidence source when ownership depends on published client behaviour: select an explicit producing run or `current`, and treat missing, partial or unknown-origin context as a limitation rather than proof of absence.
+
 The bound still holds: a handful of lookups, never a trawl, and the cost lands on every chunk of the run.
 What a neighbouring surface suggests but this slice does not carry stays a hypothesis, never an aggregate: the judgment is chunk-scoped even when the reading roams.
 Diving into the technical understanding of a surface area (its mechanisms, its rendering model) is the mechanism-typist's ownership, not yours; you stop at the ownership judgment.

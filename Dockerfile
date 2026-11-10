@@ -5,6 +5,14 @@
 # directly and recreate the app runtime it used to bake in via
 # `requirements-app.txt`. prisma generate below assumes python 3.11 at
 # /usr/local (the pip site-packages path), which this base provides.
+FROM node:22.23.1-bookworm-slim AS sourcemap_parser_node
+
+FROM node:22.23.1-bookworm-slim AS sourcemap_parser_deps
+WORKDIR /parser
+COPY src/polymerhus/recon/js_acquisition/parser/package.json ./
+COPY src/polymerhus/recon/js_acquisition/parser/package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts
+
 FROM python:3.11-slim
 # Build/runtime system deps the pip wheels below may need (gcc/g++ for source
 # builds when no prebuilt manylinux wheel exists; git for any pip VCS install).
@@ -16,6 +24,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /srv
 COPY src/ /srv/src/
+COPY --from=sourcemap_parser_node /usr/local/bin/node /usr/local/bin/node
+COPY --from=sourcemap_parser_deps /parser/node_modules /srv/src/polymerhus/recon/js_acquisition/parser/node_modules
 COPY lightrag/*.py /srv/lightrag/
 COPY db/ /srv/db/
 COPY skills/ /srv/skills/

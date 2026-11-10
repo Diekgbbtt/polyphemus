@@ -419,6 +419,7 @@ def _recording_pass(seen: list):
 
 
 def _patch_pg(monkeypatch, fake: _ResumePg) -> None:
+    monkeypatch.setattr("polymerhus.app.clients.pg.list_active_js_context_producers", lambda _: [])
     monkeypatch.setattr(
         "polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
     monkeypatch.setattr(

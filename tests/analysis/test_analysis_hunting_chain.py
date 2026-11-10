@@ -43,9 +43,19 @@ class _Recorder:
 def _patch(monkeypatch, *, available=True, recorder=None, error=None):
     import polymerhus.attack.hunting.runtime as hunting_runtime
     import polymerhus.project_management.api as pm_api
+    import polymerhus.app.clients.pg as pg
 
+    async def inline_to_thread(fn, /, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "to_thread", inline_to_thread)
     monkeypatch.setattr(
         hunting_runtime, "hunting_control_plane_available", lambda: available
+    )
+    monkeypatch.setattr(
+        pg,
+        "run_has_js_analysis",
+        lambda run_id: True,
     )
     if error is not None:
         async def _launch(project_id, body):
@@ -66,6 +76,24 @@ def test_a_drained_analysis_launches_hunting(monkeypatch):
     _run(lifecycle._chain_hunting_on_drained("p1", "r1", "drained", enabled=True))
 
     assert [project for project, _ in recorder.calls] == ["p1"]
+    assert recorder.calls[0][1].producing_run_id == "r1"
+
+
+def test_drained_non_js_analysis_keeps_legacy_auto_chain(monkeypatch):
+    import polymerhus.app.clients.pg as pg
+
+    recorder = _Recorder()
+    _patch(monkeypatch, recorder=recorder)
+    monkeypatch.setattr(
+        pg,
+        "run_has_js_analysis",
+        lambda run_id: False,
+    )
+
+    _run(lifecycle._chain_hunting_on_drained("p1", "r1", "drained", enabled=True))
+
+    assert len(recorder.calls) == 1
+    assert recorder.calls[0][1].producing_run_id is None
 
 
 def test_an_unenabled_project_does_not_launch(monkeypatch):

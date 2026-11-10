@@ -526,7 +526,15 @@ HUNTING_ROLES: tuple[Role, ...] = (
     Role("pod_triager",          "LLM_POD_TRIAGER",          "session", "high"),
 )
 
-_ROLE_BY_ID: dict[str, Role] = {r.role_id: r for r in ROLES + HUNTING_ROLES}
+# Optional recon specialist: validate only at its opt-in dispatch, like hunting.
+JS_SPECIALIST_ROLES: tuple[Role, ...] = (
+    Role("js_specialist", "LLM_JS_SPECIALIST", "session", "medium"),
+)
+
+_ROLE_BY_ID: dict[str, Role] = {
+    role.role_id: role
+    for role in (*ROLES, *HUNTING_ROLES, *JS_SPECIALIST_ROLES)
+}
 
 
 def role_record(role_id: str) -> Role | None:

@@ -50,8 +50,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import selectors
+import signal
+import subprocess
 import sys
+import time
+from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
 # `//# sourceMappingURL=app.js.map` or `//@ sourceMappingURL=...map` - the last
@@ -288,6 +295,175 @@ def _foreign_chained_record(origin: str, foreign_base: str, rec: dict) -> dict |
         if isinstance(value, list) and value:
             out[key] = list(value)
     return out
+
+
+@dataclass(frozen=True)
+class JsluiceProcessResult:
+    """Bounded scanner execution metadata; raw stderr is deliberately absent."""
+
+    stdout: str
+    returncode: int | None
+    stderr_bytes: int = 0
+    timed_out: bool = False
+    output_exceeded: bool = False
+    error: str | None = None
+    duration_ms: int = 0
+
+
+def _terminate_process(proc) -> None:
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (AttributeError, OSError):
+        try:
+            proc.kill()
+        except OSError:
+            pass
+    try:
+        proc.wait(timeout=5)
+    except (AttributeError, subprocess.TimeoutExpired, OSError):
+        pass
+
+
+def run_bounded_process(
+    args: list[str],
+    *,
+    stdin_path: str | Path | None,
+    timeout_s: float,
+    max_output_bytes: int,
+) -> JsluiceProcessResult:
+    """Run a child while enforcing a combined stdout/stderr collection cap.
+
+    The cap is applied to bytes as they are read, never after unbounded
+    buffering. Timeout or overflow kills the process group and reaps it.
+    """
+
+    started = time.monotonic()
+    handle = None
+    proc = None
+    selector = selectors.DefaultSelector()
+    stdout = bytearray()
+    stderr_bytes = 0
+    total = 0
+    timed_out = False
+    output_exceeded = False
+    try:
+        stdin = subprocess.DEVNULL
+        if stdin_path is not None:
+            handle = open(stdin_path, "rb")
+            stdin = handle
+        proc = subprocess.Popen(
+            args,
+            stdin=stdin,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            bufsize=0,
+            start_new_session=True,
+        )
+        assert proc.stdout is not None
+        assert proc.stderr is not None
+        selector.register(proc.stdout, selectors.EVENT_READ, "stdout")
+        selector.register(proc.stderr, selectors.EVENT_READ, "stderr")
+        deadline = started + max(0.001, float(timeout_s))
+        while selector.get_map():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                timed_out = True
+                break
+            events = selector.select(min(0.05, remaining))
+            if not events:
+                continue
+            for key, _mask in events:
+                try:
+                    chunk = os.read(key.fd, 65536)
+                except OSError:
+                    chunk = b""
+                if not chunk:
+                    selector.unregister(key.fileobj)
+                    continue
+                available = max_output_bytes - total
+                kept = chunk if len(chunk) <= available else chunk[: max(0, available)]
+                if key.data == "stdout":
+                    stdout.extend(kept)
+                else:
+                    stderr_bytes += len(kept)
+                total += len(kept)
+                if len(chunk) > available:
+                    output_exceeded = True
+                    break
+            if output_exceeded:
+                break
+        if timed_out or output_exceeded:
+            _terminate_process(proc)
+        else:
+            try:
+                proc.wait(timeout=max(0.001, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                _terminate_process(proc)
+        returncode = proc.poll()
+        error = "timeout" if timed_out else (
+            "output_limit" if output_exceeded else None
+        )
+        return JsluiceProcessResult(
+            stdout=stdout.decode("utf-8", "replace"),
+            returncode=returncode,
+            stderr_bytes=stderr_bytes,
+            timed_out=timed_out,
+            output_exceeded=output_exceeded,
+            error=error,
+            duration_ms=int((time.monotonic() - started) * 1000),
+        )
+    except FileNotFoundError:
+        error = "binary_missing"
+    except PermissionError:
+        error = "binary_unavailable"
+    except OSError:
+        error = "process_start_failed"
+    finally:
+        selector.close()
+        if handle is not None:
+            handle.close()
+        if proc is not None and proc.poll() is None:
+            _terminate_process(proc)
+        if proc is not None:
+            for stream in (proc.stdout, proc.stderr):
+                try:
+                    stream.close()
+                except (AttributeError, OSError):
+                    pass
+    return JsluiceProcessResult(
+        stdout=stdout.decode("utf-8", "replace"),
+        returncode=None if proc is None else proc.poll(),
+        stderr_bytes=stderr_bytes,
+        timed_out=timed_out,
+        output_exceeded=output_exceeded,
+        error=error,
+        duration_ms=int((time.monotonic() - started) * 1000),
+    )
+
+
+def run_jsluice_file(
+    mode: str,
+    source_path: str | Path,
+    *,
+    executable: str = "jsluice",
+    timeout_s: float = 15,
+    max_output_bytes: int = 1024 * 1024,
+) -> JsluiceProcessResult:
+    """Run one local scan mode with raw-input stdin and no URL resolution."""
+
+    if mode not in {"urls", "secrets"}:
+        return JsluiceProcessResult(
+            stdout="",
+            returncode=None,
+            error="unsupported_mode",
+        )
+    return run_bounded_process(
+        [executable, mode, "-j"],
+        stdin_path=source_path,
+        timeout_s=timeout_s,
+        max_output_bytes=max_output_bytes,
+    )
 
 
 def bundle_origin(url: str) -> str:
