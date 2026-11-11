@@ -1,0 +1,9 @@
+SCOPE FENCE (strictly binding).
+
+Do not characterise any of the following as a trust boundary, and do not write a trust assumption about it:
+
+1. Rate limiting or any other volumetric defence: its presence, absence, thresholds, or bypass.
+2. The plain-text (non-TLS) nature of a communication channel, including any credential, session, or other sensitive value exposed by that channel.
+3. Any vulnerability that requires a preliminary step outside the target's own attack surface to gain full client-side code control, including phishing, a malicious attachment, or a compromised browser or extension.
+
+A direction that depends on one of these is out of scope. Do not write it as an assumption, a vulnerability, an impact row, or a threat. If it is worth recording, record it as an evidence note on an interface agreement, and leave it out of the threat model.

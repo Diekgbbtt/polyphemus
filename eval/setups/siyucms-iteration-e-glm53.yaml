@@ -1,0 +1,62 @@
+# Iteration E - hunting-only repetition on glm-5.3.
+#
+# The L0/L1 graph is the completed iteration-E rerun's graph, copied into a
+# fresh project by `duplicate_project.py`. This setup enters at hunting and
+# never creates a project, never re-runs recon, and never re-places the L1
+# scaffold. The seeded-trial gate (`--existing-project-id`, #277) asserts the
+# project and its L1 service count, then launches the hunting run.
+#
+# The frozen hunting policy is the same as iteration E:
+#   pipeline_sync            batched
+#   pod_batch_size           2
+#   promotion_risk_threshold 2.5  (inclusive, CVSS 4.0 points)
+#   risk_threshold           220  (the iteration-E rerun budget)
+#   token_budget             7000000
+#
+# The only model change is the instance `.env`: every LLM role is
+# `opencode-go:glm-5.3`. The live capability preflight
+# (`eval/preflight_llm_capability.py`) must pass before this trial starts.
+#
+# The threat-model scope fence is the reusable iteration-D verbatim, stored
+# verbatim in `settings.hunting.threat_model_scope` on the duplicated project
+# by `duplicate_project.py` (the setup's hunting block carries only the four
+# policy fields the setup schema knows; the scope is a project attribute, not
+# an eval-setup field). The seeded trial does not re-apply it.
+
+schema_version: 1
+
+artifact_store: /srv/eval-artifacts
+
+datasets:
+  - webexploitbench
+
+work_items:
+  - name: steel-browser-sessions
+    status: complete
+    required: true
+  - name: auth-bootstrap
+    status: complete
+    required: false
+  - name: l1-surface
+    status: complete
+  - name: hunting-artifacts
+    status: complete
+
+instances:
+  - instance_id: eval-server-2
+    env_file: eval-server-2/.env
+    targets:
+      - target_key: webexploitbench/siyucms
+        target_id: siyucms-web
+        target_run_id: itere-siyucms-web-glm53
+        start_phase: hunting
+        token_budget: 7000000
+        target_config:
+          operator_kb: /root/eval-dd/data/siyucms/operator_kb.md
+          data_dir: /root/eval-dd/data/siyucms
+          recon_jobs: [httpx, httpx_reprofile, katana, jsluice, arjun, steel_crawl]
+        hunting:
+          pipeline_sync: batched
+          pod_batch_size: 2
+          promotion_risk_threshold: 2.5
+          risk_threshold: 220
