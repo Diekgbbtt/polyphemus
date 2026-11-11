@@ -1,4 +1,4 @@
-# Iteration E - hunting-only repetition on glm-5.3.
+# Iteration E - hunting-only repetition on glm-5.3-flash.
 #
 # The L0/L1 graph is the completed iteration-E rerun's graph, copied into a
 # fresh project by `duplicate_project.py`. This setup enters at hunting and
@@ -14,7 +14,7 @@
 #   token_budget             7000000
 #
 # The only model change is the instance `.env`: every LLM role is
-# `opencode-go:glm-5.3`. The live capability preflight
+# `opencode-go:glm-5.3-flash`. The live capability preflight
 # (`eval/preflight_llm_capability.py`) must pass before this trial starts.
 #
 # The threat-model scope fence is the reusable iteration-D verbatim, stored
@@ -48,7 +48,7 @@ instances:
     targets:
       - target_key: webexploitbench/siyucms
         target_id: siyucms-web
-        target_run_id: itere-siyucms-web-glm53
+        target_run_id: itere-siyucms-web-glm53-flash
         start_phase: hunting
         token_budget: 7000000
         target_config:

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Drive the hunting-only iteration-E repetition on opencode-go/glm-5.3.
+# Drive the hunting-only iteration-E repetition on opencode-go/glm-5.3-flash.
 #
 # The target and the L0/L1 graph already exist. This driver:
-#   1. rewrites every LLM role env to opencode-go:glm-5.3 and recreates the
+#   1. rewrites every LLM role env to opencode-go:glm-5.3-flash and recreates the
 #      agent service so the container sees it;
 #   2. runs the live capability preflight (the go/no-go gate);
 #   3. duplicates the completed project into a fresh id (graph, settings,
@@ -18,7 +18,7 @@ export EVAL_INSTANCES_ROOT="${EVAL_INSTANCES_ROOT:-/opt/polymerhus-dev/eval/inst
 export EVAL_BRANCH="${EVAL_BRANCH:-eval-e}"
 export EVAL_DATA_ROOT="${EVAL_DATA_ROOT:-$EVAL_INSTANCES_ROOT/data/eval-server-2}"
 export EVAL_ALIGNMENT_STATE="${EVAL_ALIGNMENT_STATE:-$EVAL_REPO/eval/state/alignment.yaml}"
-export EVAL_RUNS_ROOT="${EVAL_RUNS_ROOT:-$EVAL_REPO/eval/runs-iteration-e-glm53-20261111}"
+export EVAL_RUNS_ROOT="${EVAL_RUNS_ROOT:-$EVAL_REPO/eval/runs-iteration-e-glm53-flash-20261111}"
 export EVAL_GROUND_TRUTH="${EVAL_GROUND_TRUTH:-/root/WebExploitBench/siyucms}"
 export EVAL_CORPUS="${EVAL_CORPUS:-/root/utm-groundtruth}"
 export EVAL_TARGET_RUN_ID="${EVAL_TARGET_RUN_ID:-itere-siyucms-web-glm53}"
@@ -63,13 +63,13 @@ if [ ! -f "$EXP_DIR/duplicate_project.py" ]; then
   exit 1
 fi
 
-# 1. Rewrite every LLM role to glm-5.3 and recreate the agent.
+# 1. Rewrite every LLM role to glm-5.3-flash and recreate the agent.
 ENV_FILE="$INSTANCE_DIR/.env"
 if [ ! -f "$ENV_FILE" ]; then
   echo "== instance .env missing"
   exit 1
 fi
-cp -a "$ENV_FILE" "$ENV_FILE.pre-glm53"
+cp -a "$ENV_FILE" "$ENV_FILE.pre-glm53-flash"
 python3 - "$ENV_FILE" <<'PY'
 import pathlib
 import re
@@ -84,23 +84,23 @@ keys = (
     "LLM_HUNTING_THREAT_MODELLER",
 )
 for key in keys:
-    text, count = re.subn(rf"^{key}=.*$", f"{key}=opencode-go:glm-5.3", text,
+    text, count = re.subn(rf"^{key}=.*$", f"{key}=opencode-go:glm-5.3-flash", text,
                           flags=re.M)
     if count == 0:
         raise SystemExit(f"{key} is not present in {path}")
 path.write_text(text, encoding="utf-8")
 missing = [key for key in keys
-           if not re.search(rf"^{key}=opencode-go:glm-5\.3$", text, flags=re.M)]
+           if not re.search(rf"^{key}=opencode-go:glm-5\.3-flash$", text, flags=re.M)]
 if missing:
     raise SystemExit(f"rewrite failed for {missing}")
-print(f"== rewrote {len(keys)} role env keys to opencode-go:glm-5.3")
+print(f"== rewrote {len(keys)} role env keys to opencode-go:glm-5.3-flash")
 PY
 if [ "$?" -ne 0 ]; then
   echo "== model env rewrite failed; stopping"
   exit 1
 fi
 
-echo "== recreate agent with the glm-5.3 env $(date -u +%FT%TZ)"
+echo "== recreate agent with the glm-5.3-flash env $(date -u +%FT%TZ)"
 (
   cd "$INSTANCE_DIR" || exit 1
   # The instance `.env` carries a stale INSTANCE_DATA_ROOT from the
@@ -133,7 +133,7 @@ echo "== agent API ready"
 # 2. Live capability preflight (the go/no-go gate).
 echo "== capability preflight $(date -u +%FT%TZ)"
 docker exec -i -e PROJECT_ID=llm-capability-preflight "$AGENT" \
-  python3 - --provider opencode-go --model glm-5.3 \
+  python3 - --provider opencode-go --model glm-5.3-flash \
   --role hunting_threat_modeller --thinking xhigh --thinking high \
   < "$EVAL_REPO/eval/preflight_llm_capability.py" \
   > "$PREFLIGHT"
