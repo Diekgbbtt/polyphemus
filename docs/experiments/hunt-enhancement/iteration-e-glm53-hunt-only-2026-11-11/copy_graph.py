@@ -50,7 +50,7 @@ def _label_clause(labels: list[str]) -> str:
 
 
 def _type_clause(rel_type: str) -> str:
-    return "`" + rel_type.replace("`", "``") + "`"
+    return ":`" + rel_type.replace("`", "``") + "`"
 
 
 def main() -> int:

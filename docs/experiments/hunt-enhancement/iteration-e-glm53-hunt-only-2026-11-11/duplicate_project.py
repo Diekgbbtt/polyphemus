@@ -123,6 +123,10 @@ def load_seed_module():
     spec = importlib.util.spec_from_file_location("seed_iteration_e", SEED_SCRIPT)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
+    # Python 3.14's dataclass processing resolves string annotations through
+    # `sys.modules[cls.__module__]`; a dynamically loaded module must be
+    # registered under its spec name before `exec_module` runs.
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -353,14 +357,22 @@ def main() -> int:
         f"minted {sum(1 for _s, ok, _e in results if ok)}/{len(results)}")
 
     # 5. Assert the new project carries no hunting state. The data root is the
-    # agent's `/srv/data/<new>` bind, which is the host path below.
+    # agent's `/srv/data/<new>` bind, which is the host path below. Project
+    # creation scaffolds empty module directories, so the hunting directory may
+    # exist but must hold no artifact; remove the empty scaffold so the new hunt
+    # starts from a pristine root.
+    import shutil
+
     new_dir = data_root / new
     hunting_dir = new_dir / "hunting"
     if hunting_dir.exists():
-        raise SystemExit(
-            f"new project unexpectedly carries hunting state at {hunting_dir}; "
-            "refusing to run a contaminated hunt"
-        )
+        artifacts = [path for path in hunting_dir.rglob("*") if path.is_file()]
+        if artifacts:
+            raise SystemExit(
+                f"new project unexpectedly carries {len(artifacts)} hunting "
+                f"artifact file(s) under {hunting_dir}; refusing a contaminated hunt"
+            )
+        shutil.rmtree(hunting_dir)
     runs = psql_count(
         postgres,
         f"SELECT count(*) FROM hunting_runs WHERE project_id = '{new}'",
