@@ -410,7 +410,7 @@ def test_note_written_on_p3_and_read_by_triager(tmp_path, monkeypatch):
         AIMessage(content="", tool_calls=[
             {"name": "exec", "args": {"command": "curl -k -sS https://t/"}, "id": "c1"}]),
         AIMessage(content="", tool_calls=[
-            {"name": "notes", "args": {"command": "write", "order": 0,
+            {"name": "notes", "args": {"command": "write",
                                       "note_name": "experiment",
                                       "kind": "experiment_summary",
                                       "body": "the default probe returned HTTP 404 "
@@ -566,7 +566,7 @@ def test_tool_contract_rejects_foreign_params(tmp_path):
             return super()._run(**kwargs)
 
     tool = SpyTool(store=store, spec_id="spec-x")
-    rejected = tool.invoke({"command": "write", "order": 0,
+    rejected = tool.invoke({"command": "write",
                             "note_name": "x", "kind": "experiment_summary",
                             "body": "consolidation", "surprise_field": "oops"})
     assert "notes_args_rejected" in rejected

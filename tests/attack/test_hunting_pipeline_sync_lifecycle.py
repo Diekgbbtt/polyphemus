@@ -20,7 +20,6 @@ from polymerhus.attack.hunting.pipeline_sync import (
     RunSyncGate, SyncMode, hunting_artifacts_terminal,
 )
 from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore
-from polymerhus.attack.hunting.pod_export_memory import PodExportStore
 from polymerhus.attack.hunting.threat_model_store import ThreatModelStore
 from tests.hunting_fixtures import produce_model
 from polymerhus.attack.hunting import surfer as surfer_mod
@@ -140,7 +139,6 @@ def test_surfer_degraded_pod_export_is_durable(tmp_path):
     returned without a PodExport, so the consumed spec was re-dispatched
     forever.
     """
-    pod_exports = PodExportStore(tmp_path / "pod-export")
     pod = PodMemoryStore(tmp_path / "pod")
     hunt = "u1__threat-1"
     spec = {
@@ -158,7 +156,7 @@ def test_surfer_degraded_pod_export_is_durable(tmp_path):
 
     export = asyncio.run(run_pod_session(
         spec=spec, project_id=PROJECT, run_id=RUN, hunt_key=hunt,
-        spec_id="spec__f__keep", inbox=None, pod_export_store=pod_exports,
+        spec_id="spec__f__keep", inbox=None,
         gate=None, pod_builder=_raising_builder, pod_store=pod,
     ))
 

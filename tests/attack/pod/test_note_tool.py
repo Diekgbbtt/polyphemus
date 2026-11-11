@@ -1,4 +1,4 @@
-"""Unit tier: T1 (#177) - the pod `note` tool (D84-20/27/32/36).
+"""Unit tier: T1 (#177) - the pod `notes` tool (D84-20/27/32/36).
 
 `PodNoteTool(BaseTool)` with `args_schema=NoteToolSpec` (`extra="forbid"` -
 D84-22: a wrong parameter FAILS as a rejected tool call before `_run`), a
@@ -6,15 +6,17 @@ write/read operation discriminator, coded contract rejections
 (`NOTES_ARGS_REJECTED` / `NOTES_EMPTY_BODY` / `NOTES_BAD_KIND` /
 `NOTES_NO_STORE`), and fail-open on a None store (O10). Reads return the note
 body prompt-verbatim and un-truncated (D84-19.2). T1: the tool rides the
-per-project deterministic-key store - the write's `variant_ref` is the integer
-`order` (D84-36), notes keyed `<spec_id>:<order>:<note_name>`, and the read
-surface gains the typed attribute filters (`order`, `kind`, `classification`,
-`symptom_status`). The wiring proof binds the tool into a real `create_agent`
-ReAct loop on a FAKE chat model - no live LLM.
+per-project deterministic-key store - the current variant ORDER is bound from
+the runtime log, not supplied by the model; notes are keyed
+`<spec_id>:<order>:<note_name>`, and the read surface keeps the typed attribute
+filters (`kind`, `classification`, `symptom_status`) plus the substring filters.
+The wiring proof binds the tool into a real `create_agent` ReAct loop on a FAKE
+chat model - no live LLM.
 """
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
 from langchain_core.messages import AIMessage
@@ -30,7 +32,6 @@ from polymerhus.attack.hunting.pod.note_tool import (
     PodNoteTool,
 )
 from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore, note_key
-import json
 
 SPEC = {
     "target_identity": {"url": "http://soupmarket.shop/", "unit_id": "service:web:soupmarket"},
@@ -52,15 +53,16 @@ def spec_id():
     return SPEC_ID
 
 
-def _tool(*, store, spec_id):
-    return PodNoteTool(store=store, spec_id=spec_id)
+def _tool(*, store, spec_id, order: int = 0):
+    return PodNoteTool(store=store, spec_id=spec_id,
+                       variant_ref=f"v{int(order)}")
 
 
 # --- direct invocation: write / read round-trip -------------------------------
 
 def test_tool_write_persists_a_note_and_reads_it_back_verbatim(store, spec_id):
     tool = _tool(store=store, spec_id=spec_id)
-    out = tool.invoke({"command": "write", "order": 0, "note_name": "experiment",
+    out = tool.invoke({"command": "write", "note_name": "experiment",
                        "kind": "experiment_summary",
                        "body": "space exhausted; no new primitive",
                        "classification": "symptom-absent", "symptom_status": "clean",
@@ -74,7 +76,7 @@ def test_tool_write_persists_a_note_and_reads_it_back_verbatim(store, spec_id):
     assert read_variant_summary(store, spec_id, 0) == "space exhausted; no new primitive"
     assert store.read_notes(spec_id) == []
 
-    read = tool.invoke({"command": "read", "kind": "experiment_summary", "order": 0})
+    read = tool.invoke({"command": "read", "kind": "experiment_summary"})
     assert "space exhausted; no new primitive" in read
 
 
@@ -83,45 +85,51 @@ def test_tool_read_returns_the_body_prompt_verbatim_and_untruncated(store, spec_
     long_body = "symptom absent on " + "; ".join(f"probe-{i:03d}" for i in range(450))
     assert len(long_body) > 1200
     tool = _tool(store=store, spec_id=spec_id)
-    tool.invoke({"command": "write", "order": 0, "note_name": "experiment",
+    tool.invoke({"command": "write", "note_name": "experiment",
                  "kind": "experiment_summary", "body": long_body})
-    read = tool.invoke({"command": "read", "kind": "experiment_summary", "order": 0})
+    read = tool.invoke({"command": "read", "kind": "experiment_summary"})
     assert "symptom absent on " in read
     assert "probe-449" in read
     assert read.count("probe-") == 450
 
 
 def test_tool_read_zero_matches_is_a_graceful_empty_result(store, spec_id):
-    out = _tool(store=store, spec_id=spec_id).invoke(
-        {"command": "read", "order": 9})
+    out = _tool(store=store, spec_id=spec_id, order=9).invoke(
+        {"command": "read"})
     assert "no notes matched" in out.lower()
 
 
 # --- the typed attribute read filters (D84-36) --------------------------------
 
 def test_tool_read_kind_and_classification_filters(store, spec_id):
-    tool = _tool(store=store, spec_id=spec_id)
-    tool.invoke({"command": "write", "order": 0, "note_name": "a",
-                 "kind": "kb_insight", "body": "payload family X"})
-    tool.invoke({"command": "write", "order": 1, "note_name": "b",
-                 "kind": "freeform", "body": "consolidation",
-                 "classification": "symptom-absent"})
+    tool0 = _tool(store=store, spec_id=spec_id, order=0)
+    tool0.invoke({"command": "write", "note_name": "a",
+                  "kind": "kb_insight", "body": "payload family X"})
+    tool1 = _tool(store=store, spec_id=spec_id, order=1)
+    tool1.invoke({"command": "write", "note_name": "b",
+                  "kind": "freeform", "body": "consolidation",
+                  "classification": "symptom-absent"})
     # The kb_insight/freeform notes accumulate in notes.yaml (D84-35); the kind
-    # filter ranges them. An experiment_summary read ranges the log slice.
-    kind_hits = tool.invoke({"command": "read", "kind": "kb_insight"})
+    # filter ranges them. The read is scoped to the bound current variant.
+    kind_hits = tool0.invoke({"command": "read", "kind": "kb_insight"})
     assert "payload family X" in kind_hits
     assert "consolidation" not in kind_hits
-    class_hits = tool.invoke({"command": "read", "classification": "symptom-absent"})
-    assert "consolidation" in class_hits
+    class_hits = tool0.invoke({"command": "read", "classification": "symptom-absent"})
+    assert "consolidation" not in class_hits
+    class_hits_1 = tool1.invoke({"command": "read",
+                                 "classification": "symptom-absent"})
+    assert "consolidation" in class_hits_1
 
 
-def test_tool_read_order_filter_returns_only_that_variant(store, spec_id):
-    tool = _tool(store=store, spec_id=spec_id)
-    tool.invoke({"command": "write", "order": 0, "note_name": "n",
-                 "kind": "freeform", "body": "first variant"})
-    tool.invoke({"command": "write", "order": 1, "note_name": "n",
-                 "kind": "freeform", "body": "second variant"})
-    hit = tool.invoke({"command": "read", "order": 1})
+def test_tool_read_is_scoped_to_the_bound_variant(store, spec_id):
+    _tool(store=store, spec_id=spec_id, order=0).invoke(
+        {"command": "write", "note_name": "n",
+         "kind": "freeform", "body": "first variant"})
+    _tool(store=store, spec_id=spec_id, order=1).invoke(
+        {"command": "write", "note_name": "n",
+         "kind": "freeform", "body": "second variant"})
+    hit = _tool(store=store, spec_id=spec_id, order=1).invoke(
+        {"command": "read"})
     assert "second variant" in hit
     assert "first variant" not in hit
 
@@ -131,10 +139,10 @@ def test_tool_read_symptom_status_filter(store, spec_id):
     the `note` tool, passed through to `read_notes` (the store owns the match).
     Notes accumulate in notes.yaml (D84-35); the filter ranges them."""
     tool = _tool(store=store, spec_id=spec_id)
-    tool.invoke({"command": "write", "order": 0, "note_name": "a",
+    tool.invoke({"command": "write", "note_name": "a",
                  "kind": "kb_insight", "body": "payload family X",
                  "symptom_status": "clean"})
-    tool.invoke({"command": "write", "order": 1, "note_name": "b",
+    tool.invoke({"command": "write", "note_name": "b",
                  "kind": "freeform", "body": "partial",
                  "symptom_status": "blocked"})
     clean_hits = tool.invoke({"command": "read", "symptom_status": "clean"})
@@ -143,16 +151,16 @@ def test_tool_read_symptom_status_filter(store, spec_id):
     blocked_hits = tool.invoke({"command": "read", "symptom_status": "blocked"})
     assert "partial" in blocked_hits
     assert "payload family X" not in blocked_hits
-    # Combines with the order filter.
-    both = tool.invoke({"command": "read", "symptom_status": "clean", "order": 0})
+    # Combines with the bound order filter.
+    both = tool.invoke({"command": "read", "symptom_status": "clean"})
     assert "payload family X" in both
     assert "partial" not in both
 
 
-# --- T4: the raw experiment-log slice read by order (D84-27) ------------------
+# --- T4: the raw experiment-log slice read by the bound order (D84-27) --------
 # The key-list renders the experiment-log identifier <spec_id>/<order>; the note
-# tool's read must let the agent address that raw D6 slice body by order - not
-# only the consolidated experiment_summary.
+# tool's read must let the agent address that raw D6 slice body - for the
+# current variant, which is the only slice the stretch owns.
 
 def test_tool_read_returns_the_raw_experiment_log_slice_by_order(store, spec_id):
     store.write_experiment_log(spec_id, 0, {
@@ -163,7 +171,7 @@ def test_tool_read_returns_the_raw_experiment_log_slice_by_order(store, spec_id)
         "executed": ["sig-1"],
     })
     out = _tool(store=store, spec_id=spec_id).invoke(
-        {"command": "read", "kind": "experiment_log", "order": 0})
+        {"command": "read", "kind": "experiment_log"})
     assert f"{spec_id}/0" in out            # the deterministic identifier
     assert "sig-1" in out                   # the full D6 slice body
     assert "not found" in out
@@ -172,15 +180,16 @@ def test_tool_read_returns_the_raw_experiment_log_slice_by_order(store, spec_id)
 
 
 def test_tool_read_experiment_log_zero_matches_is_graceful(store, spec_id):
-    out = _tool(store=store, spec_id=spec_id).invoke(
-        {"command": "read", "kind": "experiment_log", "order": 9})
+    out = _tool(store=store, spec_id=spec_id, order=9).invoke(
+        {"command": "read", "kind": "experiment_log"})
     assert "no experiment log" in out.lower()
 
 
-def test_tool_read_experiment_log_needs_the_order(store, spec_id):
-    out = _tool(store=store, spec_id=spec_id).invoke(
-        {"command": "read", "kind": "experiment_log"})
-    assert json.loads(out)["error"].startswith(NOTES_ARGS_REJECTED)
+def test_tool_read_experiment_log_does_not_accept_a_model_order(store, spec_id):
+    out = json.loads(_tool(store=store, spec_id=spec_id).invoke(
+        {"command": "read", "kind": "experiment_log", "order": 9}))
+    assert out["error"] == "notes_args_rejected"
+    assert "order" in out["fields"]
 
 
 # --- extra="forbid": a wrong parameter is rejected before _run -----------------
@@ -189,7 +198,7 @@ def test_unknown_parameter_is_rejected_by_the_args_schema(store, spec_id):
     """F-015: the extra field is a coded teaching rejection, never a bare raise,
     and it names the unknown field and the accepted contract."""
     tool = _tool(store=store, spec_id=spec_id)
-    out = json.loads(tool.invoke({"command": "write", "order": 0,
+    out = json.loads(tool.invoke({"command": "write",
                                   "note_name": "n", "kind": "freeform",
                                   "body": "x", "bogus_param": 1}))
     assert out["ok"] is False
@@ -207,8 +216,8 @@ def test_unknown_parameter_never_reaches_run(store, spec_id):
             calls.append(kwargs)
             return super()._run(**kwargs)
 
-    tool = SpyTool(store=store, spec_id=spec_id)
-    out = json.loads(tool.invoke({"command": "read", "order": 0,
+    tool = SpyTool(store=store, spec_id=spec_id, variant_ref="v0")
+    out = json.loads(tool.invoke({"command": "read",
                                   "nonsense": 2}))
     assert out["ok"] is False
     assert out["error"] == "notes_args_rejected"
@@ -220,14 +229,14 @@ def test_unknown_parameter_never_reaches_run(store, spec_id):
 
 def test_empty_body_is_a_coded_rejection(store, spec_id):
     out = _tool(store=store, spec_id=spec_id).invoke(
-        {"command": "write", "order": 0, "note_name": "n",
+        {"command": "write", "note_name": "n",
          "kind": "freeform", "body": "   "})
     assert json.loads(out)["error"].startswith(NOTES_EMPTY_BODY)
 
 
 def test_bad_kind_is_a_coded_rejection(store, spec_id):
     out = _tool(store=store, spec_id=spec_id).invoke(
-        {"command": "write", "order": 0, "note_name": "n",
+        {"command": "write", "note_name": "n",
          "kind": "hypothesis_refusal", "body": "x"})
     assert json.loads(out)["error"].startswith(NOTES_BAD_KIND)
     assert store.read_notes(spec_id) == []          # nothing persisted
@@ -236,7 +245,7 @@ def test_bad_kind_is_a_coded_rejection(store, spec_id):
 
 def test_no_store_is_a_coded_rejection_for_writes(spec_id):
     out = PodNoteTool(store=None, spec_id=spec_id).invoke(
-        {"command": "write", "order": 0, "note_name": "n",
+        {"command": "write", "note_name": "n",
          "kind": "freeform", "body": "x"})
     assert json.loads(out)["error"].startswith(NOTES_NO_STORE)
 
@@ -245,7 +254,7 @@ def test_no_store_is_a_coded_rejection_for_writes(spec_id):
 
 def test_no_store_reads_fail_open_never_raise(spec_id):
     out = PodNoteTool(store=None, spec_id=spec_id).invoke(
-        {"command": "read", "order": 0})
+        {"command": "read"})
     assert "no pod memory" in out.lower()
 
 
@@ -275,7 +284,7 @@ def test_no_store_create_agent_loop_still_concludes(spec_id):
 
     factory = lambda role: Fake(replies=[  # noqa: E731
         AIMessage(content="", tool_calls=[{"name": "notes", "id": "c1", "args": {
-            "command": "write", "order": 0, "note_name": "n",
+            "command": "write", "note_name": "n",
             "kind": "freeform", "body": "x"}}]),
         AIMessage(content="concluded"),
     ])
@@ -321,13 +330,13 @@ def test_create_agent_loop_write_wrong_param_and_read(store, spec_id):
 
     factory = lambda role: Fake(replies=[  # noqa: E731
         AIMessage(content="", tool_calls=[{"name": "notes", "id": "c1", "args": {
-            "command": "write", "order": 0, "note_name": "experiment",
+            "command": "write", "note_name": "experiment",
             "kind": "experiment_summary", "body": "the summary", "bogus": 1}}]),
         AIMessage(content="", tool_calls=[{"name": "notes", "id": "c2", "args": {
-            "command": "write", "order": 0, "note_name": "experiment",
+            "command": "write", "note_name": "experiment",
             "kind": "experiment_summary", "body": "the summary"}}]),
         AIMessage(content="", tool_calls=[{"name": "notes", "id": "c3", "args": {
-            "command": "read", "order": 0}}]),
+            "command": "read"}}]),
         AIMessage(content="done"),
     ])
 
@@ -335,7 +344,8 @@ def test_create_agent_loop_write_wrong_param_and_read(store, spec_id):
         return await arun_session_turn(
             "pod_runner", "t",
             [HumanMessage(content="write the summary then read it back")],
-            checkpointer=InMemorySaver(), tools=[_tool(store=store, spec_id=spec_id)],
+            checkpointer=InMemorySaver(),
+            tools=[_tool(store=store, spec_id=spec_id)],
             model_factory=factory, observe=False)
 
     turn = asyncio.run(_drive())
@@ -355,15 +365,16 @@ def test_notes_args_rejected_code_is_declared():
 
 # --- #209: the coded teaching rejection ---------------------------------------
 
-def test_malformed_write_is_a_coded_teaching_rejection(store, spec_id):
-    """#209: a malformed note call is a CODED teaching rejection (the D84-22
-    'rejected call' refinement) - the threat sees the code and self-corrects,
-    never a silent degrade. A write without the variant order is rejected with
-    `NOTES_ARGS_REJECTED` naming the missing field."""
+def test_model_supplied_order_is_a_coded_teaching_rejection(store, spec_id):
+    """The harness owns the variant order. A model-supplied `order` is an
+    unknown field, rejected with `NOTES_ARGS_REJECTED` naming it; nothing is
+    persisted under a guessed order."""
     out = _tool(store=store, spec_id=spec_id).invoke(
-        {"command": "write", "note_name": "n", "kind": "freeform", "body": "x"})
-    assert json.loads(out)["error"].startswith(NOTES_ARGS_REJECTED)
-    assert "order" in out  # the detail names the missing variant order
+        {"command": "write", "order": 1, "note_name": "n",
+         "kind": "freeform", "body": "x"})
+    parsed = json.loads(out)
+    assert parsed["error"] == "notes_args_rejected"
+    assert "order" in parsed["fields"]  # the rejection names the field
     assert store.read_notes(spec_id) == []  # nothing persisted
 
 

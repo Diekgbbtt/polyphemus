@@ -192,10 +192,10 @@ class ExperimentLog:
             return
         try:
             for order in self.store.list_variant_orders(self.spec_id):
-                current = self.store.read_experiment_log(self.spec_id, order)
-                if isinstance(current, dict) and current.get("experiment_summary"):
-                    current.pop("experiment_summary")
-                    self.store.write_experiment_log(self.spec_id, order, current)
+                self.store.update_experiment_log(
+                    self.spec_id, order,
+                    lambda current: {k: v for k, v in current.items()
+                                     if k != "experiment_summary"})
         except Exception:  # noqa: BLE001 - fail-open (O3)
             pass
 
@@ -259,24 +259,27 @@ class ExperimentLog:
             return
         try:
             from polymerhus.attack.hunting.pod.pod_memory import variant_ref
-            current = self.store.read_experiment_log(self.spec_id, order)
-            slice = {
-                "order": int(order),
-                "variant_ref": variant_ref(order),
-                "raw_observations": [
-                    o.model_dump() for o in self.raw_observations
-                    if self._order_of(o.variant_ref) == order],
-                "kb_observations": [
-                    k.model_dump() for k in self.kb_observations
-                    if self._order_of(k.variant_ref) == order],
-                "interpretations": [
-                    i.model_dump() for i in self.interpretations
-                    if self._order_of(i.variant) == order],
-                "executed": list(self.executed),
-            }
-            if isinstance(current, dict) and current.get("experiment_summary"):
-                slice["experiment_summary"] = current["experiment_summary"]
-            self.store.write_experiment_log(self.spec_id, order, slice)
+
+            def _rebuild(current: dict) -> dict:
+                slice = {
+                    "order": int(order),
+                    "variant_ref": variant_ref(order),
+                    "raw_observations": [
+                        o.model_dump() for o in self.raw_observations
+                        if self._order_of(o.variant_ref) == order],
+                    "kb_observations": [
+                        k.model_dump() for k in self.kb_observations
+                        if self._order_of(k.variant_ref) == order],
+                    "interpretations": [
+                        i.model_dump() for i in self.interpretations
+                        if self._order_of(i.variant) == order],
+                    "executed": list(self.executed),
+                }
+                if current.get("experiment_summary"):
+                    slice["experiment_summary"] = current["experiment_summary"]
+                return slice
+
+            self.store.update_experiment_log(self.spec_id, order, _rebuild)
         except Exception:  # noqa: BLE001 - fail-open (O3: the caller warns/keeps serving)
             pass
 

@@ -32,6 +32,8 @@ Drive each stretch as ONE reasoning threat: perceive a tool result, interpret it
 
 # Memory
 The pod memory key-list and the note reading contract arrive in your lap opener. Index the keys and call the `notes` tool's read operation for any note body you need - there is no deterministic retrieval stage.
+The notes tool is bound to the current variant; never supply an order.
+If the harness opens a summary-recovery turn, write the missing `experiment_summary` immediately from the current trail. Do not run new probes.
 
 # Constraints
 - You can see every probe already executed in the experiment log; never re-issue an identical chain - derive a genuinely new one or confirm the space exhausted.

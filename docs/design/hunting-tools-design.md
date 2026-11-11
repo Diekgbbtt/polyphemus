@@ -166,8 +166,8 @@ all three tools:
 - `evidence: str|None` stays PROSE. `provenance` is the structured slot and
   becomes a TYPED `NoteProvenance` sub-model with `extra="forbid"`:
   `source: str=""` (the design-pinned pod-session-id home, spec §6), `run_id:
-  str=""`, `verdict_stub: bool=False` (the surfer's durable-export trio,
-  `surfer.py::_record_durable_pod_export`) plus `probe_refs: list[str]=[]`
+  str=""`, `verdict_stub: bool=False` (the legacy durable-export marker; the
+  pod-export notes store was retired on 2026-11-11) plus `probe_refs: list[str]=[]`
   (the model's structured evidence refs, e.g. `exec:SPA shell`, ratified by
   #209). A residual dict-valued `evidence` call returns the coded rejection
   teaching that structured refs go in `provenance` and `evidence` is prose.

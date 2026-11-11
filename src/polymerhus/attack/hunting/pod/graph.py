@@ -72,6 +72,7 @@ from langgraph.types import Command, TimeoutPolicy
 from polymerhus.attack.hunting.pod.agents import (
     default_divergence_fn,
     default_runner_step_fn,
+    default_summary_repair_fn,
     default_terminal_fn,
     default_triage_fn,
     default_triager_fn,
@@ -106,7 +107,10 @@ from polymerhus.attack.hunting.pod.llm import (
     PodHarnessContext,
     bind_pod_session,
 )
-from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore
+from polymerhus.attack.hunting.pod.pod_memory import (
+    PodMemoryStore,
+    read_variant_summary,
+)
 from polymerhus.attack.hunting.pod.symbolic import evaluate_symptom
 from polymerhus.attack.hunting.pod.tools import (
     command_signature,
@@ -513,21 +517,13 @@ def _pod_error_handler(state: PodState, error: NodeError) -> Command:
     )
 
 
-def _degraded_terminal(state: PodState) -> dict:
-    """Write the typed failure terminal from the pod's durable trail."""
-    reason = state.get("terminal_reason") or TECHNICAL_INFEASIBILITY
-    error = state.get("error")
-    return _export(
-        state, verdict="unsuccessful", reason=reason, clean=False, error=error)
-
-
 def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
                     triager_stages=None,
                     runner_middleware=(), triager_middleware=(),
                     memory_store=None, model_factory=None,
                     project_id=None, spec_id=None, graph_view_fn=None,
                     replay_fn=None, timeouts: PodTimeouts | None = None,
-                    browser_tool=None):
+                    browser_tool=None, summary_repair_fn=None):
     """Compile the pod subgraph, injecting the side-effecting collaborators:
 
     - `exec_fn(command, timeout_s) -> ExecResult` - the terminal (required).
@@ -564,11 +560,17 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
     - `timeouts` - the pod graph's node and tool bounds. The defaults are the
       pod's own idle/run budgets; the surfer's watchdog is a backstop above
       them.
+    - `summary_repair_fn(spec, messages, tool_calls)` - the one terminal
+      summary-recovery turn. The production default is
+      `default_summary_repair_fn`; a contract-tier caller may pass its own or
+      `None` to disable recovery.
     """
     timeouts = timeouts or DEFAULT_POD_TIMEOUTS
     if runner_step_fn is None:
         runner_step_fn = default_runner_step_fn
         production_runner = True
+        if summary_repair_fn is None:
+            summary_repair_fn = default_summary_repair_fn
     else:
         production_runner = False
     if triager_fn is None:
@@ -998,26 +1000,97 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
 
     # --- terminals -------------------------------------------------------------
 
-    def terminal(state: PodState) -> dict:
+    async def _ensure_summary(state: PodState, *, reason: str) -> None:
+        """Ask the Runner for the missing terminal summary before finalizing.
+
+        The deterministic terminal layer verifies the current variant's
+        experiment-log slice. A domain terminal that reached the end without a
+        non-empty `experiment_summary` gets ONE focused repair turn on the same
+        `pod_runner` session. A hard infrastructure teardown (node, tool,
+        context, graph, or watchdog timeout) is skipped: its live graph context
+        may be gone, and a fabricated summary would be worse than an honest
+        absence. The repair never loops; the finalizer logs a remaining gap.
+        """
+        if summary_repair_fn is None or memory_store is None or not state.get("log"):
+            return
+        if state.get("init_validation"):
+            return
+        if reason in HARNESS_TERMINAL_REASONS and reason != BUDGET_TIMEOUT:
+            return
+        mem_key = _mem_key(state, spec_id, memory_store)
+        order = _variant_order(state)
+        try:
+            if read_variant_summary(memory_store, mem_key, order).strip():
+                return
+        except Exception as exc:  # noqa: BLE001 - a read failure is not proof of absence
+            logger.warning(
+                "pod summary check failed for %s order %s (%s); attempting "
+                "one recovery turn", mem_key, order, exc)
+        delta = _dicts_to_lc([{
+            "role": "human",
+            "content": (
+                "# Summary recovery\n"
+                "This stretch reached its terminal without a non-empty "
+                "experiment_summary for the current variant. Write ONE "
+                "consolidated experiment_summary with the notes tool now, using "
+                "only the observations, interpretations, and KB observations "
+                "already in this variant's experiment log. Do not run new "
+                "probes and do not write any other note kind. Conclude after "
+                "the summary write."
+            ),
+        }])
+        try:
+            with bind_pod_session(
+                state.get("run_id") or POD_DEFAULT_RUN_ID, "", mem_key,
+                role_id=POD_RUNNER_ROLE,
+                middleware=runner_middleware,
+                harness=_harness_ctx(
+                    state, exec_fn=exec_fn, memory_store=memory_store,
+                    model_factory=model_factory, spec_id=spec_id,
+                    graph_view_fn=graph_view_fn, project_id=project_id,
+                    replay_fn=replay_fn, browser_tool=browser_tool),
+            ):
+                await _await_seam(
+                    summary_repair_fn, state.get("spec") or {}, delta,
+                    state.get("tool_calls", 0))
+        except Exception as exc:  # noqa: BLE001 - recovery is best-effort
+            logger.warning(
+                "pod summary recovery turn failed for %s order %s (%s)",
+                mem_key, order, exc)
+            return
+        try:
+            if not read_variant_summary(memory_store, mem_key, order).strip():
+                logger.warning(
+                    "pod terminal for %s order %s still has no "
+                    "experiment_summary after one recovery turn", mem_key, order)
+        except Exception as exc:  # noqa: BLE001 - observability only
+            logger.warning(
+                "pod summary re-check failed for %s order %s (%s)",
+                mem_key, order, exc)
+
+    async def terminal(state: PodState) -> dict:
         init_v = state.get("init_validation") or []
         if init_v:
             return _export(state, verdict="unsuccessful", reason=TECHNICAL_INFEASIBILITY,
                            clean=False, init_validation=init_v)
         decision = state.get("decision", {})
+        reason = decision.get("terminal_reason", SPACE_EXHAUSTED)
+        await _ensure_summary(state, reason=reason)
         clean = decision.get("clean") if isinstance(decision.get("clean"), bool) \
             else _clean_from_trail(state["log"])
         return _export(state, verdict=decision.get("verdict", "unsuccessful"),
-                       reason=decision.get("terminal_reason", SPACE_EXHAUSTED), clean=clean)
+                       reason=reason, clean=clean)
 
-    def infeasible_terminal(state: PodState) -> dict:
+    async def infeasible_terminal(state: PodState) -> dict:
         # The runner's INIT-gate Phase-1 rejection: assumptions the evidence
         # contradicts, with the feasibility probes already in the trail.
         step = _step(state)
         unverified = step.unverified or ["load-bearing assumptions could not be verified"]
+        await _ensure_summary(state, reason=TECHNICAL_INFEASIBILITY)
         return _export(state, verdict="unsuccessful", reason=TECHNICAL_INFEASIBILITY,
                        clean=False, init_validation=unverified)
 
-    def exhausted_terminal(state: PodState) -> dict:
+    async def exhausted_terminal(state: PodState) -> dict:
         log: ExperimentLog = state["log"]
         if not state.get("stretch_obs", 0):
             # S5 8.5: THIS stretch authored no probe (the old empty-vector
@@ -1026,21 +1099,38 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
             # The scope is the current stretch, not the whole run: a prior
             # stretch's clean observation cannot launder a later no-probe
             # variant into `space-exhausted`.
+            await _ensure_summary(state, reason=NO_SYMPTOM_EVIDENCE)
             return _export(state, verdict="unsuccessful",
                            reason=NO_SYMPTOM_EVIDENCE, clean=False)
         clean = _clean_from_trail(log)
+        reason = SPACE_EXHAUSTED if clean else NO_SYMPTOM_EVIDENCE
+        await _ensure_summary(state, reason=reason)
         return _export(state, verdict="unsuccessful",
-                       reason=SPACE_EXHAUSTED if clean else NO_SYMPTOM_EVIDENCE, clean=clean)
+                       reason=reason, clean=clean)
 
-    def budget_terminal(state: PodState) -> dict:
+    async def budget_terminal(state: PodState) -> dict:
+        await _ensure_summary(state, reason=BUDGET_TIMEOUT)
         return _export(state, verdict="unsuccessful", reason=BUDGET_TIMEOUT, clean=False)
+
+    async def degraded_terminal(state: PodState) -> dict:
+        """Write the typed failure terminal from the pod's durable trail.
+
+        A domain-like degrade (the pod's own budget) gets the summary-recovery
+        turn. A hard infrastructure teardown is skipped by `_ensure_summary`.
+        """
+        reason = state.get("terminal_reason") or TECHNICAL_INFEASIBILITY
+        error = state.get("error")
+        await _ensure_summary(state, reason=reason)
+        return _export(
+            state, verdict="unsuccessful", reason=reason, clean=False,
+            error=error)
 
     g = StateGraph(PodState)
     for name, fn in [("init", init), ("mint_variant", mint_variant),
                      ("terminal", terminal), ("infeasible_terminal", infeasible_terminal),
                      ("exhausted_terminal", exhausted_terminal),
                      ("budget_terminal", budget_terminal),
-                     ("degraded_terminal", _degraded_terminal)]:
+                     ("degraded_terminal", degraded_terminal)]:
         g.add_node(name, fn)
 
     node_timeout = _timeout_policy(timeouts.node_idle_s, timeouts.node_run_s)

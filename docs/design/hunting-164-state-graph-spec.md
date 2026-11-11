@@ -235,9 +235,9 @@ through the tool surface but never model-trusted (the write boundary is a harnes
 - **The note-key rule**: a note is keyed `<config_key>:<note_name>`; the durable pod-export note is keyed
   `<config_key>:pod-export:<spec_id>` with action `update` (one current record per (config, spec) - one
   TestImplementationSpec yields at most one PodExport), and the pod session id lives ONLY in
-  `provenance["source"]`, never in the key. **As of #209, `provenance` is a TYPED `NoteProvenance` sub-model**
+  `provenance["source"]`, never in the key. **2026-11-11: the durable pod-export note is RETIRED.** The canonical terminal export is the pod's own `<spec_id>/<run_id>.yaml`; the `PodExportStore` and its `<config_key>:pod-export:<spec_id>` key are removed, and the `pod_export` inbox message is a notification only. `provenance.verdict_stub` remains a legacy read marker for an old hunter notes file. **As of #209, `provenance` is a TYPED `NoteProvenance` sub-model**
   (the JSON schema the model sees declares it): `source` (the pod-session-id home, pinned here), `run_id`,
-  `verdict_stub` (the surfer's durable-export trio, `surfer.py::_record_durable_pod_export`), and `probe_refs`
+  `verdict_stub` (the legacy durable-export marker; its writer was retired on 2026-11-11), and `probe_refs`
   (the model's structured evidence refs, ratified by #209). `evidence` is prose `str`; structured refs never go
   there - a dict-valued `evidence` is a coded teaching rejection.
 

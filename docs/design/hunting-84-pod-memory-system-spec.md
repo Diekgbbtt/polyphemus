@@ -29,6 +29,28 @@ memorization kernel (the note store semantics + the note tool) as-is.
 The `declined_attribute` field now carries the variant basis from `docs/design/hunting-67-test-executor-pod-spec.md` section 8.6.
 The other records are unchanged.
 
+## Amendment 2026-11-11: terminal-record ownership
+
+The pod terminal record now has one deterministic owner per fact.
+The earlier contract let the Runner choose the summary order and let the surfer write a second full export copy.
+That produced the three observed failure modes: summaries on phantom orders, no summary when P3 was bypassed, and a 3.6 MB durable note store.
+
+- The `notes` tool no longer accepts `order`.
+  The pod harness binds the current variant order from the runtime `ExperimentLog.variant_specs` sequence.
+  Writes and reads address the current stretch only; a model-supplied `order` is a coded rejection.
+- `PodMemoryStore` is the one writer of the experiment-log file.
+  Its `update_experiment_log` read-modify-writes under a per-file lock, so the capture middleware and the summary write cannot lose each other's update.
+- Every domain terminal verifies the current variant's `experiment_summary`.
+  When it is empty, the graph asks the same `pod_runner` session for one recovery turn with only the `notes` tool bound.
+  A hard infrastructure teardown skips the recovery turn: its live context may be gone, and a fabricated summary is never acceptable.
+  The finalizer performs the last-layer check and logs a remaining gap; it never invents a summary.
+- The pod-owned `<spec_id>/<run_id>.yaml` is the only terminal `PodExport` record.
+  The retired `hunting/pod-export/notes.yaml` durable note duplicated the export and is no longer written.
+  The Q16 within-run live feed remains a notification only.
+- No new terminal-status field is written.
+  A missing summary is observable by the absence of `experiment_summary`, and the pod export carries the terminal reason.
+  The recovery turn is the structural remedy; the absence is not papered over with a synthetic record.
+
 Lineage: the pod spec is `docs/design/hunting-67-test-executor-pod-spec.md`; the underlying decisions are
 `docs/design/hunting-84-regrounding-decisions.md`. The spec identifier is minted by the #164 hunter
 (`docs/design/hunting-164-state-graph-spec.md`, in the `hunting-164-state-graph` worktree).
@@ -124,9 +146,9 @@ data/<project_id>/test-executor-pod/
    `notes.yaml`, so that kb insights and freeform notes accumulate read-latest without `_seq`/`_ref` bookkeeping.
 8. As the test-executor pod, I want no `_seq`/`_ref` on any record, so that the deterministic key plus the natural
    list order disambiguate every artifact.
-9. As the test-executor pod, I want the reading tool to accept typed attribute filters (`order`, `kind`,
-   `classification`, `symptom_status`) on top of the substring filters, so that I can address an artifact without a
-   counter.
+9. As the test-executor pod, I want the reading tool to accept typed attribute filters (`kind`,
+   `classification`, `symptom_status`) on top of the substring filters, so that I can address an artifact in the
+   current stretch without a counter.
 10. As the test-executor pod, I want the experiment log to be a PURE log, with no tool capability for the LLM to
     write it, so that the D6 trail is a faithful record of deterministic write stages only.
 11. As the test-executor pod, I want KB-query responses recorded into the experiment log deterministically in
@@ -197,9 +219,10 @@ data/<project_id>/test-executor-pod/
 ### 4. Attribute addressability and the removal of `_seq`/`_ref` (D84-36, VERDICTED)
 
 - Notes keyed `<fault>_<strategy>:<order>:<note_name>` (adapting the old `notation_key` to the new identity).
-- The reading tool gains typed attribute filters: `order` (the variant ordinal), `kind`, `classification`,
-  `symptom_status` become first-class read filters, retaining `parent_key` / `key_keyword` / `body_keyword`
-  substring match.
+- The reading tool gains typed attribute filters: `kind`, `classification`, and `symptom_status`, retaining
+  `parent_key` / `key_keyword` / `body_keyword` substring match.
+  The 2026-11-11 amendment removes the `order` filter: the tool is bound to the current stretch, so an explicit
+  order is neither needed nor accepted from the model.
 - No `_seq`/`_ref` on any record (`D84-32`'s canonical field set drops both). Ordering within a file is the natural
   list order; reads are latest-first by list position.
 - Update/replace semantics displace counters: a re-run of the same (spec, order) REWRITES the experiment-log file
@@ -275,9 +298,11 @@ The `experiment_summary` is still the terminal record of the variant's experimen
 
 ### 10. The `note` tool and the kernel kept as-is
 
-- `PodNoteTool`'s contract is retained verbatim: discriminated `operation` (write/read), `extra="forbid"` args
+- `PodNoteTool`'s contract keeps the discriminated `operation` (write/read), `extra="forbid"` args
   schema, coded rejections (`NOTES_ARGS_REJECTED` / `NOTES_EMPTY_BODY` / `NOTES_BAD_KIND` / `NOTES_NO_STORE`),
-  fail-open on a `None` store (O10).
+  and fail-open on a `None` store (O10).
+  The 2026-11-11 amendment removes the model-supplied `order`: the harness binds the current variant order from
+  the runtime log, and the tool reads and writes that stretch only.
 - The closed note-kind enum and the reread-latest grep-match semantics are unchanged.
 - The `experiment_summary` kind's WRITE SINK changes: it routes to the variant's experiment-log file (D84-35), not
   `notes.yaml`. The read of a summary ranges the experiment-log body.

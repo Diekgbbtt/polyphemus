@@ -390,7 +390,7 @@ def test_runner_tools_note_tool_rejects_a_storeless_instance(tmp_path):
                                ExperimentLog(), "v0")
     note = next(t for t in tools if t.name == "notes")
     assert isinstance(note, PodNoteTool)
-    out = note.invoke({"command": "write", "order": 0, "note_name": "n",
+    out = note.invoke({"command": "write", "note_name": "n",
                        "kind": "freeform", "body": "x"})
     assert "NOTES_NO_STORE" in out
 

@@ -237,6 +237,58 @@ async def default_runner_step_fn(spec: dict, messages: list, tool_calls: int) ->
                       thought=content, observation_note=content)
 
 
+async def default_summary_repair_fn(spec: dict, messages: list,
+                                    tool_calls: int) -> RunnerStep:
+    """The terminal summary-recovery turn.
+
+    The normal Runner writes the `experiment_summary` as its P3 final tool call.
+    If a domain terminal is reached without one, the graph asks the SAME
+    `pod_runner` session for the missing summary through this focused turn: the
+    note tool is the only tool bound, so the repair can record the consolidation
+    but cannot run new probes.
+
+    The note tool is bound to the current variant's order from the harness log,
+    so the recovery turn writes the correct slice even when the normal turn
+    skipped P3. Hard infrastructure teardowns (node/tool/watchdog timeouts) do
+    not call this turn: their graph context may be gone, and a fabricated
+    summary is never acceptable."""
+    from polymerhus.app.llm.session import arun_session_turn  # noqa: PLC0415
+    from polymerhus.attack.hunting.pod.llm import (  # noqa: PLC0415
+        pod_harness,
+        pod_middleware,
+        pod_session,
+    )
+    from polymerhus.attack.hunting.pod.note_tool import PodNoteTool  # noqa: PLC0415
+
+    ctx = pod_session()
+    hc = pod_harness()
+    if ctx is None or hc is None:
+        raise RuntimeError(
+            "no bound pod session/harness for the summary-recovery turn")
+    from polymerhus.app.auth.seams import auth_capable_binding  # noqa: PLC0415
+
+    # The repair turn rides the SAME role binding (and therefore the same
+    # artifact-declared skill index) as the normal Runner turn, so it cannot
+    # diverge from the stretch's configured context. Only the notes tool is
+    # bound: the repair records the consolidation and cannot run new probes.
+    binding = auth_capable_binding(
+        ctx.address.role_id, task_skills=hc.task_skills,
+        project_id=getattr(hc.capture_context, "project_id", "") or None,
+        with_readonly_auth_store=True)
+    tools = [PodNoteTool(store=hc.memory_store, spec_id=hc.spec_id,
+                         log=hc.log, variant_ref=hc.variant_ref or "")]
+    turn = await arun_session_turn(
+        ctx.address.role_id, ctx.address, list(messages),
+        checkpointer=ctx.checkpointer, tools=tools,
+        middleware=list(pod_middleware()) + binding.middleware,
+        context=binding.context,
+        usage_scope=getattr(hc.capture_context, "project_id", "") or "",
+        system_prompt=load_pod_runner_skill(), model_factory=hc.model_factory)
+    content = str(getattr(turn, "content", None) or "")
+    return RunnerStep(action="conclude", exhausted=True, thought=content,
+                      observation_note=content)
+
+
 async def default_triager_fn(spec: dict, observation: RawObservation,
                              messages: list, log) -> dict:
     """The PRODUCTION Triager (D84-23): a `stateful_turn` over the typed
@@ -445,7 +497,8 @@ def runner_react_tools(exec_fn, memory_store, spec_id, log, variant_ref, *,
     tools = [
         ExecTool(exec_fn=exec_fn, log=log, variant_ref=variant_ref,
                  capture_context=capture_context),
-        PodNoteTool(store=memory_store, spec_id=spec_id),
+        PodNoteTool(store=memory_store, spec_id=spec_id, log=log,
+                    variant_ref=variant_ref),
     ]
     tools += [KbQueryTool(log=log, variant_ref=variant_ref)]
     tools += _graph_view_tools(graph_view_fn)
@@ -504,7 +557,8 @@ def triager_react_tools(memory_store, spec_id, *, kb_fn=None, kb_lookup=None,
     from polymerhus.attack.hunting.pod.note_tool import PodNoteTool  # noqa: PLC0415
     from polymerhus.attack.hunting.pod.tools import KbQueryTool  # noqa: PLC0415
 
-    tools = [PodNoteTool(store=memory_store, spec_id=spec_id)]
+    tools = [PodNoteTool(store=memory_store, spec_id=spec_id, log=log,
+                         variant_ref=variant_ref)]
     tools += [KbQueryTool(log=log, variant_ref=variant_ref)]
     tools += _graph_view_tools(graph_view_fn)
     if browser_tool is not None:

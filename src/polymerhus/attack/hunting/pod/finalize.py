@@ -22,6 +22,10 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from polymerhus.attack.hunting.pod.context import ExperimentLog
+from polymerhus.attack.hunting.pod.pod_memory import (
+    order_of,
+    read_variant_summary,
+)
 from polymerhus.attack.hunting.pod.types import (
     DOMAIN_TERMINAL_REASONS,
     HARNESS_TERMINAL_REASONS,
@@ -109,6 +113,75 @@ def _clear_resume(store: Any, spec_id: str, run_id: str) -> None:
         clear(spec_id, run_id)
     except Exception as exc:  # noqa: BLE001 - cleanup is best-effort
         logger.warning("pod resume cursor cleanup failed (%s)", exc)
+
+
+def _terminal_order(
+    store: Any,
+    spec_id: str,
+    run_id: str,
+    log: ExperimentLog | None,
+) -> int:
+    """The variant order the pod terminated on.
+
+    The in-memory log is authoritative when present (its `variant_specs` list
+    is the symbolic variant sequence). Otherwise the resume cursor names the
+    last variant, and a bare store falls back to the highest persisted order.
+    """
+    if log is not None and log.variant_specs:
+        return len(log.variant_specs) - 1
+    reader = getattr(store, "read_resume", None)
+    if reader is not None:
+        try:
+            cursor = reader(spec_id, run_id) or {}
+        except Exception:  # noqa: BLE001 - the cursor is best-effort
+            cursor = {}
+        raw_order = cursor.get("last_order")
+        if raw_order is not None:
+            try:
+                return int(raw_order)
+            except (TypeError, ValueError):
+                pass
+        ref = cursor.get("current_variant_ref")
+        if ref:
+            return order_of(str(ref))
+    lister = getattr(store, "list_variant_orders", None)
+    if lister is not None:
+        try:
+            orders = lister(spec_id)
+        except Exception:  # noqa: BLE001 - the check is best-effort
+            orders = []
+        if orders:
+            return max(orders)
+    return 0
+
+
+def _check_terminal_summary(
+    store: Any,
+    spec_id: str,
+    run_id: str,
+    log: ExperimentLog | None,
+) -> None:
+    """The finalizer's last-layer check for the current variant's summary.
+
+    The graph's terminal gate asks the Runner for a missing summary. The
+    finalizer verifies the result and records a remaining gap; it never writes
+    a synthetic summary, because a hard teardown may have destroyed the live
+    context and a fabricated consolidation would be false evidence.
+    """
+    if store is None or not spec_id:
+        return
+    order = _terminal_order(store, spec_id, run_id, log)
+    try:
+        summary = read_variant_summary(store, spec_id, order)
+    except Exception as exc:  # noqa: BLE001 - the check never gates the export
+        logger.warning(
+            "pod terminal summary check failed for %s order %s (%s)",
+            spec_id, order, exc)
+        return
+    if not summary.strip():
+        logger.warning(
+            "pod terminal %s/%s order %s has no experiment_summary",
+            spec_id, run_id, order)
 
 
 def _assemble(
@@ -201,6 +274,7 @@ def finalize_pod(
                     existing = {}
                 if existing and not replace_existing:
                     _clear_resume(store, spec_key, run_key)
+                    _check_terminal_summary(store, spec_key, run_key, log)
                     return existing
 
         if envelope is not None:
@@ -246,6 +320,7 @@ def finalize_pod(
                         "envelope (%s)", exc)
                     return built
             _clear_resume(store, spec_key, run_key)
+        _check_terminal_summary(store, spec_key, run_key, log)
         return built
 
 

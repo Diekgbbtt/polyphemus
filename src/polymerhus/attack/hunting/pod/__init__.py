@@ -33,8 +33,8 @@ from polymerhus.attack.hunting.pod.pod_memory import (
     PodMemoryStore,
     compose_memory_guidance,
     note_key,
-    spec_identifier,
 )
+from polymerhus.attack.hunting.spec_contract import spec_identifier
 from polymerhus.attack.hunting.pod.types import (
     PodExport,
     TestImplementationSpec,

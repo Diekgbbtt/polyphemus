@@ -135,7 +135,7 @@ The two hunting memory stores carry a **status-varying schema by design**, becau
   `testing_pattern`, `payload_vector_space`, and `interpretation_guidance` are retired.
   The store key is the threat dispatch id `<unit_name>__<threat_id>`; the folder is `test-specs/<hunt_key>/`.
   **Superseded 2026-10-18** by `docs/design/hunting-67-hunting-agent-spec.md` section 8.6.
-- **The spec identity is the file-name stem** `<fault_keyword>_<strategy_keyword>` (the ADR #169 Q13 semantic `spec_id`, the pod session discriminator, the `pod-export:<spec_id>` note key). It is a DERIVED symbol (Rule 1 / #298): a typed `specified` payload carries no `spec_id` field, so any consumer needing the identity derives it from the file name (or the payload's `fault_keyword` / `strategy_keyword`), never reads a payload `spec_id`.
+- **The spec identity is the file-name stem** `<fault_keyword>_<strategy_keyword>` (the ADR #169 Q13 semantic `spec_id`, the pod session discriminator; the former `pod-export:<spec_id>` note key was retired on 2026-11-11). It is a DERIVED symbol (Rule 1 / #298): a typed `specified` payload carries no `spec_id` field, so any consumer needing the identity derives it from the file name (or the payload's `fault_keyword` / `strategy_keyword`), never reads a payload `spec_id`.
 
 The consumer rule this pins:
 

@@ -198,7 +198,7 @@ def test_runner_turn_binds_note_on_the_same_agent(tmp_path):
     spec_id = SPEC_ID
     replies = [
         AIMessage(content="", tool_calls=[
-            {"name": "notes", "args": {"command": "write", "order": 0,
+            {"name": "notes", "args": {"command": "write",
                                       "note_name": "experiment",
                                       "kind": "experiment_summary",
                                       "body": "the consolidated summary"},

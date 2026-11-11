@@ -168,9 +168,12 @@ clear and is not wired.
 
 **Amended by the identity-based surfer refactor (2026-08-25):** the durable
 parent-keyed record is written at POD COMPLETION, keyed by the parent's `config_key`
-- independent of whether any live hunter inbox exists. The idle-loop inbox delivery
-is a within-run LIVE FEED (a notification the co-running hunter may consume for the
-future verdict-processing node, D67-02/D11/D67-14), never a dispatch gate: a
+- independent of whether any live hunter inbox exists. **Amended 2026-11-11:** the
+durable note is retired; the pod's own `<spec_id>/<run_id>.yaml` is the canonical
+terminal export, and the parent-side join comes from the spec store's hunt key. The
+idle-loop inbox delivery is a within-run LIVE FEED (a notification the co-running
+hunter may consume for the future verdict-processing node, D67-02/D11/D67-14), never
+a dispatch gate: a
 produced `specified` spec is dispatchable on ITS OWN persisted status, even when its
 parent config was consumed by an earlier run (no live parent in this run). The export
 is never lost to a crash between dispatch and an in-memory inbox consumption.
@@ -183,6 +186,14 @@ the `pod-export:` marker + the semantic `<fault>_<strategy>` spec id) with actio
 yields at most one PodExport. The pod session id lives ONLY in `provenance["source"]`,
 never in the note key, so the key stays round-trippable (`config_key_from_fault_key`
 and the parent-read filters line up on the canonical config identity).
+
+**Amended 2026-11-11: the durable note is retired.** The pod's own
+`<spec_id>/<run_id>.yaml` is the canonical terminal `PodExport`; the ONE finalizer
+writes it and the mover's completion gate reads it. The `hunting/pod-export/notes.yaml`
+record duplicated that file and had no production reader, so `PodExportStore` and
+its surfer/runtime wiring are removed. The within-run `pod_export` inbox message
+remains an optional live feed only. A parent-side reader joins through the spec
+store's hunt key and reads the canonical export file.
 
 ### Q17 - Session lifecycle surface
 
@@ -255,8 +266,9 @@ a stub for now.
 - The pod's spec identity moves from the canonical hash to `<fault>_<strategy>`; the
   pod reconciliation is a wiring ticket item.
 - #164's verdict-consumption detail (a hunter's idle handling of a PodExport) is
-  stubbed; a future ticket owns the real verdict processing workflow. The refactor
-  makes the durable export record parent-keyed and crash-safe (Q16 amendment).
+  stubbed; a future ticket owns the real verdict processing workflow. The canonical
+  export is the pod's own crash-safe `<spec_id>/<run_id>.yaml`; the 2026-11-11
+  amendment retired the duplicate parent-keyed note.
 - The refactor CONVERGES identity on the semantic `config_key` (Q13): the `fault_key`
   folder stays the physical address; the `config_key` is the JOIN key across the
   hunter/pod families. One round-trip helper, no dual-key drift.

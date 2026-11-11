@@ -51,13 +51,16 @@ section 6).
 """
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 import yaml
 
 from polymerhus.app.atomic_write import write_text_atomic
 from polymerhus.app.data_root import project_dir
-from polymerhus.attack.hunting.spec_contract import spec_identifier
+from polymerhus.attack.hunting.spec_contract import (  # noqa: F401 - public re-export
+    spec_identifier,
+)
 
 # The hunting module's data seam (D84-33): the `test-executor-pod/` bucket
 # under `DATA_ROOT/<project_id>/hunting/`, resolved through the ONE
@@ -124,6 +127,40 @@ def order_of(ref: str | None) -> int:
     return 0
 
 
+def current_variant_order(log: object | None, variant_ref: str | None) -> int:
+    """The order of the CURRENT stretch, derived from the runtime log.
+
+    The log's `variant_specs` list is the symbolic owner of the variant
+    sequence: the index of the current ref is the order. The ref spelling is
+    only a fallback for a log-less caller (the contract tier). A model never
+    supplies this value."""
+    ref = str(variant_ref or "")
+    variants = getattr(log, "variant_specs", None) or ()
+    for index, variant in enumerate(variants):
+        if getattr(variant, "ref", None) == ref:
+            return index
+    return order_of(ref)
+
+
+def _experiment_log_lock(spec_id: str, order: int) -> threading.RLock:
+    """The per-experiment-log write lock.
+
+    The capture middleware and the summary write both read-modify-write the
+    same whole-file slice. The lock makes the read and the write one critical
+    section, so neither can drop the other's field."""
+    key = (str(spec_id), int(order))
+    with _LOCK_GUARD:
+        lock = _LOCKS.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            _LOCKS[key] = lock
+        return lock
+
+
+_LOCK_GUARD = threading.Lock()
+_LOCKS: dict[tuple[str, int], threading.RLock] = {}
+
+
 # The persistent SYSTEM-side block (D84-27, D84-36): the tool contract + kinds +
 # the two bodies + the typed read filters, re-presented in every lap opener and
 # triager delta.
@@ -139,15 +176,17 @@ Kinds (closed enum):
   variant's experiment-log slice as its terminal record
 - kb_insight - a knowledge-base-derived testing primitive worth carrying forward
 - freeform - any forward-useful note
+The tool is bound to the CURRENT variant: writes and reads address this
+stretch's experiment-log slice and note records. The harness owns the order;
+the model never supplies it.
 Read filters (combinable or singular):
-- order - the variant ordinal (int)
 - kind / classification / symptom_status - typed attribute filters
-- parent_key - the exact spec or variant prefix to range over (e.g. "<spec_id>:0")
+- parent_key - the exact spec or variant prefix to range over
 - key_keyword - a case-insensitive substring of the note key
 - body_keyword - a case-insensitive substring of the note body
-Read the EXPERIMENT-LOG body by its identifier: command=read with kind=experiment_log
-and order=<N> returns the variant's persisted D6 slice (raw_observations, kb_observations,
-interpretations, executed) verbatim; kind=experiment_summary returns its consolidated summary.
+Read the EXPERIMENT-LOG body with kind=experiment_log to get this variant's
+persisted D6 slice (raw_observations, kb_observations, interpretations,
+executed) verbatim; kind=experiment_summary returns its consolidated summary.
 A read returns matching notes newest-first, with each note's full body verbatim."""
 
 
@@ -257,8 +296,29 @@ class PodMemoryStore:
         `interpretations` / `executed` and (as its terminal record, D84-35) the
         `experiment_summary`. A write failure raises for the caller to degrade
         (O3)."""
+        with _experiment_log_lock(spec_id, order):
+            self._write_experiment_log_unlocked(spec_id, order, slice)
+
+    def _write_experiment_log_unlocked(
+        self, spec_id: str, order: int, slice: dict,
+    ) -> None:
         path = self._experiment_log_file(spec_id, order)
         write_text_atomic(path, yaml.safe_dump(slice, sort_keys=False))
+
+    def update_experiment_log(self, spec_id: str, order: int, update) -> dict:
+        """Read-modify-write ONE experiment-log slice under its file lock.
+
+        `update` receives the current dict and returns the new dict. The whole
+        sequence is one critical section, so the capture middleware and the
+        summary write cannot lose each other's update. A write failure raises
+        for the caller to degrade (O3)."""
+        with _experiment_log_lock(spec_id, order):
+            current = self.read_experiment_log(spec_id, order)
+            updated = update(dict(current))
+            if not isinstance(updated, dict):
+                raise TypeError("experiment-log update must return a dict")
+            self._write_experiment_log_unlocked(spec_id, order, updated)
+            return updated
 
     def read_experiment_log(self, spec_id: str, order: int) -> dict:
         """The variant's persisted experiment-log slice, or {} when absent. A
@@ -370,12 +430,19 @@ class PodMemoryStore:
         """The `experiment_summary` terminal record (D84-35): set it on the
         variant's experiment-log slice and overwrite the file idempotently. The
         summary is ONE per variant; a re-write replaces it (read resolves the
-        current truth). Returns the note key for the tool's acknowledgement."""
-        current = self.read_experiment_log(spec_id, order)
-        current["order"] = int(order)
-        current["variant_ref"] = variant_ref(order)
-        current["experiment_summary"] = body
-        self.write_experiment_log(spec_id, order, current)
+        current truth). Returns the note key for the tool's acknowledgement.
+
+        The read-modify-write runs under the slice's lock, so a concurrent
+        observation write cannot drop the summary and the summary cannot drop
+        a concurrent observation."""
+
+        def _set_summary(current: dict) -> dict:
+            current["order"] = int(order)
+            current["variant_ref"] = variant_ref(order)
+            current["experiment_summary"] = body
+            return current
+
+        self.update_experiment_log(spec_id, order, _set_summary)
         return note_key(spec_id, order, "experiment_summary")
 
     # -- notes record mechanics ----------------------------------------------
@@ -544,4 +611,4 @@ def compose_memory_guidance(store: PodMemoryStore | None, spec_id: str) -> str:
     if log_ids:
         lines.append("# Experiment logs")
         lines.extend(f"- {i}" for i in log_ids)
-    return f"\n".join(lines) + f"\n\n{MEMORY_READ_GUIDANCE}"
+    return "\n".join(lines) + f"\n\n{MEMORY_READ_GUIDANCE}"

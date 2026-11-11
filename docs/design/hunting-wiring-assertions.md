@@ -110,9 +110,9 @@ States: `registered` -> `executing` (`arun_pod`) -> `settled` (export persisted 
 
 ### Pod export durability (ADR Q16 amendment)
 - C36 - pod completion persists the export envelope durably: `<project>/test-executor-pod/<spec_id>/<run_id>.yaml` exists and EQUALS the envelope returned; a second identical run (same run_id) overwrites one file (idempotent).
-- C37 - the DURABLE parent-keyed record is written at pod completion under the parent's `config_key`, independent of a live parent session: `HunterMemoryStore` note exists with the export payload even when the idle loop never ran (crash-between-dispatch-and-consume window closed).
-- C37b - the durable record is keyed `<config_key>:pod-export:<spec_id>` with action `update` (note_name `pod-export:<spec_id>`): the note key contains NO `:`-session-id path, the pod session id is recoverable from `provenance["source"]`, and a re-export of the same (config, spec) updates the same key (one current record per spec, #199).
-- C38 - a live co-running parent inbox (config_key present) ALSO receives the `pod_export` message BEFORE the pod settles (settle can never overtake); the idle loop consumes without double-recording (one note per export).
+- C37 - the canonical terminal export is written at pod completion independent of a live parent session: `<spec_id>/<run_id>.yaml` exists even when the idle loop never ran (crash-between-dispatch-and-consume window closed). The former durable parent-keyed note is retired (2026-11-11).
+- C37b - RETIRED with the pod-export notes store. The pod session id remains recoverable from `provenance["source"]` on old records only; new runs write no note.
+- C38 - a live co-running parent inbox (config_key present) ALSO receives the `pod_export` message BEFORE the pod settles (settle can never overtake); it is a notification only and never re-authors the canonical export file.
 
 ## Walkthrough predicates (e2e - live stack)
 

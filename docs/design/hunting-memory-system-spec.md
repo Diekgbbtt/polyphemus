@@ -260,7 +260,9 @@ The memory + status lifecycle is synergistic in two directions:
   evicted until the list fits a documented record count OR serialized-size ceiling, so the rewrite cost is O(bound).
   The hunter `notes.yaml` protects the durable prior-insight records (the Q16 pod-export stubs, `provenance.verdict_stub`,
   consumed by `read_hunter_notes` into a config's `prior_hunt_insights`) from ordinary eviction; the bound is absolute
-  and the newest record is always kept whole. The reader contract is unchanged - one complete parseable file at all
+  and the newest record is always kept whole. The pod-export notes store was retired on 2026-11-11: the canonical
+  terminal export is the pod's own `<spec_id>/<run_id>.yaml`, and `provenance.verdict_stub` remains a legacy read
+  marker for an old hunter notes file only. The reader contract is unchanged - one complete parseable file at all
   times. See `docs/design/hunting-memory-growth-341-adr.md`.
 - **The persisted environment state IS the fault-processing tracker** (G10): the created fault configs express
   which faults are done (ratified), in-progress (hypothesised), or left (absent) - `run.md` is removed as

@@ -43,7 +43,6 @@ from polymerhus.attack.hunting.mover import (
     threat_modeller_session_id,
 )
 from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore
-from polymerhus.attack.hunting.pod_export_memory import PodExportStore
 from polymerhus.attack.hunting.surfer import surfer_session_id
 from polymerhus.attack.hunting.threat_model_store import ThreatModelStore
 from polymerhus.attack.hunting.threat_modeller import UnitOutcome
@@ -189,10 +188,6 @@ def stores(tmp_path):
         PodMemoryStore(root_dir=tmp_path / "pod"),
     )
 
-
-@pytest.fixture
-def pod_exports(tmp_path):
-    return PodExportStore(tmp_path / "pod-export")
 
 
 async def _wait_until(pred, timeout=5):
@@ -660,12 +655,12 @@ def _write_spec(hunter, *, hunt_key=DISPATCH_ID, status: str = "ratified"):
     return hunter.write_specs(PROJECT, hunt_key, [{**spec, "status": status}])
 
 
-def test_idle_loop_consumes_and_records_a_delivered_pod_export(
-        stores, pod_exports, monkeypatch):
+def test_idle_loop_consumes_a_delivered_pod_export_feed(
+        stores, monkeypatch):
     """AC3: after the hunt graph ends, the session idles on its inbox; a
-    delivered PodExport is CONSUMED AND RECORDED (a durable record in the
-    pod-export store, stamped verdict-stub) and NOTHING more happens - no
-    re-evaluation, no further dispatch."""
+    delivered PodExport is CONSUMED as a live feed and the canonical terminal
+    export is already on disk at `<spec_id>/<run_id>.yaml`. NOTHING more
+    happens - no re-evaluation, no further dispatch, no duplicate note."""
     models, hunter, pod = stores
     fake = _FakePg()
     monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
@@ -701,29 +696,15 @@ def test_idle_loop_consumes_and_records_a_delivered_pod_export(
         threat_store=models,
         hunter_store=hunter,
         pod_store=pod,
-        pod_export_store=pod_exports,
         hunter_builder=spec_hunts,
         pod_builder=export_pods,
     ))
-    # the durable record lives in its own store, never in the hunter notes
+    # the canonical terminal export is the pod's own file; the retired durable
+    # note store is not written
     assert hunter.read_notes(PROJECT) == []
-    notes = pod_exports.read_exports(PROJECT)
-    assert len(notes) == 1
-    record = notes[0]
-    assert record["kind"] == "freeform"
-    assert record["provenance"].get("verdict_stub") is True
-    assert record["provenance"].get("source") == pod_session_id(RUN, DISPATCH_ID, SPEC_FILE)
-    assert "the-export" in record["body"]           # the export payload was recorded
-    # the DURABLE parent-keyed record is keyed by the parent's threat dispatch id
-    # (S3 8.9) - the spec's own folder key
-    assert record["hunt_key"] == DISPATCH_ID
-    # the record is keyed <config_key>:pod-export:<spec_id> with action update:
-    # the note key carries NO `:`-session-id path, and the pod session id is
-    # recoverable ONLY from provenance["source"] (#199)
-    assert record["note_name"] == f"pod-export:{SPEC_FILE}"
-    assert record["key"] == f"{DISPATCH_ID}:pod-export:{SPEC_FILE}"
-    assert "hunting:" not in record["key"]
-    assert pod_session_id(RUN, DISPATCH_ID, SPEC_FILE) not in record["key"]
+    stored = pod.read_pod_export(SPEC_FILE, RUN)
+    assert stored["verdict"] == "successful"
+    assert stored["marker"] == "the-export"
     # NOTHING more: the spec was consumed only by the mover (no re-dispatch),
     # and the hunter produced no further records/specs.
     assert hunter.produced_spec_files(PROJECT, DISPATCH_ID) == []
@@ -733,15 +714,15 @@ def test_idle_loop_consumes_and_records_a_delivered_pod_export(
 # --- identity-based refactor: the cross-run pod-dispatch wedge regression ------
 
 def test_cross_run_ratified_spec_dispatches_a_pod_without_a_parent(
-        stores, pod_exports, monkeypatch):
+        stores, monkeypatch):
     """The pod-dispatch WEDGE regression (identity-based refactor, 2026-08-25):
 
     A produced `ratified` spec whose parent config was consumed by an EARLIER
     run (so NO live parent hunter inbox exists in THIS run) must still dispatch
     a pod - the dispatch is gated on the spec's OWN persisted status, never on
     a chain-adjacent parent's liveness. AND the move lands (produced->consumed)
-    AND the durable parent-keyed export record exists keyed by the parent's
-    canonical DISPATCH_ID, so the run can reach quiesce (never wedged).
+    AND the canonical pod export exists at `<spec_id>/<run_id>.yaml`, so the run
+    can reach quiesce (never wedged).
 
     The produced spec is written DIRECTLY into the hunter store (no hunter
     dispatch this run - no produced threat file) - exactly the cross-run shape that
@@ -776,7 +757,6 @@ def test_cross_run_ratified_spec_dispatches_a_pod_without_a_parent(
         threat_store=models,
         hunter_store=hunter,
         pod_store=pod,
-        pod_export_store=pod_exports,
         hunter_builder=_noop_hunts,
         pod_builder=record_pods,
     ))
@@ -785,21 +765,12 @@ def test_cross_run_ratified_spec_dispatches_a_pod_without_a_parent(
     assert pod_session_id(RUN, DISPATCH_ID, SPEC_FILE) in control.started
     assert hunter.produced_spec_files(PROJECT, DISPATCH_ID) == []
     assert len(hunter.read_specs(PROJECT, DISPATCH_ID, sides=("consumed",))) == 1
-    # the DURABLE parent-keyed export record exists keyed by the canonical
-    # DISPATCH_ID (no live parent; the durable record is the only record)
+    # the canonical terminal export exists at the pod-owned address, independent
+    # of any live parent inbox
     assert hunter.read_notes(PROJECT) == []
-    notes = pod_exports.read_exports(PROJECT)
-    assert len(notes) == 1
-    assert notes[0]["hunt_key"] == DISPATCH_ID
-    assert notes[0]["provenance"].get("verdict_stub") is True
-    assert notes[0]["provenance"].get("source") == pod_session_id(
-        RUN, DISPATCH_ID, SPEC_FILE)
-    assert "symptom-confirmed" in notes[0]["body"]
-    # the record is keyed <config_key>:pod-export:<spec_id>: the note key
-    # carries NO `:`-session-id path, the session id lives only in provenance
-    assert notes[0]["note_name"] == f"pod-export:{SPEC_FILE}"
-    assert notes[0]["key"] == f"{DISPATCH_ID}:pod-export:{SPEC_FILE}"
-    assert "hunting:" not in notes[0]["key"]
+    stored = pod.read_pod_export(SPEC_FILE, RUN)
+    assert stored["verdict"] == "successful"
+    assert stored["terminal_reason"] == "symptom-confirmed"
     # the run reached quiesce - a produced `ratified` spec can never wedge it
     assert fake.statuses == [("running", RUN), (RUN, "complete")]
     assert control.live(RUN) == set()

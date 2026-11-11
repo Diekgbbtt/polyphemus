@@ -64,3 +64,13 @@ The legacy `provenance.verdict_stub` protection remains for a stub already prese
 The pod-export store keeps the same key `<hunt_key>:pod-export:<spec_id>` and its own bound `POD_EXPORT_NOTES_MAX_RECORDS`/`POD_EXPORT_NOTES_MAX_BYTES` (1000 / 64 MiB).
 The base compose binds `${INSTANCE_DATA_ROOT:-./data}` to `/srv/data`, so the file survives a container kill.
 The live module context is `src/polymerhus/attack/hunting/CONTEXT.md`.
+
+## Amendment 2026-11-11: the pod-export notes store is retired
+
+The `PodExportStore` and `hunting/pod-export/notes.yaml` are removed.
+The pod's own canonical terminal export is `data/<project_id>/hunting/test-executor-pod/<spec_id>/<run_id>.yaml`, written by the ONE finalizer.
+No production reader consumed the durable note: the mover's completion gate reads the pod export file, the triager and runner never read the note, and the exploit design reads `PodExport` plus experiment logs.
+The note therefore duplicated the canonical export, inflated the store, and added a second write path for one terminal fact.
+The Q16 parent-keyed completion record is now the pod export file plus the spec store's own hunt key; a parent-side reader resolves the join from the spec folder.
+The hunter's legacy `provenance.verdict_stub` protection stays for an old `hunting/hunter/notes.yaml`; it protects existing records only.
+New runs write no pod-export note.

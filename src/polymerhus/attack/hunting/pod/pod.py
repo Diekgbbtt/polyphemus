@@ -72,7 +72,8 @@ async def arun_pod(spec: dict, *, run_id: str = POD_DEFAULT_RUN_ID,
                    graph_view_fn: Callable | None = None,
                    replay_fn: Callable | None = None,
                    timeouts: PodTimeouts | None = None,
-                   browser_tool=None) -> dict:
+                   browser_tool=None,
+                   summary_repair_fn: Callable | None = None) -> dict:
     """Execute `spec` against the live target and return the IA-4 envelope.
 
     Async-only (D84-15): the graph is driven with `ainvoke`, and every injected
@@ -135,7 +136,7 @@ async def arun_pod(spec: dict, *, run_id: str = POD_DEFAULT_RUN_ID,
             memory_store=memory_store, model_factory=model_factory,
             project_id=project_id, spec_id=spec_id, graph_view_fn=graph_view_fn,
             replay_fn=replay_fn, timeouts=timeouts,
-            browser_tool=browser_tool)
+            browser_tool=browser_tool, summary_repair_fn=summary_repair_fn)
         final = await graph.ainvoke(
             {"spec": dict(spec or {}), "run_id": run_id},
             config={"recursion_limit": RECURSION_LIMIT, "callbacks": callbacks})

@@ -7,16 +7,15 @@ use, bound here by a `PodNotesHandle` and an explicit `NotesFieldMap`.
 
 The tool NAME is `notes` everywhere (the old pod-only `note` name is retired),
 so the agent census, the prompt, and the store contract name one tool. The pod's
-typed fields (`order`, `kind`, `classification`, ...) are its store's contract;
-the shared algorithm reads them through the field map and never guesses.
+typed fields (`kind`, `classification`, ...) are its store's contract; the
+current variant order is bound from the runtime log, never supplied by the
+model. The shared algorithm reads the fields through the field map and never
+guesses.
 
 Fail-open (O10): a `None` store never raises - writes return a coded
 `NOTES_NO_STORE`, reads return a graceful empty result.
 """
 from __future__ import annotations
-
-import json
-from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -26,11 +25,11 @@ from polymerhus.app.memory.tool_contract import (
     NoteWrite,
     NotesRead,
     StoreNotesTool,
-    build_notes_tool,
 )
 from polymerhus.attack.hunting.pod.pod_memory import (
     POD_NOTE_KINDS,
     PodMemoryStore,
+    current_variant_order,
     note_key,
     read_variant_summary,
 )
@@ -48,9 +47,10 @@ class NoteToolSpec(BaseModel):
 
     `command` is the discriminator (`read` / `write`); `action` is the write
     option (`append` / `update` / `delete`). The write fields carry the
-    consolidation attributes; `order` is the variant ordinal. The read filters
-    are the store's typed attribute filters plus the substring filters.
-    `extra="forbid"` makes a stray parameter a coded rejection.
+    consolidation attributes. The read filters are the store's typed attribute
+    filters plus the substring filters. The current variant ORDER is bound by
+    the harness, never supplied by the model. `extra="forbid"` makes a stray
+    parameter a coded rejection.
     """
 
     command: str = Field(
@@ -59,9 +59,6 @@ class NoteToolSpec(BaseModel):
     action: str = Field(
         default="append",
         description="The write option: 'append', 'update', or 'delete'.")
-    # write (order/kind required on a write):
-    order: int | None = Field(
-        default=None, description="The variant ordinal; required on a write.")
     note_name: str = Field(
         default="", description="The note's name; ignored on a read.")
     kind: str | None = Field(
@@ -85,52 +82,52 @@ class NoteToolSpec(BaseModel):
 class PodNotesHandle:
     """The pod store handle the shared notes tool routes through.
 
-    It owns the spec id and the per-project `PodMemoryStore`, so the request
-    never carries a destination. The `experiment_summary` and `experiment_log`
-    reads are the pod's store-specific branches; every other read ranges the
-    per-project `notes.yaml` with the typed filters."""
+    It owns the spec id, the per-project `PodMemoryStore`, and the CURRENT
+    variant order derived from the runtime log, so the request never carries a
+    destination. The `experiment_summary` and `experiment_log` reads are the
+    pod's store-specific branches; every other read ranges the per-project
+    `notes.yaml` with the typed filters for the bound order."""
 
-    def __init__(self, store: PodMemoryStore | None, spec_id: str):
+    def __init__(self, store: PodMemoryStore | None, spec_id: str, *,
+                 log=None, variant_ref: str | None = None):
         self._store = store
         self._spec_id = spec_id
+        self._order = current_variant_order(log, variant_ref)
+
+    @property
+    def order(self) -> int:
+        """The bound variant order (the current stretch)."""
+        return self._order
 
     def read(self, query: NotesRead) -> dict:
         if self._store is None:
             return {"ok": False, "error": NOTES_NO_STORE}
         try:
             if query.kind == "experiment_log":
-                if query.order is None:
-                    return {"ok": False, "error": (
-                        NOTES_ARGS_REJECTED
-                        + ": an experiment_log read needs the variant order")}
                 slice = self._store.read_experiment_log(
-                    self._spec_id, query.order)
+                    self._spec_id, self._order)
                 if not slice:
                     return {"ok": True, "notes": [],
                             "detail": "no experiment log on file"}
                 return {"ok": True, "kind": "experiment_log",
-                        "identifier": f"{self._spec_id}/{query.order}",
-                        "order": query.order, "value": slice}
+                        "identifier": f"{self._spec_id}/{self._order}",
+                        "order": self._order, "value": slice}
             if query.kind == "experiment_summary":
-                if query.order is None:
-                    return {"ok": False, "error": (
-                        NOTES_ARGS_REJECTED
-                        + ": an experiment_summary read needs the variant order")}
                 body = read_variant_summary(
-                    self._store, self._spec_id, query.order)
+                    self._store, self._spec_id, self._order)
                 if not body:
                     return {"ok": True, "notes": [],
                             "detail": "no experiment summary on file"}
                 return {
                     "ok": True,
                     "key": note_key(
-                        self._spec_id, query.order, "experiment_summary"),
-                    "kind": "experiment_summary", "order": query.order,
+                        self._spec_id, self._order, "experiment_summary"),
+                    "kind": "experiment_summary", "order": self._order,
                     "body": body,
                 }
             notes = self._store.read_notes(
                 self._spec_id,
-                order=query.order,
+                order=self._order,
                 kind=query.kind,
                 classification=query.classification,
                 symptom_status=query.symptom_status,
@@ -156,18 +153,14 @@ class PodNotesHandle:
             return {"ok": False, "error": (
                 f"{NOTES_BAD_KIND}: {kind!r}; known: "
                 + ", ".join(POD_NOTE_KINDS))}
-        if request.order is None:
-            return {"ok": False, "error": (
-                NOTES_ARGS_REJECTED
-                + ": a note write needs the variant order")}
         try:
             if kind == "experiment_summary":
                 key = self._store.write_variant_summary(
-                    self._spec_id, request.order, body)
+                    self._spec_id, self._order, body)
             else:
                 key = self._store.append(
                     self._spec_id,
-                    order=request.order,
+                    order=self._order,
                     note_name=request.note_name or "",
                     kind=kind,
                     body=body,
@@ -182,7 +175,7 @@ class PodNotesHandle:
             "ok": True,
             "key": key,
             "detail": (f"{kind} note {request.note_name!r} for order "
-                       f"{request.order} persisted"),
+                       f"{self._order} persisted"),
         }
 
 
@@ -197,7 +190,7 @@ _POD_NOTES_FIELD_MAP = NotesFieldMap(
     key_keyword="key_keyword",
     body_keyword="body_keyword",
     kind="kind",
-    order="order",
+    order=None,
     classification="classification",
     symptom_status="symptom_status",
     parent_key="parent_key",
@@ -208,14 +201,16 @@ _POD_NOTES_FIELD_MAP = NotesFieldMap(
 
 
 _POD_NOTES_DESCRIPTION = append_conciseness_directive((
-    "Write or read a pod experiment note in the pod's memory store. "
+    "Write or read a pod experiment note for the CURRENT variant in the "
+    "pod's memory store. The harness binds the variant order; do not pass "
+    "one. "
     f"Kinds: {', '.join(POD_NOTE_KINDS)}. command=write persists a "
-    "note for the current variant order (kind experiment_summary is the "
+    "note for the current variant (kind experiment_summary is the "
     "consolidated stretch summary written as the FINAL tool call when "
     "the probe space is exhausted); command=read returns matching "
-    "notes newest-first with the order, kind, classification, "
-    "symptom_status, parent_key, key_keyword, or body_keyword filters, "
-    "each note's body verbatim."))
+    "notes newest-first with the kind, classification, symptom_status, "
+    "parent_key, key_keyword, or body_keyword filters, each note's body "
+    "verbatim."))
 
 
 class PodNoteTool(StoreNotesTool):
@@ -229,9 +224,11 @@ class PodNoteTool(StoreNotesTool):
     name: str = "notes"
     args_schema: type[BaseModel] = NoteToolSpec
 
-    def __init__(self, *, store: PodMemoryStore | None, spec_id: str, **kwargs):
+    def __init__(self, *, store: PodMemoryStore | None, spec_id: str,
+                 log=None, variant_ref: str | None = None, **kwargs):
         super().__init__(
-            handle=PodNotesHandle(store, spec_id),
+            handle=PodNotesHandle(store, spec_id, log=log,
+                                  variant_ref=variant_ref),
             args_schema=NoteToolSpec,
             field_map=_POD_NOTES_FIELD_MAP,
             name="notes",
@@ -243,9 +240,11 @@ class PodNoteTool(StoreNotesTool):
         )
 
 
-def note_tool_for(store: PodMemoryStore | None, spec_id: str) -> PodNoteTool:
+def note_tool_for(store: PodMemoryStore | None, spec_id: str, *,
+                  log=None, variant_ref: str | None = None) -> PodNoteTool:
     """Build the pod's bound `notes` tool over the ONE shared implementation."""
-    return PodNoteTool(store=store, spec_id=spec_id)
+    return PodNoteTool(store=store, spec_id=spec_id, log=log,
+                       variant_ref=variant_ref)
 
 
 __all__ = [

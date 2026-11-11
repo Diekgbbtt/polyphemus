@@ -119,8 +119,8 @@ HUNTER_NOTES_MAX_BYTES = 4 * 1024 * 1024
 def _is_durable_prior_insight(record: dict) -> bool:
     """The LEGACY durable prior-insight marker (G3/#202).
 
-    New pod-export records live in `PodExportStore`
-    (`hunting/pod-export/notes.yaml`). This predicate keeps a
+    The pod-export notes store is retired; the canonical terminal export is
+    the pod's own `<spec_id>/<run_id>.yaml`. This predicate keeps a
     `provenance.verdict_stub` record that is already present in an OLD
     `hunting/hunter/notes.yaml` from the ordinary-notes eviction of the #341
     bound, so a legacy stub is never lost on the next write."""
@@ -866,10 +866,10 @@ class HunterMemoryStore(BoundedRecordStore):
             )
         self._validate_hunt_key(hunt_key)
         # The whole read-modify-write is ONE critical section: the hunter's
-        # `notes` tool runs in a worker thread (`asyncio.to_thread`) while the
-        # surfer's durable pod-export write runs on the event loop. Without the
-        # lock the stale writer replaces the file with its pre-note list and
-        # the note is lost without an error (the C.a failure).
+        # `notes` tool runs in a worker thread (`asyncio.to_thread`) while other
+        # hunter notes may be written on the event loop. Without the lock the
+        # stale writer replaces the file with its pre-note list and the note is
+        # lost without an error (the C.a failure).
         with self._lock_for(project_id):
             path = self._notes_file(project_id)
             records = self._read_records(path)

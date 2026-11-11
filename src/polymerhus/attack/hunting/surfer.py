@@ -70,7 +70,6 @@ call, and the pod/hunter builders are injected per run.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import math
 import os
@@ -81,7 +80,6 @@ from typing import AbstractSet, Any, Awaitable, Callable
 
 from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
 from polymerhus.attack.hunting.hunter_payload import materialise_hunter_payload
-from polymerhus.attack.hunting.pod_export_memory import PodExportStore
 from polymerhus.attack.hunting.pod.finalize import PodTerminal, finalize_pod
 from polymerhus.attack.hunting.pod.types import POD_WATCHDOG_TIMEOUT
 from polymerhus.attack.hunting.mover import (
@@ -556,7 +554,6 @@ def build_run_dispatch(
     threat_store: Any = None,
     hunter_store: HunterMemoryStore,
     pod_store: Any,
-    pod_export_store: PodExportStore | None = None,
     state: RunDispatchState,
     gate: Any,
     hunter_builder: Callable[..., tuple[Callable[[Any], Awaitable[Any]], Any]],
@@ -585,8 +582,8 @@ def build_run_dispatch(
       (identity-based refactor, 2026-08-25): a produced spec whose hunt key's
       parent was consumed by an earlier run (no live parent inbox this run)
       still dispatches. The parent key IS the spec's folder (the threat dispatch
-      id, S3 8.9), the completed export is RECORDED DURABLY at pod completion
-      keyed by it (Q16 amendment), and a within-run co-running parent MAY also
+      id, S3 8.9), the completed export is persisted by the ONE finalizer at
+      `<spec_id>/<run_id>.yaml`, and a within-run co-running parent MAY also
       receive a live inbox notification (optional, best-effort - never the only
       record, never a dispatch gate).
     - Anything else yields `None` (refused; the mover retries).
@@ -760,7 +757,6 @@ def build_run_dispatch(
             hunt_key=item.hunt_key,
             spec_id=item.spec_file,
             inbox=inbox,
-            pod_export_store=pod_export_store,
             gate=gate,
             role_gate=_role_gate("pod"),
             pod_builder=pod_builder,
@@ -959,13 +955,12 @@ async def _run_hunter_idle(
 
 
 def _verdict_stub_handler(*, hunt_key):
-    """The ADR Q16 verdict stub (identity-based refactor, 2026-08-25): a
-    delivered `PodExport` is a WITHIN-RUN LIVE FEED for the future
-    verdict-processing node (D67-02/D11/D67-14) - CONSUMED ONLY, nothing more.
-    The DURABLE parent-keyed export record was already authored at pod
-    completion (`run_pod_session` -> `_record_durable_pod_export`), so the
-    idle loop never double-records: it acknowledges the feed and keeps
-    listening. `settle` ends the threat; every other kind is consumed silently."""
+    """The ADR Q16 verdict stub: a delivered `PodExport` is a WITHIN-RUN LIVE
+    FEED for the future verdict-processing node (D67-02/D11/D67-14) - CONSUMED
+    ONLY, nothing more. The canonical terminal export is already persisted by
+    the ONE finalizer at `<spec_id>/<run_id>.yaml`; the idle loop never
+    double-records. It acknowledges the feed and keeps listening. `settle`
+    ends the threat; every other kind is consumed silently."""
 
     async def _stub(message, last_turn):
         if message.kind == "settle":
@@ -981,43 +976,6 @@ def _verdict_stub_handler(*, hunt_key):
     return _stub
 
 
-def _record_durable_pod_export(*, pod_export_store, project_id, run_id, hunt_key,
-                               spec_id, source, export) -> None:
-    """The DURABLE parent-keyed export record (identity-based refactor,
-    2026-08-25 / ADR Q16 amendment, note key pinned by #199): authored
-    deterministically at pod completion, keyed by the parent's threat dispatch id
-    (`hunt_key`, S3 8.9) - independent of any live parent session, crash-safe,
-    never lost to a live-mailbox-only path.
-
-    The record lives in the pod-export store (`hunting/pod-export/notes.yaml`),
-    NOT in the hunter's episodic notes file. The two files have separate
-    writers and separate bounds. The pod-export key is
-    `<hunt_key>:pod-export:<spec_id>` with ONE current record per (hunt, spec):
-    a re-export UPDATEs the same key, and the pod session id lives ONLY in
-    `provenance["source"]`. Fail-open (O3): a write failure warns - the export
-    is never re-fabricated or dropped, and the run must never wedge on the
-    record."""
-    if pod_export_store is None:
-        logger.warning(
-            "surfer: no pod-export store bound; durable export for %s/%s not "
-            "recorded", hunt_key, spec_id)
-        return
-    try:
-        pod_export_store.write_export(
-            project_id,
-            hunt_key=hunt_key,
-            spec_id=spec_id,
-            run_id=run_id,
-            source=source,
-            export=export,
-        )
-    except Exception as exc:  # noqa: BLE001 - O3: warn and keep serving
-        logger.warning(
-            "surfer: durable pod-export record failed for %s/%s (%s)",
-            hunt_key, spec_id, exc,
-        )
-
-
 async def run_pod_session(
     *,
     spec: dict,
@@ -1026,7 +984,6 @@ async def run_pod_session(
     hunt_key: str,
     spec_id: str,
     inbox: AgentInbox | None,
-    pod_export_store: PodExportStore | None,
     gate: Any,
     pod_builder: Callable[..., Awaitable[dict]],
     pod_store: Any,
@@ -1035,21 +992,18 @@ async def run_pod_session(
     session_timeout_s: float = DEFAULT_POD_SESSION_TIMEOUT_S,
 ) -> dict | None:
     """ONE pod session (ADR Q13 pod id): run the spec through the pod (the
-    injected builder; `arun_pod` in production), then record the completed
-    export DURABLY at pod completion keyed by the parent's threat dispatch id
-    (`hunt_key`, S3 8.9) (identity-based refactor, 2026-08-25 / Q16 amendment -
-    crash-safe, independent of any live parent session, never lost to a crash
-    between dispatch and an in-memory inbox consumption), and finally deliver
-    the completed export to a WITHIN-RUN co-running parent's inbox (an OPTIONAL
-    live feed for the future verdict-processing node - best-effort, never the
-    only record and never a dispatch gate). Gate-bounded through the shared
-    hunting gate (Q15).
+    injected builder; `arun_pod` in production). The ONE finalizer has already
+    persisted the canonical terminal export at `<spec_id>/<run_id>.yaml`, so
+    the session delivers the completed export to a WITHIN-RUN co-running
+    parent's inbox (an OPTIONAL live feed for the future verdict-processing
+    node - best-effort, never the only record and never a dispatch gate).
+    Gate-bounded through the shared hunting gate (Q15).
 
     The live feed is posted with `await` (same-loop put) when an inbox is
     present, BEFORE the session settles, so the run-terminal `settle` message
     can never overtake it in the hunter's inbox. A missing inbox (the parent was
-    consumed by an earlier run) is not an error - the durable record has already
-    landed, so nothing is dropped.
+    consumed by an earlier run) is not an error - the canonical export file has
+    already landed, so nothing is dropped.
 
     The stored spec body carries the hunter store's own metadata (`status`, the
     two identity keywords; S3 8.6) beside the D4. The dispatch boundary projects
@@ -1204,13 +1158,6 @@ async def run_pod_session(
         store=pod_store, spec_id=spec_id, run_id=run_id, envelope=export)
     if state is not None:
         state.record_child_success(source)
-    # The DURABLE parent-keyed record: authored at pod completion, keyed by the
-    # parent's threat dispatch id + the pod-export:<spec_id> marker (#199) - the
-    # single crash-safe record, independent of any live parent inbox.
-    _record_durable_pod_export(
-        pod_export_store=pod_export_store, project_id=project_id, run_id=run_id,
-        hunt_key=hunt_key, spec_id=spec_id, source=source, export=export,
-    )
     # The WITHIN-RUN live feed (optional): only when a co-running parent's inbox
     # is live under the parent's hunt key. Best-effort - never a gate.
     if inbox is not None:
