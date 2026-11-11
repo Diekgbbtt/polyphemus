@@ -28,10 +28,18 @@ COMPOSE_PROJECT="$(
   cd "$EVAL_REPO" && python3 -c \
     'from orchestrator.ids import short_id; print("ph-" + short_id("eval-server-2"))'
 )"
+AGENT="${COMPOSE_PROJECT}-agent-1"
 SKILLS_HOST="$INSTANCE_DIR/skills-host"
 
 if [ -z "${PROJECT_ID:-}" ]; then
   echo "== PROJECT_ID is required"
+  exit 1
+fi
+DATA_MOUNT="$(docker inspect "$AGENT" --format \
+  '{{range .Mounts}}{{if eq .Destination "/srv/data"}}{{.Source}}{{end}}{{end}}' 2>/dev/null)"
+if [ "$DATA_MOUNT" != "$EVAL_DATA_ROOT" ]; then
+  echo "== agent /srv/data is ${DATA_MOUNT:-<missing>}, expected $EVAL_DATA_ROOT"
+  echo "== refusing to run the hunt against mismatched project data"
   exit 1
 fi
 mkdir -p "$EVAL_RUNS_ROOT"

@@ -103,6 +103,10 @@ fi
 echo "== recreate agent with the glm-5.3 env $(date -u +%FT%TZ)"
 (
   cd "$INSTANCE_DIR" || exit 1
+  # The instance `.env` carries a stale INSTANCE_DATA_ROOT from the
+  # eval-server-1 arm. The compose default must not silently mount the wrong
+  # instance root, so the driver binds the run's own data root explicitly.
+  INSTANCE_DATA_ROOT="$EVAL_DATA_ROOT" \
   docker compose -p "$COMPOSE_PROJECT" \
     -f docker-compose.yml -f docker-compose.dev.yml \
     -f docker-compose.pool.yml -f eval/docker-compose.eval.yml \
