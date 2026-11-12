@@ -1,0 +1,63 @@
+# Iteration E - hunting-only continuation (GLM-5.3-Flash).
+#
+# The first half of the run (trial siyucms-web-20261112T074242-38e49ca5) stopped
+# at the 7,000,000 capped-token budget after modelling 11 of the 44 intake
+# units. This setup starts a NEW hunting run on the same project. The intake
+# freeze excludes the 11 units whose models the stopped run still owns - 7 in
+# `consumed/` (`completed`) and 7 in `produced/` (`in-flight`) - so the new run
+# models exactly the remaining 33 units, in the same frozen order.
+#
+# A new run is the correct primitive, not `resume`: a resume re-enters the
+# persisted 44-unit intake at position 11, recomputes the completed run's
+# risk total (224.0), and remains halted, so it would dispatch only. A new run
+# starts both trackers at zero: `risk_total` 0.0 and a fresh trial spend
+# baseline against the same 7,000,000 capped-token budget.
+#
+# The policy is unchanged from the first half:
+#   pipeline_sync            batched
+#   pod_batch_size           2
+#   promotion_risk_threshold 2.5  (inclusive, CVSS 4.0 points)
+#   risk_threshold           220  (the iteration-E rerun budget)
+#   token_budget             7000000
+#
+# The threat-model scope fence stays the project attribute copied by
+# `duplicate_project.py`; the setup's hunting block carries only the four
+# policy fields, and the trial's deep merge preserves the scope.
+
+schema_version: 1
+
+artifact_store: /srv/eval-artifacts
+
+datasets:
+  - webexploitbench
+
+work_items:
+  - name: steel-browser-sessions
+    status: complete
+    required: true
+  - name: auth-bootstrap
+    status: complete
+    required: false
+  - name: l1-surface
+    status: complete
+  - name: hunting-artifacts
+    status: complete
+
+instances:
+  - instance_id: eval-server-2
+    env_file: eval-server-2/.env
+    targets:
+      - target_key: webexploitbench/siyucms
+        target_id: siyucms-web
+        target_run_id: itere-siyucms-web-glm53-flash-cont
+        start_phase: hunting
+        token_budget: 7000000
+        target_config:
+          operator_kb: /root/eval-dd/data/siyucms/operator_kb.md
+          data_dir: /root/eval-dd/data/siyucms
+          recon_jobs: [httpx, httpx_reprofile, katana, jsluice, arjun, steel_crawl]
+        hunting:
+          pipeline_sync: batched
+          pod_batch_size: 2
+          promotion_risk_threshold: 2.5
+          risk_threshold: 220
