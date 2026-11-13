@@ -17,14 +17,14 @@ operator's wholesale replace of the operator section.
 `read_only=True` builds the analysis-side READ-ONLY form of the SAME tool
 (#364, `docs/design/analysis-auth-store-view-364-adr.md`): the same name over
 the same store, an argument surface with no write field at all, and a read
-that returns the REDACTED projection (names, shapes, and statuses - never a
-secret value). The rationale for one tool and one name is the census: the
-ticket's measurement counts anonymous calls by tool name, so the analysis
-read must be the name the census already reports.
+that returns the same real session material as the read/write binding (the
+2026-11-13 ablation retired the value redaction; see the ADR amendment). The
+rationale for one tool and one name is the census: the ticket's measurement
+counts anonymous calls by tool name, so the analysis read must be the name the
+census already reports.
 """
 from __future__ import annotations
 
-import copy
 import json
 import logging
 from typing import Any
@@ -145,29 +145,24 @@ AUTH_STORE_CONTRACT = (
     "an in-band coded envelope; nothing raises into the turn."
 )
 
-# The redaction marker the read-only view substitutes for every secret value
-# (#364 D364-2). One literal, shared by the redactor and the contract below, so
-# the model is told exactly what it will read.
-REDACTED = "<redacted>"
-
 # The READ-ONLY contract (the analysis-side view, #364). Deliberately NOT the
 # read/write contract above: a binding that cannot write must not teach a write
-# path, and the redaction rule is load-bearing usage information (what the model
-# may conclude from what it reads).
+# path, and the real-material rule is load-bearing usage information (what the
+# model may replay from what it reads).
 AUTH_STORE_READ_CONTRACT = (
     "Read the run's per-project auth store in READ-ONLY form: the `overview` "
     "(login endpoint, `required_headers`, mechanism) plus `account` records "
     "(`role`, `root_url`, `auth_probe`, `tokens`, `snapshot`, "
     "`browser_context`, `status`). One account is one session.\n\n"
-    "Names, shapes, and statuses only: passwords, token values, and snapshot "
-    "cookie/header/param values read as " + REDACTED + ". Never reconstruct or "
-    "replay a secret.\n\n"
+    "The read carries the REAL session material: passwords, token values, and "
+    "snapshot cookie/header/param values read exactly as stored. Replay or "
+    "mount them exactly as recorded - never invent, guess, or truncate a "
+    "value.\n\n"
     "An empty path returns `summary`: the login header plus the account index. "
     "`overview` or `account` selects one half; `fields` projects dot-paths; a "
     "missing path is a valid empty (`{}`). `view=\"full\"` is retired here: use "
     "`fields` or a narrow path. A read "
-    "over 12000 characters returns its keys and a narrowing hint. Redaction "
-    "precedes projection.\n\n"
+    "over 12000 characters returns its keys and a narrowing hint.\n\n"
     "No write: every command but `read` refuses with `auth_readonly`. A read "
     "failure returns `store_unavailable`."
 )
@@ -209,7 +204,7 @@ class AuthStoreArgs(BaseModel):
             "Read view for an empty path: `summary` (default) returns the "
             "concise core - overview, account names, roles, and token "
             "metadata; `overview` or `account` returns one half; `full` "
-            "returns the whole state (redacted on the read-only binding). "
+            "returns the whole state. "
             "A non-empty `path` takes precedence."
         ),
     )
@@ -259,12 +254,11 @@ class AuthStoreReadArgs(BaseModel):
         description=(
             "Dot-path selecting the field to project. An empty path returns "
             "the concise summary view; set `view=\"full\"` for the full "
-            "redacted state, while a narrow path keeps the turn small and "
+            "state, while a narrow path keeps the turn small and "
             "precise (`overview` for the login-mechanism header, "
             "`accounts.alice` for one account, `accounts.alice.tokens` for its "
-            "token names, locations, and statuses). Secret values read as the "
-            "redaction marker, never as the value - a narrow path cannot reach "
-            "one either."
+            "tokens, `accounts.alice.snapshot` for its captured request "
+            "state). The read returns the real stored values."
         ),
     )
     view: str = Field(
@@ -273,7 +267,7 @@ class AuthStoreReadArgs(BaseModel):
             "Read view for an empty path: `summary` (default) returns the "
             "concise core - overview, account names, roles, and token "
             "metadata; `overview` or `account` returns one half; `full` "
-            "returns the full redacted state. A non-empty `path` takes "
+            "returns the full state. A non-empty `path` takes "
             "precedence."
         ),
     )
@@ -287,72 +281,8 @@ class AuthStoreReadArgs(BaseModel):
     )
 
 
-def _redact_password(credentials: Any) -> None:
-    """In-place redaction of one credential set's password (malformed shapes
-    pass through untouched)."""
-    if isinstance(credentials, dict) and "password" in credentials:
-        credentials["password"] = REDACTED
-
-
-def _redact_values(mapping: Any) -> None:
-    """In-place redaction of a name -> value map's values (the snapshot's header
-    and param maps; the names are the request shape and stay)."""
-    if isinstance(mapping, dict):
-        for key in list(mapping):
-            mapping[key] = REDACTED
-
-
-def _redact_account(record: Any) -> None:
-    """In-place redaction of ONE account record: the password of the default
-    credential set and of every role set, every token's `value`, and the
-    snapshot's header / param / cookie values. Identity (`username`), the
-    request shape (`login_url`, the selectors, a token's `location` / `target` /
-    `expiry`, a cookie's `name`), and the server-stamped facts are untouched."""
-    if not isinstance(record, dict):
-        return
-    _redact_password(record.get("credentials"))
-    roles = record.get("roles")
-    if isinstance(roles, dict):
-        for role_set in roles.values():
-            _redact_password(role_set)
-    tokens = record.get("tokens")
-    if isinstance(tokens, dict):
-        for entry in tokens.values():
-            if isinstance(entry, dict) and "value" in entry:
-                entry["value"] = REDACTED
-    snapshot = record.get("snapshot")
-    if isinstance(snapshot, dict):
-        _redact_values(snapshot.get("headers"))
-        _redact_values(snapshot.get("params"))
-        cookies = snapshot.get("cookies")
-        if isinstance(cookies, list):
-            for cookie in cookies:
-                if isinstance(cookie, dict) and "value" in cookie:
-                    cookie["value"] = REDACTED
-
-
-def redact_auth_state(state: Any) -> dict:
-    """The read-only view's projection of the bucket state (#364 D364-2): the
-    shape, every NAME, and every server-stamped fact stay; every secret VALUE
-    becomes the `REDACTED` marker.
-
-    Applied to the FULL state BEFORE the dotted projection, so a narrow read
-    cannot address a raw leaf (`accounts.<name>.credentials.password` reads the
-    marker, not the password). The redaction is a VIEW over a deep copy: the
-    store on disk keeps the real material for the gateway and the
-    job-specialised agents, who replay it (D223-19). A malformed record passes
-    through rather than raising - the store's own read is the fail-open
-    boundary, and this view never raises into a turn."""
-    out = copy.deepcopy(state) if isinstance(state, dict) else {}
-    accounts = out.get("accounts")
-    if isinstance(accounts, dict):
-        for record in accounts.values():
-            _redact_account(record)
-    return out
-
-
 # The concise read views. `summary` is the default for an empty path; `full`
-# is explicit because it carries the whole redacted/full state.
+# is explicit because it carries the whole state.
 _READ_VIEWS = ("summary", "overview", "account", "full")
 
 # The summary overview projection: the login-mechanism header, not the whole
@@ -465,8 +395,8 @@ def _summary_state(state: Any) -> dict:
 def _read_projection(state: Any, path: str, view: str,
                      fields: tuple[str, ...]) -> dict:
     """Project one read: a path wins, then explicit fields, then the named
-    view. The state is already redacted on the read-only binding, so the
-    projection never has a second redaction rule to keep in sync."""
+    view. The state is the store's own read (a fresh deep copy per call), so
+    the projection carries the real material untouched."""
     if path:
         return {"value": AuthStore._project(state, path)}
     if fields:
@@ -592,9 +522,9 @@ def build_auth_store_tool(project_id: str | None = None, store: AuthStore | None
 
     `read_only=True` (#364) builds the analysis-side form: the SAME tool name
     and the same bound handle, the read-only args schema (no write field), the
-    redacted read, and `auth_readonly` for every command but `read` - refused
-    before the store is touched, so no write path is reachable from this
-    binding.
+    real-value read (the 2026-11-13 ablation), and `auth_readonly` for every
+    command but `read` - refused before the store is touched, so no write path
+    is reachable from this binding.
 
     `settings_fn` (#384, arm L) is the injectable project-settings reader the
     canonical-origin resolution uses (default: the app's `pg.load_settings`);
@@ -634,16 +564,16 @@ def build_auth_store_tool(project_id: str | None = None, store: AuthStore | None
                     "error": "auth_full_view_retired",
                     "detail": (
                         "view=\"full\" is retired on the read-only binding: it "
-                        "returned the whole redacted bucket and dominated the "
+                        "returned the whole bucket and dominated the "
                         "session context. Use fields=[...] or a narrow path "
                         "(overview, accounts.<name>, accounts.<name>.tokens)."),
                 }
             try:
-                # Redact the WHOLE state first, project second: the projection
-                # is the store's own (#247 name canonicalisation included), so
-                # no second copy of that rule exists here. The canonical-origin
-                # resolution rides between (a host, never a secret).
-                state = redact_auth_state(seam.read(project_id, ""))
+                # The store's own read is a fresh deep copy per call, and its
+                # projection is the store's (#247 name canonicalisation
+                # included). The canonical-origin resolution rides on top (a
+                # host, never a secret). The read carries the real values.
+                state = seam.read(project_id, "")
                 state = _resolve_canonical_origin(state, _origin_once())
                 projected = _read_projection(state, at, view, fields)
                 if "error" in projected:
@@ -670,12 +600,12 @@ def build_auth_store_tool(project_id: str | None = None, store: AuthStore | None
         at = path or ""
         if command == "read":
             try:
-                # The model-facing view never carries a secret value, even on
-                # the read/write binding. The gateway and specialised agents
-                # use the store object internally for replay; the model only
-                # needs names, shapes, and statuses. Redact BEFORE the dotted
-                # projection, so a narrow read cannot address a raw leaf.
-                state = redact_auth_state(seam.read(project_id, ""))
+                # The read/write binding's read carries the same real session
+                # material as the read-only binding: the replayer - gateway,
+                # hunter, or proposer - reads the values it must replay. The
+                # store's read is a fresh deep copy per call; the origin
+                # resolution rides on top (a host, never a secret).
+                state = seam.read(project_id, "")
                 state = _resolve_canonical_origin(state, _origin_once())
                 projected = _read_projection(state, at, view, fields)
                 if "error" in projected:
@@ -723,7 +653,5 @@ __all__ = [
     "AUTH_STORE_CONTRACT",
     "AUTH_STORE_READ_CONTRACT",
     "AuthStoreReadArgs",
-    "REDACTED",
     "build_auth_store_tool",
-    "redact_auth_state",
 ]

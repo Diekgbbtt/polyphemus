@@ -62,7 +62,7 @@ def test_the_critical_contract_clauses_survive_the_slimming():
         "skill_load": ("suite_gap",),
         "search_http_history": ("invalid_filter", "next_cursor", "artifact_id"),
         "get_http_artifact": ("capture_state", "baseline_ref", "not_found"),
-        "auth_store": ("READ-ONLY", "<redacted>", "auth_readonly"),
+        "auth_store": ("READ-ONLY", "REAL", "auth_readonly"),
         "load_skill": ("listing", "meta-usage-skill"),
         "record_skill_lesson": ("specification", "extension", "defect"),
     }

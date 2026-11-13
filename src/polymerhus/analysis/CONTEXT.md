@@ -150,7 +150,7 @@ The L0 nodes an L1 node's cross-layer edges anchor to; pulling the evidence defe
 An inference is only as good as the observations it is anchored to.
 
 **Auth-context view** (#364; the read-only form of the `auth_store` tool):
-The read-only projection of the project's auth store bound on BOTH proposer turns (assigner and mechanism-typist, on every turn of a role's chain): the login-mechanism overview plus the account records with every secret value redacted, so a request shape is typed from the recorded session material - account names, cookie and header names, token locations and statuses - instead of being inferred from responses.
+The read-only projection of the project's auth store bound on BOTH proposer turns (assigner and mechanism-typist, on every turn of a role's chain): the login-mechanism overview plus the account records carrying the real session material, so a request shape is typed from the recorded values - account names, cookie and header values, token locations and values - instead of being inferred from responses. The value redaction was ablated on 2026-11-13: the replayer's quality depends on reading the real values.
 It carries names, shapes, and statuses, never a secret value, and it binds no write and no authenticate capability (D223-5).
 _Avoid_: the auth store itself (the recon-side read/write bucket a replayer resolves material from).
 

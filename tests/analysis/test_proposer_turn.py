@@ -408,9 +408,10 @@ def test_the_bound_auth_view_carries_no_write_capability(tmp_path):
     assert store.read(AUTH_PROJECT, "accounts.mallory") == {}
 
 
-def test_the_bound_auth_view_reads_no_secret_value(tmp_path):
-    """#364 acceptance 2: no auth material reaches the turn - the values a
-    replayer would need are the marker, the names are usable."""
+def test_the_bound_auth_view_carries_the_real_session_material(tmp_path):
+    """After the 2026-11-13 ablation: the auth material reaches the turn -
+    the values a replayer needs are the values the store holds, so a request
+    shape is typed from real session material instead of being inferred."""
     import json
 
     from polymerhus.analysis.proposer_turn import _auth_binding
@@ -420,11 +421,11 @@ def test_the_bound_auth_view_reads_no_secret_value(tmp_path):
     rendered = json.dumps(tool.invoke(
         {"command": "read", "path": "accounts.alice-login"}))
     for secret in (TOKEN_SECRET, COOKIE_SECRET, "turn-password-do-not-leak"):
-        assert secret not in rendered
+        assert secret in rendered
     tokens = tool.invoke(
         {"command": "read", "path": "accounts.alice-login.tokens"})["value"]
     assert tokens["session"]["location"] == "cookie"
-    assert tokens["session"]["value"] == "<redacted>"
+    assert tokens["session"]["value"] == COOKIE_SECRET
 
 
 def test_the_auth_view_rides_every_turn_and_never_toggles(monkeypatch, tmp_path):

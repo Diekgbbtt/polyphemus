@@ -113,7 +113,7 @@ def test_the_full_read_resolves_accounts_too(tmp_path):
     )
 
 
-def test_read_only_view_resolves_and_stays_redacted(tmp_path):
+def test_read_only_view_resolves_and_returns_the_real_password(tmp_path):
     tool = build_auth_store_tool(
         PROJECT,
         _store(tmp_path),
@@ -123,7 +123,7 @@ def test_read_only_view_resolves_and_stays_redacted(tmp_path):
     value = tool.invoke({"command": "read", "path": "accounts.alice"})["value"]
     assert value["credentials"]["login_url"] == "http://t-abc.target/api/login"
     assert value["credentials"]["domain"] == "t-abc.target"
-    assert value["credentials"]["password"] == "<redacted>"
+    assert value["credentials"]["password"] == PASSWORD
 
 
 def test_a_seed_with_a_scheme_is_preserved(tmp_path):

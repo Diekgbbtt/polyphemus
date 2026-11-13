@@ -170,8 +170,9 @@ _BRANCH_MANNER = {
         "target/expiry). Then "
         "validate the request material with the recorded HTTP history replay "
         "(`search_http_history`, then `replay_http_request`); the in-process "
-        "auth-store view is redacted, so never read or paste token values. "
-        "The request material is applied server-side. Request phases stay "
+        "auth-store read returns the real token values, so read them and "
+        "replay the recorded material exactly. "
+        "Request phases stay "
         "released."),
     "browser_only": (
         "Browser-only target (the defence is not HTTP-replayable). Validate "

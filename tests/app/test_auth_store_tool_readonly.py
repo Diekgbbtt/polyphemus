@@ -7,7 +7,8 @@ temp store. The literals below come from the #364 decision record
 from the implementation: the tests pin the contract, the module honours it.
 
 The three guarantees under test:
-  * the read view carries NAMES, SHAPES, AND STATUSES - never a secret value;
+  * the read view carries the REAL session material - names, shapes, statuses,
+    and values (the 2026-11-13 ablation retired the value redaction);
   * no write path is reachable (a write command is refused before the store is
     touched, and the bound schema cannot even express a value to write);
   * the tool keeps the shared `auth_store` name, so the census the ticket
@@ -22,17 +23,13 @@ import yaml
 from polymerhus.app.auth.store import AuthStore
 from polymerhus.app.auth.tool import (
     AUTH_STORE_READ_CONTRACT,
-    REDACTED,
     build_auth_store_tool,
 )
 
 PROJECT = "proj-auth-read-1"
 
-# The independent source of truth for the marker: the decision record's literal.
-MARKER = "<redacted>"
-
-# Every one of these is a real secret a request replayer would need - and none
-# of them may appear anywhere in the read view.
+# Every one of these is a real secret a request replayer needs - and each of
+# them must be readable through the view (the replayer's quality depends on it).
 PASSWORD = "hunter2-do-not-leak"
 ROLE_PASSWORD = "role-password-do-not-leak"
 TOKEN_VALUE = "tok-abc-do-not-leak"
@@ -236,7 +233,7 @@ def test_the_read_view_bound_to_one_project_never_reads_a_sibling(tmp_path):
     assert "bob" not in out["value"]["accounts"]
 
 
-def test_a_narrow_path_projects_the_redacted_field(tmp_path):
+def test_a_narrow_path_projects_one_field(tmp_path):
     out = _readonly_tool(tmp_path).invoke(
         {"command": "read", "path": "overview.login_endpoint"})
     assert out == {"ok": True, "command": "read",
@@ -309,59 +306,66 @@ def test_a_degraded_store_degrades_to_an_envelope(tmp_path):
     assert out["value"]["accounts"] == []
 
 
-# --- the redaction level (the decision the ticket requires) -------------------
+# --- the read level (the 2026-11-13 ablation) ---------------------------------
 
-def test_cookie_values_are_redacted_and_cookie_names_are_kept(tmp_path):
-    """The recorded decision (D364-2): the cookie NAME is the request shape the
-    typist needs, the value is the reusable credential - so names stay and
-    values become the marker."""
+def test_cookie_values_are_real_and_cookie_names_are_kept(tmp_path):
+    """The cookie NAME is the request shape and the VALUE is the replayable
+    credential - the replayer needs both, so the view carries both."""
     out = _readonly_tool(tmp_path).invoke(
         {"command": "read", "path": "accounts.alice-bootstrap.snapshot"})
     snapshot = out["value"]
-    assert snapshot["cookies"] == [{"name": "JSESSIONID", "value": MARKER}]
+    assert snapshot["cookies"] == [{"name": "JSESSIONID", "value": COOKIE_VALUE}]
     assert snapshot["captured_at"] == "2026-10-18T10:00:00+00:00"
 
 
-def test_token_names_locations_and_statuses_are_kept(tmp_path):
+def test_token_names_locations_statuses_and_values_are_kept(tmp_path):
     out = _readonly_tool(tmp_path).invoke(
         {"command": "read", "path": "accounts.alice-bootstrap.tokens"})
     assert out["value"]["session"]["location"] == "cookie"
     assert out["value"]["session"]["target"] == "t.example"
     assert out["value"]["X-Auth-Token"]["location"] == "header"
     assert out["value"]["X-Auth-Token"]["expiry"] == "2026-11-01T00:00:00+00:00"
-    assert out["value"]["session"]["value"] == MARKER
-    assert out["value"]["X-Auth-Token"]["value"] == MARKER
+    assert out["value"]["session"]["value"] == COOKIE_VALUE
+    assert out["value"]["X-Auth-Token"]["value"] == TOKEN_VALUE
 
 
-def test_no_secret_value_survives_anywhere_in_the_read_view(tmp_path):
-    """The load-bearing assertion: the WHOLE read view, serialised, contains not
-    one secret literal - on a full read and on every narrow path a turn could
-    choose."""
+def test_the_full_read_view_carries_the_real_session_material(tmp_path):
+    """The load-bearing assertion after the ablation: a whole-record read,
+    serialised, carries every real secret - a replayer reading the account
+    record loses nothing the store holds. The read/write binding's full view
+    agrees (the read-only binding retires `view="full"`)."""
+    store = _seeded_store(tmp_path)
+    rendered = json.dumps(_readonly_tool(tmp_path, store).invoke(
+        {"command": "read", "path": "accounts.alice-bootstrap"}))
+    for secret in SECRETS:
+        assert secret in rendered, f"{secret!r} missing from the record read"
+    full = json.dumps(build_auth_store_tool(
+        PROJECT, store).invoke({"command": "read", "view": "full"}))
+    for secret in SECRETS:
+        assert secret in full, f"{secret!r} missing from the full read view"
+
+
+def test_a_secret_leaf_is_addressable_by_a_narrow_path(tmp_path):
+    """A narrow path projects the real leaf value: a turn that needs exactly
+    one credential reads exactly that value, never a marker."""
     tool = _readonly_tool(tmp_path)
-    paths = ("", "overview", "accounts", "accounts.alice-bootstrap",
-             "accounts.alice-bootstrap.credentials",
-             "accounts.alice-bootstrap.roles",
-             "accounts.alice-bootstrap.tokens",
-             "accounts.alice-bootstrap.snapshot")
-    for path in paths:
-        rendered = json.dumps(tool.invoke({"command": "read", "path": path}))
-        for secret in SECRETS:
-            assert secret not in rendered, f"{secret!r} leaked on path {path!r}"
-
-
-def test_a_secret_leaf_is_unaddressable_by_a_narrow_path(tmp_path):
-    """Redaction is applied BEFORE the projection, so a path that names a secret
-    slot directly still reads the marker - never the value."""
-    tool = _readonly_tool(tmp_path)
-    for path in ("accounts.alice-bootstrap.credentials.password",
-                 "accounts.alice-bootstrap.roles.admin.password",
-                 "accounts.alice-bootstrap.tokens.session.value",
-                 "accounts.alice-bootstrap.tokens.X-Auth-Token.value",
-                 "accounts.alice-bootstrap.snapshot.cookies.0.value",
-                 "accounts.alice-bootstrap.snapshot.headers.X-CSRF-Token",
-                 "accounts.alice-bootstrap.snapshot.params._csrf"):
+    cases = {
+        "accounts.alice-bootstrap.credentials.password": PASSWORD,
+        "accounts.alice-bootstrap.roles.admin.password": ROLE_PASSWORD,
+        "accounts.alice-bootstrap.tokens.session.value": COOKIE_VALUE,
+        "accounts.alice-bootstrap.tokens.X-Auth-Token.value": TOKEN_VALUE,
+        "accounts.alice-bootstrap.snapshot.headers.X-CSRF-Token":
+            SNAPSHOT_HEADER_VALUE,
+        "accounts.alice-bootstrap.snapshot.params._csrf":
+            SNAPSHOT_PARAM_VALUE,
+    }
+    for path, expected in cases.items():
         out = tool.invoke({"command": "read", "path": path})
-        assert out["value"] in (MARKER, {}, [MARKER]), path
+        assert out["value"] == expected, path
+    cookies = tool.invoke(
+        {"command": "read",
+         "path": "accounts.alice-bootstrap.snapshot.cookies"})["value"]
+    assert cookies == [{"name": "JSESSIONID", "value": COOKIE_VALUE}]
 
 
 def test_the_identity_and_the_request_shape_stay_visible(tmp_path):
@@ -380,10 +384,13 @@ def test_the_identity_and_the_request_shape_stay_visible(tmp_path):
     assert overview["mechanism"] == "form post plus a session cookie"
 
 
-def test_the_marker_is_the_decided_literal():
-    """The marker is one literal, shared by the redactor and the contract."""
-    assert REDACTED == MARKER
-    assert MARKER in AUTH_STORE_READ_CONTRACT
+def test_the_marker_is_retired():
+    """The ablation removed the marker symbol entirely: no import surface
+    carries it, so no view can reintroduce it silently."""
+    import polymerhus.app.auth.tool as tool_module
+
+    assert not hasattr(tool_module, "REDACTED")
+    assert not hasattr(tool_module, "redact_auth_state")
 
 
 # --- the model-facing contract ------------------------------------------------
@@ -393,12 +400,14 @@ def test_the_read_only_description_carries_the_read_contract(tmp_path):
     assert desc == AUTH_STORE_READ_CONTRACT
 
 
-def test_the_contract_teaches_the_redaction_and_the_read_only_rule():
+def test_the_contract_teaches_the_real_material_and_the_read_only_rule():
     for marker in ("READ-ONLY", "auth_readonly", "overview", "required_headers",
                    "account", "tokens", "snapshot", "status", "dot-path",
-                   "valid empty", "store_unavailable", "<redacted>"):
+                   "valid empty", "store_unavailable", "REAL"):
         assert marker in AUTH_STORE_READ_CONTRACT, f"contract missing {marker!r}"
     assert "never" in AUTH_STORE_READ_CONTRACT.lower()
+    # The ablation: the contract no longer teaches a redaction marker.
+    assert "<redacted>" not in AUTH_STORE_READ_CONTRACT
 
 
 def test_read_only_envelopes_are_json_serializable(tmp_path):
@@ -420,8 +429,8 @@ def test_the_read_only_view_never_writes_a_bucket(tmp_path):
 
 
 def test_the_raw_store_state_is_unchanged_after_reads(tmp_path):
-    """The redaction is a VIEW: the store on disk keeps the real values, so the
-    recon/gateway consumers are untouched."""
+    """A read is a view, never a write: the store on disk keeps the real
+    values, untouched by however many reads the turn performs."""
     store = _seeded_store(tmp_path)
     _readonly_tool(tmp_path, store).invoke({"command": "read", "path": ""})
     on_disk = yaml.safe_load(

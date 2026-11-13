@@ -249,12 +249,17 @@ def test_bootstrap_prompt_proves_both_oracle_polarities():
     assert "login page is never the oracle" in prompt.lower()
 
 
-def test_generated_procedure_uses_the_redacted_material_path():
+def test_generated_procedure_cites_the_real_material_path():
     body = _body()
-    assert "REDACTED" in body
+    # The 2026-11-13 ablation: the redaction doctrine is gone from the skill,
+    # and a model-facing follower reads the real stored values.
+    assert "REDACTED" not in body
     assert "search_http_history" in body
     assert "replay_http_request" in body
-    assert "never instructs a model-facing follower to read or paste a value" in body
+    assert (
+        "a model-facing follower reads the real stored values "
+        "and replays them exactly as recorded"
+    ) in body
     assert "mount the account's auth context" in body
     assert "never start a twin" in body
 

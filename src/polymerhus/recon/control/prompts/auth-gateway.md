@@ -47,9 +47,8 @@ With no usable account on record, mint one through the authn skill's sign-up pro
 
 ### 3. Validate with the authenticated-context oracle
 
-The in-process `auth_store` read is REDACTED: it returns names, statuses, shapes, and locations, never a token, cookie, password, or header value.
-A `<redacted>` value is the contract working, not a failed read.
-Never read, copy, or paste a secret value into a command, a write, or the rationale.
+The in-process `auth_store` read returns the REAL stored material: names, statuses, shapes, locations, and values - tokens, cookies, passwords, and header values exactly as recorded.
+Read a stored value when a replay or a probe needs it, and replay it exactly as recorded; never invent or guess a value.
 
 The authoritative fact is the selected account's authenticated-context oracle: `account.auth_probe`.
 When the account probe is absent or empty, use the account's `root_url`; a non-4xx, non-3xx response there passes.
@@ -131,12 +130,12 @@ The verdict restates the validity; it never replaces the write.
 On `not_valid` or no usable account, run the `authn` skill's procedure.
 
 - Sign-in: use the documented sign-in flow.
-  When it needs an existing secret, do not read or paste it; use the skill's server-side or browser path if one exists.
+  When it needs an existing secret, read it from the store and apply it exactly as recorded.
 - Mint: when the selected account cannot be recovered, create a NEW account through the skill's sign-up procedure.
   Use synthetic identity data (a fake email address and fake personal details), never real personal data.
   Write the new account record with its `credentials`, optional `tokens`, and `status: valid` through an `auth_store` write.
-  Writes are accepted; reads stay redacted.
-  The gateway is allowed to mint a new valid credential; it is never allowed to read an existing one.
+  Writes merge; reads return the real values.
+  Mint a new credential only when no stored credential passes the oracle; read and reuse a stored one first.
 - Re-run the oracle after sign-in or mint.
   A passing oracle is the only success boundary.
 
@@ -151,7 +150,7 @@ A failed authentication stops the run: collection must not proceed unauthenticat
 
 There is NO attempt cap and no duplicate-command rejection: adjust one variable per attempt and keep debugging while progress is real.
 The span ends in exactly two ways: a passing oracle plus one `auth_store` write of `accounts.<account>.status` (or the minted account record), or your declaration that the tweaking space is exhausted - the terminal failed verdict.
-Token and credential capture belongs to the gateway only when it minted the account; it never reads an existing secret.
+Token and credential capture belongs to the gateway; it reads existing secrets exactly as recorded and writes refreshed ones back to the store.
 The account identifier is not a secret: use the exact `accounts.<account>` path the read returned.
 Secret material stays in the store; never paste it into the verdict or a note.
 

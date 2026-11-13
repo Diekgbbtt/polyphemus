@@ -139,8 +139,8 @@ A follower's rules differ from this bootstrap's.
 A generated procedure that a gateway or pod runs must mount the same account's auth context and never start a twin.
 A missing session is asserted `not_valid` and stops the run; it is not a reason to mint a blank session.
 A follower may mint a NEW account through the sign-up procedure with synthetic identity data when the mounted context cannot authenticate and the target supports sign-up.
-It writes the new credentials and proves the oracle; it never reads an existing secret.
-A model-facing follower sees a REDACTED `auth_store` view: it cites token names and locations, uses the recorded HTTP history replay or the browser session, and never reads or pastes a secret value.
+It writes the new credentials and proves the oracle; before minting it reads and reuses any stored credential that still passes the oracle.
+A model-facing follower reads the real `auth_store` values: it cites token names and locations and reaches the values through the recorded HTTP history replay or the browser session. When a replay needs the material directly, a model-facing follower reads the real stored values and replays them exactly as recorded.
 Authentication failure never fails open; collection does not run unauthenticated.
 
 ### Browser fast path (read this before the first browser step)
@@ -213,7 +213,7 @@ Gate: no procedure prose landed in the store and no secret value landed in the s
 Write the authn skill as replayable ordered steps, with sign-up and sign-in as separate named procedures.
 Every sign-up procedure carries this line verbatim, so every target mints new accounts the same way: "New accounts are minted with synthetic identity data - a fake email address and fake personal details - never real personal data; the exact values used are recorded in the account's `credentials`."
 Cite for EVERY step the tool it uses AND why it uses it (request-based because no blocking defence was observed, steel because a named WAF, anti-bot, or fingerprinting signal forced it).
-When `http-client-replayability` is `true`, the procedure cites the recorded HTTP history replay (`search_http_history`, `replay_http_request`) or the pipeline's server-side request material, plus the static/dynamic element names and locations. It never instructs a model-facing follower to read or paste a value; the `auth_store` view is redacted.
+When `http-client-replayability` is `true`, the procedure cites the recorded HTTP history replay (`search_http_history`, `replay_http_request`) or the pipeline's server-side request material, plus the static/dynamic element names and locations. It may instruct a model-facing follower to read a stored value and replay it exactly as recorded; the `auth_store` view carries the real values.
 When it is `false`, the procedure carries the browser steps instead, and says plainly that a plain-client replay cannot reach the authenticated state. Those steps mount the account's auth context and never start a twin.
 Every procedure, request or browser, carries the same verification step: run the session's oracle at `account.auth_probe` (or `account.root_url` when the probe is empty) and pass only on 2xx with no followed redirect. A 401, 403, or 3xx is a failure; anything else is indeterminate and stops the run.
 The browser procedure's failure branch names the typed outcomes: `session_in_use` means the execution unit already holds the session and it must be reused, never twinned; `no_session` means no live lease exists and `start` must run first; `restore_failed` means the stored context could not be mounted; `pool_exhausted` means retry after a lease ends; `browser_unavailable` means the pool is unreachable. A follower asserts `not_valid` and stops when the context is gone. When the target supports sign-up, the follower may mint a new account with synthetic identity data, write its credentials, and prove the oracle; it never fails open.
@@ -245,7 +245,7 @@ Gate: the two planes are mutually consistent and non-overlapping, with no orphan
 | `procedure` label | Named procedure | Sole formal edge, bidirectional |
 | Account NAME | Procedure account citation | Known name means duplicate, never fork |
 | `credentials` | Sign-in or sign-up step | Secrets stay in store, skill cites account |
-| `tokens.<t>` value plus location | Token carrying or reading step | Location dictates where token travels; a model-facing follower is redacted and the value is applied server-side |
+| `tokens.<t>` value plus location | Token carrying or reading step | Location dictates where token travels; a model-facing follower reads the value and carries it itself |
 | `snapshot` / `tokens` | Session persistence step | The bootstrap writes `accounts.<account>.snapshot` and/or `.tokens`; `browser_context.ref` is preflight-minted |
 | `role`, `root_url`, `auth_probe` | Role/root and verification step | Each account is one session; the session starts at its root and proves its own oracle |
 | `snapshot` | Request replay step | Replay the account snapshot exactly |

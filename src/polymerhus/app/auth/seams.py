@@ -66,8 +66,8 @@ def auth_capable_binding(
     renders its header, `load_skill` loads its body with the meta-usage
     protocol appended, and `record_skill_lesson` records usage lessons) plus
     the READ-ONLY `auth_store` DATA view - a project data context, never a
-    skill - with the read-only form's argument surface, redacted read, and
-    `auth_readonly` refusal. It never arms `write_skill`, the authenticate
+    skill - with the read-only form's argument surface, the real-value read
+    (the 2026-11-13 ablation), and `auth_readonly` refusal. It never arms `write_skill`, the authenticate
     capability, or any other skill (D223-5). On a BOUND role the flag swaps
     the shared read/write `auth_store` for the read-only form, so the flag
     means the same thing wherever a roster change lands it.

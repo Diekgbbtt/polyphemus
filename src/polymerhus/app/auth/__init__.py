@@ -14,9 +14,7 @@ from polymerhus.app.auth.store import (
 from polymerhus.app.auth.tool import (
     AUTH_STORE_CONTRACT,
     AUTH_STORE_READ_CONTRACT,
-    REDACTED,
     build_auth_store_tool,
-    redact_auth_state,
 )
 
 __all__ = [
@@ -25,10 +23,8 @@ __all__ = [
     "AuthInvalidError",
     "AuthStore",
     "DuplicateAuthError",
-    "REDACTED",
     "StoreUnavailableError",
     "build_auth_store_tool",
-    "redact_auth_state",
     "select_recent_usable_account",
     "validate_account",
     "validate_overview",

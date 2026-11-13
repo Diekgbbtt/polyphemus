@@ -143,13 +143,16 @@ def test_external_bootstrap_contracts_teach_role_priority_and_session_roots() ->
     assert "account.auth_probe" in l1 or "account's `auth_probe`" in l1
 
 
-def test_gateway_prompt_uses_the_redacted_store_and_recorded_replay() -> None:
+def test_gateway_prompt_uses_the_real_value_store_and_recorded_replay() -> None:
     text = _read(
         "src", "polymerhus", "recon", "control", "prompts", "auth-gateway.md"
     )
     lower = text.lower()
-    assert "redacted" in lower
-    assert "never read" in lower
+    # The 2026-11-13 ablation: the prompt teaches the real stored values and
+    # their exact replay, not a redaction marker.
+    assert "redacted" not in lower
+    assert "never read" not in lower
+    assert "exactly as recorded" in lower
     assert "search_http_history" in text
     assert "replay_http_request" in text
     assert "start or reuse" not in lower
@@ -159,7 +162,7 @@ def test_gateway_prompt_uses_the_redacted_store_and_recorded_replay() -> None:
     assert "no_session" in text
 
 
-def test_gateway_manner_and_hints_do_not_teach_raw_secret_reads() -> None:
+def test_gateway_manner_and_hints_teach_the_real_value_replay() -> None:
     from polymerhus.recon.control import authn_loop
     from polymerhus.recon.control.orchestrator_agent import _BRANCH_MANNER
 
@@ -175,7 +178,10 @@ def test_gateway_manner_and_hints_do_not_teach_raw_secret_reads() -> None:
     assert "start or reuse" not in lower
     assert "stored request state" not in lower
     assert "extracted tokens" not in lower
-    assert "redacted" in lower
+    # The ablation: the hints teach reading and replaying the real values,
+    # and the redaction doctrine is gone.
+    assert "redacted" not in lower
+    assert "exactly as recorded" in lower
     assert "replay_http_request" in text
     assert "session_in_use" in text
     assert "no_session" in text

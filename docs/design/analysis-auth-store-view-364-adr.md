@@ -70,3 +70,51 @@ The read-only and read/write tool views now project the account's `role`, `root_
 The fields are session metadata, not secrets: the contract names one account as one session, and the analysis proposers can type the authenticated surface against the role's root and probe.
 The redaction rules and the secret slots are unchanged.
 The change is pinned by `tests/app/test_auth_store_tool.py` and `tests/app/test_auth_store_tool_origin.py`.
+
+## Amendment 2026-11-13 - the value redaction is ablated
+
+D364-2 is retired: the read view (read-only and read/write alike) now returns
+the REAL session material - passwords, token values, and snapshot
+cookie/header/param values exactly as stored. `REDACTED`, `redact_auth_state`,
+and every private redactor are deleted; there is no marker to keep in sync and
+no import surface can reintroduce one silently (pinned by
+`tests/app/test_auth_store_tool_readonly.py::test_the_marker_is_retired`).
+
+The evidence is the iteration-E siyucms rerun (trial
+`siyucms-web-20261111T073533-38e49ca5`, verdicts 1 partial / 5 missed). The
+store held a valid administrator session (`PHPSESSID`, snapshot, browser
+context) while every model-facing read returned the marker, and the misses
+trace exactly to that gap: the threat modeller modelled the console media and
+template units from an unauthenticated navigation session (siyucms-004,
+siyucms-002, siyucms-005), and the API unit's probe concluded "no valid token
+was available" (siyucms-006) although `accounts.<admin>.tokens.PHPSESSID.value`
+held one. The quality damage of the redaction - unauthenticated modelling,
+dead-end probes, untested authenticated surfaces - outweighs its
+confidentiality value inside a run whose every consumer is the operator's own
+agent.
+
+Consequences:
+
+- The read/write binding's read and the read-only binding's read carry the
+  same real values; the read-only form keeps its narrower argument surface and
+  `auth_readonly` refusal (D364-1, D364-3 stand).
+- The `summary` view remains a concise INDEX (identity, roles, token
+  metadata); the values stay one narrow path away - a bounded-orientation
+  rule, not a secrecy rule.
+- The gateway, authn-loop hints, and the orchestrator's replayability prompt
+  now teach reading the stored values and replaying them exactly as recorded;
+  the "never reads an existing secret" doctrine is gone from every prompt and
+  from the authn meta skill.
+- Secret material still never lands in a verdict or a note: the store is the
+  bucket, the verdict is prose.
+- The adjacent model-facing redactions (unit-projection secret headers,
+  http-history secret values) are deliberately UNTOUCHED: this trial's misses
+  trace only to the auth store, and those sites stay until a rerun's
+  diagnoses implicate them.
+
+Pinned by `tests/app/test_auth_store_tool.py`,
+`tests/app/test_auth_store_tool_readonly.py`,
+`tests/app/test_auth_store_tool_origin.py`,
+`tests/analysis/test_proposer_turn.py`,
+`tests/recon/test_steel_session_only_surfaces.py`, and
+`tests/recon/test_authn_skill_writing.py`.
