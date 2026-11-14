@@ -41,15 +41,20 @@ def test_usage_returns_totals_and_per_agent_breakdown():
         "capped_tokens": 20,
         "calls": 2,
         "cache_detail_omitted": 2,
+        "first_calls": 0,
+        "first_cached": 0,
+        "first_uncached": 0,
         "by_agent": {
             "analyser": {"context_tokens": {"cached": 0, "uncached": 10},
                          "generated_tokens": {"reasoning": 0, "visible": 5},
                          "total_tokens": 15, "capped_tokens": 15, "calls": 1,
-                         "cache_detail_omitted": 1},
+                         "cache_detail_omitted": 1,
+                         "first_calls": 0, "first_cached": 0, "first_uncached": 0},
             "triager": {"context_tokens": {"cached": 0, "uncached": 1},
                         "generated_tokens": {"reasoning": 0, "visible": 4},
                         "total_tokens": 5, "capped_tokens": 5, "calls": 1,
-                        "cache_detail_omitted": 1},
+                        "cache_detail_omitted": 1,
+                        "first_calls": 0, "first_cached": 0, "first_uncached": 0},
         },
     }
 
@@ -86,6 +91,9 @@ def test_usage_for_an_empty_project_returns_zeros_and_never_404s():
         "capped_tokens": 0,
         "calls": 0,
         "cache_detail_omitted": 0,
+        "first_calls": 0,
+        "first_cached": 0,
+        "first_uncached": 0,
         "by_agent": {},
     }
 

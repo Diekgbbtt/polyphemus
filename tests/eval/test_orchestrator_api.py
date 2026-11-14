@@ -162,6 +162,9 @@ def test_usage_spectrum_decodes_the_ledger_per_agent_surface() -> None:
             "capped": 44_100_000,
             "calls": 24,
             "cache_detail_omitted": 3,
+            "first_calls": 0,
+            "first_cached_input": 0,
+            "first_uncached_input": 0,
         },
         "job_orchestrator": {
             "visible": 250_000,
@@ -173,7 +176,45 @@ def test_usage_spectrum_decodes_the_ledger_per_agent_surface() -> None:
             "capped": 7_600_000,
             "calls": 30,
             "cache_detail_omitted": 24,
+            "first_calls": 0,
+            "first_cached_input": 0,
+            "first_uncached_input": 0,
         },
+    }
+
+
+def test_usage_spectrum_projects_the_cold_call_counters() -> None:
+    # The marginal cache-hit KPI needs the cold turns split out of the cached and
+    # uncached axes, so the spectrum carries the three ledger cold counters.
+    response = {
+        "by_agent": {
+            "pod_triager": {
+                "context_tokens": {"cached": 9000, "uncached": 6000},
+                "generated_tokens": {"reasoning": 100, "visible": 100},
+                "total_tokens": 15200,
+                "capped_tokens": 6200,
+                "calls": 10,
+                "cache_detail_omitted": 0,
+                "first_calls": 1,
+                "first_cached": 0,
+                "first_uncached": 1500,
+            }
+        }
+    }
+    spectrum = api.usage_spectrum(response)
+    assert spectrum["pod_triager"] == {
+        "visible": 100,
+        "reasoning": 100,
+        "cached_input": 9000,
+        "uncached_input": 6000,
+        "generated": 200,
+        "total": 15200,
+        "capped": 6200,
+        "calls": 10,
+        "cache_detail_omitted": 0,
+        "first_calls": 1,
+        "first_cached_input": 0,
+        "first_uncached_input": 1500,
     }
 
 
@@ -192,6 +233,9 @@ def test_usage_spectrum_pins_the_schema_and_fails_open() -> None:
         "capped",
         "calls",
         "cache_detail_omitted",
+        "first_calls",
+        "first_cached_input",
+        "first_uncached_input",
     ]
     assert spectrum["recon"] == {
         "visible": 0,
@@ -203,6 +247,9 @@ def test_usage_spectrum_pins_the_schema_and_fails_open() -> None:
         "capped": 4200,
         "calls": 0,
         "cache_detail_omitted": 0,
+        "first_calls": 0,
+        "first_cached_input": 0,
+        "first_uncached_input": 0,
     }
     # Fail-open: absent/malformed response, a non-mapping agent, or a malformed
     # nested map degrades to empty/zeros, never a raise.
@@ -222,6 +269,9 @@ def test_usage_spectrum_pins_the_schema_and_fails_open() -> None:
             "capped": 0,
             "calls": 0,
             "cache_detail_omitted": 0,
+            "first_calls": 0,
+            "first_cached_input": 0,
+            "first_uncached_input": 0,
         }
     }
 
@@ -251,6 +301,9 @@ def test_usage_spectrum_ignores_negative_and_bool_fields() -> None:
         "capped": 20,
         "calls": 2,
         "cache_detail_omitted": 0,
+        "first_calls": 0,
+        "first_cached_input": 0,
+        "first_uncached_input": 0,
     }
 
 

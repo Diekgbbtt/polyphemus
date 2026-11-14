@@ -567,6 +567,9 @@ def test_trial_outcome_prints_the_per_agent_token_spectrum(monkeypatch) -> None:
                 "capped": 44100,
                 "calls": 24,
                 "cache_detail_omitted": 3,
+                "first_calls": 1,
+                "first_cached_input": 0,
+                "first_uncached_input": 1500,
             }
         },
     )
@@ -602,6 +605,78 @@ def test_trial_outcome_prints_the_per_agent_token_spectrum(monkeypatch) -> None:
     assert "cached_input 19000" in line
     assert "uncached_input 43100" in line
     assert "cache_detail_omitted 3" in line
+    # The marginal cache-hit KPI: the ratios the pod-triager lifecycle v2 is
+    # judged on, printed from the spectrum's own cold-call counters.
+    # prefix 19000/62100 = 30.6%; marginal 19000/60600 = 31.4%;
+    # first-call share 1500/62100 = 2.4%.
+    assert "prefix_hit_ratio 30.6%" in line
+    assert "marginal_hit_ratio 31.4%" in line
+    assert "first_call_share 2.4%" in line
+
+
+def test_trial_outcome_prints_n_a_ratios_for_an_agent_without_calls(monkeypatch) -> None:
+    # An agent with no context carries no ratio; the terminal says so instead of
+    # printing a division artifact.
+    record = SimpleNamespace(
+        trial_id="t1",
+        terminal="stopped",
+        project_id="pid",
+        phases=[
+            SimpleNamespace(
+                phase="hunting", status="stopped", failure=None, blocks=[], notes=[]
+            )
+        ],
+        token_budget=None,
+        spent_tokens=None,
+        spend_overshoot=0,
+        token_spectrum={
+            "pod_triager": {
+                "visible": 0,
+                "reasoning": 0,
+                "cached_input": 0,
+                "uncached_input": 0,
+                "generated": 0,
+                "total": 0,
+                "capped": 0,
+                "calls": 0,
+                "cache_detail_omitted": 0,
+                "first_calls": 0,
+                "first_cached_input": 0,
+                "first_uncached_input": 0,
+            }
+        },
+    )
+
+    class _FakeTrial:
+        def __init__(self, cfg, **kwargs) -> None:
+            pass
+
+        def run(self, **kwargs) -> object:
+            return record
+
+    monkeypatch.setattr(cli, "_trial_config", lambda *a, **k: (None, None, None))
+    monkeypatch.setattr(cli, "_with_version_identity", lambda cfg, *a, **k: cfg)
+    monkeypatch.setattr(cli.trial, "Trial", _FakeTrial)
+    monkeypatch.setattr(
+        cli, "Orchestrator", lambda *a, **k: SimpleNamespace(up=lambda: None)
+    )
+    out, err = io.StringIO(), io.StringIO()
+
+    code = cli._run_trial(
+        SimpleNamespace(dry_run=False, api="http://api"),
+        object(),
+        cli.OrchestratorConfig(repo=Path("/repo"), instances_root=Path("/instances")),
+        out,
+        err,
+        lambda: object(),
+        lambda base: object(),
+    )
+
+    assert code == 0
+    line = out.getvalue()
+    assert "prefix_hit_ratio n/a" in line
+    assert "marginal_hit_ratio n/a" in line
+    assert "first_call_share n/a" in line
 
 
 # --- the trial record names the commit the stack loads (D32) ------------------

@@ -14,7 +14,7 @@ import shlex
 import sys
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Callable, Sequence, TextIO
+from typing import Callable, Mapping, Sequence, TextIO
 
 import yaml
 
@@ -738,6 +738,33 @@ def _with_version_identity(cfg: trial.TrialConfig, paths, args,
     )
 
 
+def _ratio_pct(numerator: int, denominator: int) -> str:
+    """A one-decimal percentage, or `n/a` when the denominator is zero."""
+    if denominator <= 0:
+        return "n/a"
+    return f"{100.0 * numerator / denominator:.1f}%"
+
+
+def _print_cache_ratios(spectrum: Mapping[str, int], out: TextIO) -> None:
+    """The marginal cache-hit KPI under the spectrum line (pod-triager lifecycle
+    v2): the headline prefix ratio, the marginal ratio that excludes the
+    unavoidable first call of every agent thread, and the first-call share that
+    is the ceiling's complement. An agent without context prints `n/a`."""
+    cached = spectrum.get("cached_input") or 0
+    uncached = spectrum.get("uncached_input") or 0
+    first_cached = spectrum.get("first_cached_input") or 0
+    first_uncached = spectrum.get("first_uncached_input") or 0
+    print(
+        f"    prefix_hit_ratio {_ratio_pct(cached, cached + uncached)} "
+        f"marginal_hit_ratio "
+        f"{_ratio_pct(cached - first_cached,
+                      (cached - first_cached) + (uncached - first_uncached))} "
+        f"first_call_share {_ratio_pct(first_cached + first_uncached,
+                                       cached + uncached)}",
+        file=out,
+    )
+
+
 def _run_trial(args, setup: EvalSetup, config: OrchestratorConfig, out: TextIO, err: TextIO,
                runner_factory: RunnerFactory, api_factory: ApiFactory) -> int:
     # The config resolves and validates the identifiers FIRST, so a bad setup is
@@ -800,6 +827,7 @@ def _run_trial(args, setup: EvalSetup, config: OrchestratorConfig, out: TextIO, 
             f"cache_detail_omitted {spectrum['cache_detail_omitted']}",
             file=out,
         )
+        _print_cache_ratios(spectrum, out)
     # I2: a failed or timed-out run is a handled failure (the record is written
     # and printed), so exit non-zero instead of reporting success.
     return 1 if record.terminal in ("failed", "timeout") else 0

@@ -409,6 +409,9 @@ SPECTRUM_FIELDS = (
     "capped",
     "calls",
     "cache_detail_omitted",
+    "first_calls",
+    "first_cached_input",
+    "first_uncached_input",
 )
 
 
@@ -425,16 +428,19 @@ def usage_spectrum(response: Mapping) -> dict:
     """The project's per-agent token spectrum, decoded from a usage response.
 
     One flat typed entry per agent - `{visible, reasoning, cached_input,
-    uncached_input, generated, total, capped, calls, cache_detail_omitted}` -
-    projected from the durable ledger's own cumulative `by_agent` surface
-    (#326). The values are the ledger's per-agent totals, NEVER a re-derivation
-    from traces or spend logs; `generated = reasoning + visible` is the
-    ledger's own output split summed, and `cached_input`/`uncached_input` are
-    the ledger's context split. `cache_detail_omitted` is the ledger's N5 count
-    of calls that carried NO cache detail at all, so a 0% cached share is
-    readable as silence, not as a measured miss. An absent/malformed agent
-    entry reads as zeros (advisory), so the terminal record is always writable
-    and the spectrum is readable from the trial file alone (#349)."""
+    uncached_input, generated, total, capped, calls, cache_detail_omitted,
+    first_calls, first_cached_input, first_uncached_input}` - projected from the
+    durable ledger's own cumulative `by_agent` surface (#326). The values are
+    the ledger's per-agent totals, NEVER a re-derivation from traces or spend
+    logs; `generated = reasoning + visible` is the ledger's own output split
+    summed, and `cached_input`/`uncached_input` are the ledger's context split.
+    `cache_detail_omitted` is the ledger's N5 count of calls that carried NO
+    cache detail at all, so a 0% cached share is readable as silence, not as a
+    measured miss. The three cold-call counters split the unavoidable first
+    call of every agent thread out of the cached/uncached axes (the marginal
+    cache-hit KPI). An absent/malformed agent entry reads as zeros (advisory),
+    so the terminal record is always writable and the spectrum is readable from
+    the trial file alone (#349)."""
     by_agent = usage_by_agent(response)
     spectrum: dict[str, dict[str, int]] = {}
     for agent, entry in by_agent.items():
@@ -456,6 +462,9 @@ def usage_spectrum(response: Mapping) -> dict:
             "capped": _spectrum_int(entry, "capped_tokens"),
             "calls": _spectrum_int(entry, "calls"),
             "cache_detail_omitted": _spectrum_int(entry, "cache_detail_omitted"),
+            "first_calls": _spectrum_int(entry, "first_calls"),
+            "first_cached_input": _spectrum_int(entry, "first_cached"),
+            "first_uncached_input": _spectrum_int(entry, "first_uncached"),
         }
     return spectrum
 

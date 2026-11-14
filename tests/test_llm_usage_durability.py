@@ -55,6 +55,19 @@ def test_resumed_recording_does_not_double_count_the_durable_floor(tmp_path):
     assert snap["by_agent"]["assigner"]["total_tokens"] == 30
 
 
+def test_the_cold_counters_survive_a_restart(tmp_path):
+    first = UsageLedger(store=UsageStore(root=tmp_path))
+    first.record("proj-1", "triager", _TRIAGER, first_call=True)
+    first.record("proj-1", "triager", _TRIAGER)
+
+    snap = _fresh(tmp_path).snapshot("proj-1")
+    assert snap["first_calls"] == 1
+    assert snap["first_uncached"] == 1
+    assert snap["by_agent"]["triager"]["first_calls"] == 1
+    # An old durable record without the fields reads as zeros, never a raise.
+    assert _fresh(tmp_path).snapshot("proj-1")["first_cached"] == 0
+
+
 def test_flush_persists_in_memory_spend_at_a_boundary(tmp_path):
     ledger = UsageLedger()
     ledger.record("proj-1", "assigner", _ASSIGNER)
@@ -137,7 +150,8 @@ def test_store_round_trips_the_per_agent_entries(tmp_path):
     entries = {
         "assigner": {"cached": 1, "uncached": 2, "reasoning": 3, "visible": 4,
                      "total_tokens": 10, "capped_tokens": 9, "calls": 1,
-                     "cache_detail_omitted": 0},
+                     "cache_detail_omitted": 0,
+                     "first_calls": 1, "first_cached": 0, "first_uncached": 2},
     }
 
     store.write("proj-1", entries)

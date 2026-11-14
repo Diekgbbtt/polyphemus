@@ -72,11 +72,25 @@ cache-hostility diagnosis (43 of 46 live calls carried the detail as null and
 were all recorded as cache reads of zero). It is a COUNT, so it never joins
 `_AXIS_FIELDS` and never moves `total_tokens` / `capped_tokens`."""
 
-_ENTRY_FIELDS = _AXIS_FIELDS + ("calls", CACHE_DETAIL_OMITTED_FIELD)
+FIRST_CALL_FIELDS = ("first_calls", "first_cached", "first_uncached")
+"""The cold-call counters: the turns that OPENED a new agent thread.
+
+`first_calls` counts them; `first_cached` / `first_uncached` are the cached and
+uncached input those turns read (normally first_cached is 0, but a provider may
+report a shared-prefix hit even on a thread's first call). The marginal cache
+hit ratio - (cached - first_cached) / ((cached - first_cached) + (uncached -
+first_uncached)) - is the KPI the pod-triager lifecycle v2 optimises, because
+the headline ratio is bounded by the unavoidable first call of every thread.
+They are conditionally accumulated (a warm record leaves them untouched), so
+like the counts they never join `_AXIS_FIELDS`."""
+
+_ENTRY_FIELDS = _AXIS_FIELDS + ("calls", CACHE_DETAIL_OMITTED_FIELD,
+                                *FIRST_CALL_FIELDS)
 """Every field of one ledger entry. `calls` is the call count and
 `cache_detail_omitted` counts the calls whose cache detail the provider never
 reported (N5) - both are counts, and neither is an ACCUMULATING axis, so
-`_AXIS_FIELDS` deliberately excludes them."""
+`_AXIS_FIELDS` deliberately excludes them. The cold-call counters are the
+same kind of conditional accumulator."""
 
 
 def _empty_entry() -> dict[str, int]:
@@ -160,12 +174,16 @@ def _axis_totals(usage: Mapping) -> dict[str, int]:
 
 def _entry_surface(entry: Mapping) -> dict[str, Any]:
     """One ledger entry's public two-axis shape (nested context/generated plus the
-    scalar raw total, the capped budget axis, and the two counts).
+    scalar raw total, the capped budget axis, the two counts, and the cold-call
+    counters).
 
     `cache_detail_omitted` (N5) is how many of the `calls` carried no cache detail
     at all, so a reported 0% cached share is readable as "the provider did not
     say" instead of "the provider measured a miss". `cache_detail_omitted ==
-    calls` means the cached axis says nothing about this entry."""
+    calls` means the cached axis says nothing about this entry. The cold-call
+    counters split the unavoidable first call of every agent thread out of the
+    cached/uncached axes, which is what makes the marginal cache hit ratio
+    computable from the ledger alone."""
     return {
         "context_tokens": {"cached": entry["cached"],
                            "uncached": entry["uncached"]},
@@ -175,6 +193,9 @@ def _entry_surface(entry: Mapping) -> dict[str, Any]:
         "capped_tokens": entry["capped_tokens"],
         "calls": entry["calls"],
         CACHE_DETAIL_OMITTED_FIELD: entry[CACHE_DETAIL_OMITTED_FIELD],
+        "first_calls": entry["first_calls"],
+        "first_cached": entry["first_cached"],
+        "first_uncached": entry["first_uncached"],
     }
 
 
@@ -321,11 +342,14 @@ class UsageLedger:
                            project_id, exc_info=True)
 
     def record(self, project_id: str | None, agent: str,
-               usage: Mapping | None) -> None:
+               usage: Mapping | None, *, first_call: bool = False) -> None:
         """Add one model call's usage. Fail-open: any malformed payload is logged
         and swallowed, never raised into the turn. A None/empty usage is a
-        no-op (not even a call is counted). With a store attached, the touched
-        project is write-through persisted (also fail-open)."""
+        no-op (not even a call is counted). `first_call=True` marks the turn
+        that OPENED a new agent thread: its cached/uncached input lands in the
+        cold-call counters instead of being averaged into the marginal ratio.
+        With a store attached, the touched project is write-through persisted
+        (also fail-open)."""
         try:
             if not usage:
                 return
@@ -342,6 +366,10 @@ class UsageLedger:
                     entry[field] += totals[field]
                 entry["calls"] += 1
                 entry[CACHE_DETAIL_OMITTED_FIELD] += totals[CACHE_DETAIL_OMITTED_FIELD]
+                if first_call:
+                    entry["first_calls"] += 1
+                    entry["first_cached"] += totals["cached"]
+                    entry["first_uncached"] += totals["uncached"]
                 if project_id:
                     self._persist(project_id)
         except Exception:  # noqa: BLE001 - fail-open: never break the turn
@@ -354,10 +382,12 @@ class UsageLedger:
         zeros/empty. With a store attached, the durable floor is read through on
         first use."""
         totals = {"cached": 0, "uncached": 0, "reasoning": 0, "visible": 0,
-                  CACHE_DETAIL_OMITTED_FIELD: 0}
+                  CACHE_DETAIL_OMITTED_FIELD: 0,
+                  "first_cached": 0, "first_uncached": 0}
         total_tokens = 0
         capped_tokens = 0
         calls = 0
+        first_calls = 0
         by_agent: dict[str, dict[str, Any]] = {}
         with self._lock:
             self._load_into_memory(project_id)
@@ -370,6 +400,7 @@ class UsageLedger:
                 total_tokens += entry["total_tokens"]
                 capped_tokens += entry["capped_tokens"]
                 calls += entry["calls"]
+                first_calls += entry["first_calls"]
         return {
             "project_id": project_id,
             "context_tokens": {"cached": totals["cached"],
@@ -380,6 +411,9 @@ class UsageLedger:
             "capped_tokens": capped_tokens,
             "calls": calls,
             CACHE_DETAIL_OMITTED_FIELD: totals[CACHE_DETAIL_OMITTED_FIELD],
+            "first_calls": first_calls,
+            "first_cached": totals["first_cached"],
+            "first_uncached": totals["first_uncached"],
             "by_agent": by_agent,
         }
 
@@ -461,8 +495,10 @@ class TokenUsageMiddleware(AgentMiddleware):
             from langgraph.config import get_config
 
             metadata = (get_config() or {}).get("metadata") or {}
-            usage_ledger().record(metadata.get("usage_scope"),
-                                  metadata.get("role_id") or "unknown", usage)
+            usage_ledger().record(
+                metadata.get("usage_scope"),
+                metadata.get("role_id") or "unknown", usage,
+                first_call=bool(metadata.get("usage_first_call")))
         except Exception:  # noqa: BLE001 - fail-open: never break the turn
             logger.warning("token usage tracking failed; call left unaccounted",
                            exc_info=True)

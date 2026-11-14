@@ -269,6 +269,12 @@ def _mark_pending_resumption(config: dict, snapshot) -> None:
     pending = list(getattr(snapshot, "next", None) or ())
     if pending:
         config.setdefault("metadata", {})["session_pending_next"] = pending
+    # The cold-call mark: the same state read is the only layer that knows the
+    # checkpoint is empty, so a turn that OPENS a new thread is marked here and
+    # the usage middleware lands it in the ledger's cold-call counters.
+    values = getattr(snapshot, "values", None) or {}
+    if not values.get("messages"):
+        config.setdefault("metadata", {})["usage_first_call"] = True
 
 
 def _read_pending_resumption(agent, config: dict) -> None:

@@ -32,6 +32,9 @@ def _empty(project_id: str) -> dict:
         "capped_tokens": 0,
         "calls": 0,
         "cache_detail_omitted": 0,
+        "first_calls": 0,
+        "first_cached": 0,
+        "first_uncached": 0,
         "by_agent": {},
     }
 
@@ -85,7 +88,8 @@ def test_record_accumulates_across_calls_for_one_agent():
         "assigner": {"context_tokens": {"cached": 0, "uncached": 13},
                      "generated_tokens": {"reasoning": 0, "visible": 7},
                      "total_tokens": 20, "capped_tokens": 20, "calls": 2,
-        "cache_detail_omitted": 2},
+         "cache_detail_omitted": 2,
+         "first_calls": 0, "first_cached": 0, "first_uncached": 0},
     }
 
 
@@ -116,6 +120,9 @@ def test_record_decomposes_the_two_axes_from_real_usage_metadata():
         "capped_tokens": 1_203_959,
         "calls": 1,
         "cache_detail_omitted": 0,
+        "first_calls": 0,
+        "first_cached": 0,
+        "first_uncached": 0,
     }
 
 
@@ -308,7 +315,8 @@ def test_middleware_records_usage_for_an_invoked_agent_run():
         "assigner": {"context_tokens": {"cached": 0, "uncached": 11},
                      "generated_tokens": {"reasoning": 0, "visible": 7},
                      "total_tokens": 18, "capped_tokens": 18, "calls": 1,
-                     "cache_detail_omitted": 1},
+                     "cache_detail_omitted": 1,
+                     "first_calls": 0, "first_cached": 0, "first_uncached": 0},
     }
 
 
@@ -404,7 +412,8 @@ def test_session_turn_records_usage_even_when_observe_is_false():
         "assigner": {"context_tokens": {"cached": 0, "uncached": 11},
                      "generated_tokens": {"reasoning": 0, "visible": 7},
                      "total_tokens": 18, "capped_tokens": 18, "calls": 1,
-                     "cache_detail_omitted": 1},
+                     "cache_detail_omitted": 1,
+                     "first_calls": 1, "first_cached": 0, "first_uncached": 11},
     }
 
 
@@ -421,6 +430,79 @@ def test_stateful_turn_threads_usage_scope_to_the_session_turn(monkeypatch):
     S.stateful_turn("assigner", "t", [HumanMessage(content="x")],
                     checkpointer=None, observe=False, usage_scope="proj-1")
     assert seen["usage_scope"] == "proj-1"
+
+
+# --- the cold-call counters (the marginal cache-hit KPI) ----------------------
+#
+# The headline cached share is bounded by the unavoidable first call of every
+# agent thread. The marginal hit ratio (cached - first_cached) / (cached +
+# uncached - first_cached - first_uncached) is the KPI the pod-triager lifecycle
+# v2 optimises, so the ledger counts the cold turns separately.
+
+
+def test_a_warm_record_leaves_the_cold_counters_zero():
+    ledger = UsageLedger()
+    ledger.record("proj-1", "triager", _USAGE)
+    snap = ledger.snapshot("proj-1")
+    assert snap["first_calls"] == 0
+    assert snap["first_cached"] == 0
+    assert snap["first_uncached"] == 0
+
+
+def test_record_with_first_call_counts_the_cold_axes():
+    ledger = UsageLedger()
+    ledger.record("proj-1", "triager", {
+        "input_tokens": 11, "output_tokens": 7, "total_tokens": 18,
+        "input_token_details": {"cache_read": 3, "cache_creation": 0}})
+    ledger.record("proj-1", "triager", _USAGE, first_call=True)
+    snap = ledger.snapshot("proj-1")
+    assert snap["first_calls"] == 1
+    assert snap["first_cached"] == 0
+    assert snap["first_uncached"] == 11
+
+
+def test_the_cold_counters_accumulate_per_agent():
+    ledger = UsageLedger()
+    ledger.record("proj-1", "triager", _USAGE, first_call=True)
+    ledger.record("proj-1", "triager", _USAGE, first_call=True)
+    ledger.record("proj-1", "hunter", _USAGE, first_call=True)
+    snap = ledger.snapshot("proj-1")
+    assert snap["first_calls"] == 3
+    assert snap["first_uncached"] == 33
+    assert snap["by_agent"]["triager"]["first_calls"] == 2
+    assert snap["by_agent"]["hunter"]["first_calls"] == 1
+
+
+def test_a_session_marks_a_cold_thread_first_call():
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from polymerhus.app.llm.session import run_session_turn
+
+    checkpointer = InMemorySaver()
+    run_session_turn(
+        "assigner", "thread-cold", [HumanMessage(content="hi")],
+        checkpointer=checkpointer,
+        model_factory=lambda role_id: _UsageFakeChatModel(),
+        observe=False, usage_scope="proj-1")
+    run_session_turn(
+        "assigner", "thread-cold", [HumanMessage(content="hi again")],
+        checkpointer=checkpointer,
+        model_factory=lambda role_id: _UsageFakeChatModel(),
+        observe=False, usage_scope="proj-1")
+    snap = usage_ledger().snapshot("proj-1")
+    assert snap["first_calls"] == 1
+
+
+def test_the_middleware_forwards_the_first_call_flag():
+    agent = create_agent(_UsageFakeChatModel(), tools=[],
+                         middleware=[usage_middleware()])
+    metadata = {"usage_scope": "proj-1", "role_id": "triager",
+                "usage_first_call": True}
+    agent.invoke({"messages": [HumanMessage(content="hi")]},
+                 {"configurable": {"thread_id": "t1"}, "metadata": metadata})
+    snap = usage_ledger().snapshot("proj-1")
+    assert snap["first_calls"] == 1
+    assert snap["first_uncached"] == 11
 
 
 # --- N5: an OMITTED cache detail is not a cache READ OF ZERO -----------------
