@@ -111,6 +111,11 @@ Consequences:
   http-history secret values) are deliberately UNTOUCHED: this trial's misses
   trace only to the auth store, and those sites stay until a rerun's
   diagnoses implicate them.
+- The superseded records keep their history with a dated pointer to this
+  amendment: `docs/design/e2e-steel-session-395-runtime-stress-campaign.md`
+  (its `Structural fix` described the redaction as the fix) and
+  `docs/design/steel-auth-client-impact-map.md` (its table and sections 3-4
+  describe the redacted read).
 
 Pinned by `tests/app/test_auth_store_tool.py`,
 `tests/app/test_auth_store_tool_readonly.py`,

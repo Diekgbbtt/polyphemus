@@ -253,9 +253,8 @@ class AuthStoreReadArgs(BaseModel):
         default="",
         description=(
             "Dot-path selecting the field to project. An empty path returns "
-            "the concise summary view; set `view=\"full\"` for the full "
-            "state, while a narrow path keeps the turn small and "
-            "precise (`overview` for the login-mechanism header, "
+            "the concise summary view; a narrow path keeps the turn small "
+            "and precise (`overview` for the login-mechanism header, "
             "`accounts.alice` for one account, `accounts.alice.tokens` for its "
             "tokens, `accounts.alice.snapshot` for its captured request "
             "state). The read returns the real stored values."
@@ -266,9 +265,10 @@ class AuthStoreReadArgs(BaseModel):
         description=(
             "Read view for an empty path: `summary` (default) returns the "
             "concise core - overview, account names, roles, and token "
-            "metadata; `overview` or `account` returns one half; `full` "
-            "returns the full state. A non-empty `path` takes "
-            "precedence."
+            "metadata; `overview` or `account` returns one half. `full` is "
+            "retired on this binding (`auth_full_view_retired`); read the "
+            "values through a narrow path or `fields`. A non-empty `path` "
+            "takes precedence."
         ),
     )
     fields: tuple[str, ...] = Field(
@@ -546,6 +546,24 @@ def build_auth_store_tool(project_id: str | None = None, store: AuthStore | None
             _origin_cell[0] = _project_origin(settings_fn, project_id)
         return _origin_cell[0]
 
+    def _do_read(at: str, view: str, fields: tuple[str, ...]) -> dict:
+        """The one shared read body for both bindings: the store's read is a
+        fresh deep copy per call, the projection is the store's (#247 name
+        canonicalisation included), the canonical-origin resolution rides on
+        top (a host, never a secret), and the envelope is bounded."""
+        try:
+            state = seam.read(project_id, "")
+            state = _resolve_canonical_origin(state, _origin_once())
+            projected = _read_projection(state, at, view, fields)
+            if "error" in projected:
+                return {"ok": False, "error": projected["error"],
+                        "detail": projected["detail"]}
+            return {"ok": True, "command": "read", "path": at,
+                    **_bounded_read(projected)}
+        except Exception as exc:  # noqa: BLE001 - fail-open, never a raise
+            return {"ok": False, "error": "store_unavailable",
+                    "detail": f"store_unavailable: {exc}"}
+
     if read_only:
         @tool(args_schema=AuthStoreReadArgs)
         def auth_store(command: str = "read", path: str = "",
@@ -568,22 +586,8 @@ def build_auth_store_tool(project_id: str | None = None, store: AuthStore | None
                         "session context. Use fields=[...] or a narrow path "
                         "(overview, accounts.<name>, accounts.<name>.tokens)."),
                 }
-            try:
-                # The store's own read is a fresh deep copy per call, and its
-                # projection is the store's (#247 name canonicalisation
-                # included). The canonical-origin resolution rides on top (a
-                # host, never a secret). The read carries the real values.
-                state = seam.read(project_id, "")
-                state = _resolve_canonical_origin(state, _origin_once())
-                projected = _read_projection(state, at, view, fields)
-                if "error" in projected:
-                    return {"ok": False, "error": projected["error"],
-                            "detail": projected["detail"]}
-                return {"ok": True, "command": "read", "path": at,
-                        **_bounded_read(projected)}
-            except Exception as exc:  # noqa: BLE001 - fail-open, never a raise
-                return {"ok": False, "error": "store_unavailable",
-                        "detail": f"store_unavailable: {exc}"}
+            # The read carries the real values through the shared read body.
+            return _do_read(at, view, fields)
 
         tool_obj = auth_store
         if hasattr(tool_obj, "description"):
@@ -599,23 +603,10 @@ def build_auth_store_tool(project_id: str | None = None, store: AuthStore | None
         `AUTH_STORE_CONTRACT` is set on the returned tool explicitly)."""
         at = path or ""
         if command == "read":
-            try:
-                # The read/write binding's read carries the same real session
-                # material as the read-only binding: the replayer - gateway,
-                # hunter, or proposer - reads the values it must replay. The
-                # store's read is a fresh deep copy per call; the origin
-                # resolution rides on top (a host, never a secret).
-                state = seam.read(project_id, "")
-                state = _resolve_canonical_origin(state, _origin_once())
-                projected = _read_projection(state, at, view, fields)
-                if "error" in projected:
-                    return {"ok": False, "error": projected["error"],
-                            "detail": projected["detail"]}
-                return {"ok": True, "command": "read", "path": at,
-                        **_bounded_read(projected)}
-            except Exception as exc:  # noqa: BLE001 - fail-open, never a raise
-                return {"ok": False, "error": "store_unavailable",
-                        "detail": f"store_unavailable: {exc}"}
+            # The read/write binding's read carries the same real session
+            # material as the read-only binding: the replayer - gateway,
+            # hunter, or proposer - reads the values it must replay.
+            return _do_read(at, view, fields)
         if command == "write":
             try:
                 seam.write(project_id, at, value, origin="agent")

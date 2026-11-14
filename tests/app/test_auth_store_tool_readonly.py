@@ -439,3 +439,20 @@ def test_the_raw_store_state_is_unchanged_after_reads(tmp_path):
     assert on_disk["accounts"]["alice-bootstrap"]["credentials"]["password"] == PASSWORD
     assert store.read(PROJECT, "accounts.alice-bootstrap.tokens.session.value") \
         == COOKIE_VALUE
+
+
+def test_mutating_a_read_result_cannot_write_through_to_the_store(tmp_path):
+    """A read hands out a private copy: a caller that mutates the returned
+    projection cannot alias the store's state, and the next read is untouched."""
+    store = _seeded_store(tmp_path)
+    tool = _readonly_tool(tmp_path, store)
+    record = tool.invoke(
+        {"command": "read", "path": "accounts.alice-bootstrap"})["value"]
+    record["credentials"]["password"] = "mutated-in-place"
+    record["tokens"]["session"]["value"] = "mutated-in-place"
+    record["status"] = "mutated"
+    again = tool.invoke(
+        {"command": "read", "path": "accounts.alice-bootstrap"})["value"]
+    assert again["credentials"]["password"] == PASSWORD
+    assert again["tokens"]["session"]["value"] == COOKIE_VALUE
+    assert again["status"] == "valid"

@@ -1,6 +1,9 @@
 # Steel and authn client impact map
 
 *Historical impact map for the 2026-10 browser-client work. The current session model is `docs/design/crawl-session-fanout-adr.md`; the `overview.auth_probe.url` references below are the pre-2026-11-09 single-account model.*
+*Amended 2026-11-13: every redacted-read statement below is superseded.
+The auth-store value redaction was ablated (`docs/design/analysis-auth-store-view-364-adr.md`, `Amendment 2026-11-13 - the value redaction is ablated`).
+The table, section 3, and section 4 keep the redaction wording as history.*
 
 Date: 2026-10-29.
 Scope: every component that consumes the Steel browser contract or the project authentication state.

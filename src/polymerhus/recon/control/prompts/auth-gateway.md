@@ -119,7 +119,7 @@ Persist the authenticated session through `auth_store`, on the account identifie
 A new account is a create at `accounts.<account>`.
 For an existing account write the deeper field path (`accounts.<account>.snapshot` or `accounts.<account>.tokens`); the account root is create-only.
 The tool contract defines the exact field shapes; read it before the first write.
-Do not paste a secret into a prompt or a note.
+Do not paste a secret into a prompt, a note, or the rationale.
 
 Assert the outcome in the store BEFORE entering sign-in with an `auth_store` write of `accounts.<account>.status`: `valid` on a 2xx oracle, `not_valid` on 401, 403, or 3xx.
 The assertion is the loop's boundary act and the write LANDS: an operator-stamped account merges the write like any other, keeping its `origin: operator` stamp as provenance.
@@ -152,7 +152,7 @@ There is NO attempt cap and no duplicate-command rejection: adjust one variable 
 The span ends in exactly two ways: a passing oracle plus one `auth_store` write of `accounts.<account>.status` (or the minted account record), or your declaration that the tweaking space is exhausted - the terminal failed verdict.
 Token and credential capture belongs to the gateway; it reads existing secrets exactly as recorded and writes refreshed ones back to the store.
 The account identifier is not a secret: use the exact `accounts.<account>` path the read returned.
-Secret material stays in the store; never paste it into the verdict or a note.
+Secret material stays in the store; never paste it into the verdict, a note, or the rationale.
 
 ### 5. Outer loop, then the verdict
 

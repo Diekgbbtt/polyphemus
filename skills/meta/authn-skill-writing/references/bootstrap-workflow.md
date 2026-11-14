@@ -95,7 +95,7 @@ The preflight mints `browser_context.ref`; the bootstrap does not write it.
 
 ## Report back
 
-Return a concise report: the mode decision with its forcing evidence (status codes, headers, body markers); the `anti-bot` name or null; the `http-client-replayability` verdict with its static and dynamic continuation facts; the oracle path with both observed polarities (authenticated 2xx, anonymous 401/403/3xx); the token names and locations; the exact skill path written and the store read-back with secret values redacted; and any error verbatim, plus anything you could not establish.
+Return a concise report: the mode decision with its forcing evidence (status codes, headers, body markers); the `anti-bot` name or null; the `http-client-replayability` verdict with its static and dynamic continuation facts; the oracle path with both observed polarities (authenticated 2xx, anonymous 401/403/3xx); the token names and locations; the exact skill path written and the store read-back; and any error verbatim, plus anything you could not establish.
 Cite secret names only: no secret VALUE in the report or in the skill.
 
 ## Deliverable
