@@ -376,3 +376,73 @@ def test_triager_prompt_does_not_offer_harness_terminal_reasons():
     for reason in ("node-timeout", "context-window-exceeded", "tool-timeout",
                    "graph-limit", "pod-watchdog-timeout"):
         assert reason not in POD_TRIAGER_SYSTEM, reason
+
+
+# --- the lifecycle v2 contract prompt (slice 3) --------------------------------
+#
+# One immutable system prompt per pod_triager thread: the static contract only.
+# The phase verbatims are separate files, and the phase identity never enters
+# the system prompt, because the provider caches a token prefix from position 0
+# and a stage label there resets it (the 25.56% cache-hit defect).
+
+TRIAGER_CONTRACT = None
+
+
+def _contract() -> str:
+    global TRIAGER_CONTRACT
+    if TRIAGER_CONTRACT is None:
+        TRIAGER_CONTRACT = prompts_mod.load_pod_triager_contract()
+    return TRIAGER_CONTRACT
+
+
+def test_triager_contract_prompt_carries_the_static_sections():
+    lc = _contract().lower()
+    for section in ("# role", "what you read", "surgical conciseness",
+                    "observation integrity", "evidence sufficiency",
+                    "output discipline"):
+        assert section in lc, section
+    assert "third-party" in lc
+
+
+def test_triager_contract_prompt_carries_no_per_pod_or_phase_material():
+    text = _contract()
+    lc = text.lower()
+    # Phase identity and stage labels never enter the system prompt.
+    for marker in ("stage a", "stage b", "stage c", "stage d",
+                   "## assess", "## decide", "p0", "p1", "p2", "p3"):
+        assert marker not in lc, marker
+    # No per-pod spec content and no skill listing ride position 0.
+    for material in ("verification_symptoms", "skill_concretised_procedure",
+                     "- name:"):
+        assert material not in text, material
+
+
+def test_triager_contract_prompt_names_the_gate_tools_and_the_integrity_fields():
+    text = _contract()
+    for name in ("submit_assessment", "submit_decision"):
+        assert name in text, name
+    # The observation-integrity judgement is defined over the raw fields, not
+    # over a summary.
+    for field in ("returncode", "stderr", "error_code", "warning"):
+        assert field in text, field
+
+
+def test_the_assess_verbatim_is_a_separate_phase_file():
+    text = prompts_mod.load_pod_assess_verbatim()
+    for name in ("symptom_confirmed", "runner_diverged", "clean", "note"):
+        assert name in text, name
+    # The confirmation and divergence rules are the phase's own text.
+    lc = text.lower()
+    assert "confirm" in lc and "diverg" in lc
+
+
+def test_the_decide_verbatim_is_a_separate_phase_file():
+    text = prompts_mod.load_pod_decide_verbatim()
+    from polymerhus.attack.hunting.pod.variant_basis import VARIANT_BASES
+    for basis in VARIANT_BASES:
+        assert basis in text, basis
+    # The terminal vocabulary and the coherence rule ride the DECIDE packet.
+    for reason in ("space-exhausted", "no-symptom-evidence",
+                   "technical-infeasibility", "specific-defence-prevention"):
+        assert reason in text, reason
+    assert "submit_decision" in text
