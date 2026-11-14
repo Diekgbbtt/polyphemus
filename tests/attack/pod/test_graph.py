@@ -643,23 +643,34 @@ def test_terminal_export_persists_to_spec_run_id(tmp_path):
     assert persisted == env                       # the persisted record == the returned envelope
 
 
-def test_export_rerun_overwrites_the_same_file(tmp_path):
+def test_export_rerun_overwrites_a_harness_export(tmp_path):
     """GP1/D84-37: a re-run of the same spec with the SAME run_id overwrites the
-    same `<spec_id>/<run_id>.yaml` - the deterministic path is the address."""
+    same `<spec_id>/<run_id>.yaml` when the prior export is a harness terminal -
+    the deterministic path is the address. Monotonicity rule (a): a latched
+    DOMAIN verdict is final, so a domain re-run of the same run returns the
+    first verdict instead of overwriting it."""
     from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore
 
     store = PodMemoryStore(tmp_path)
+    store.write_pod_export(SPEC_ID, "run-1", {
+        "verdict": "unsuccessful",
+        "evidence": {"terminal_reason": "node-timeout", "clean": False},
+    })
     env1 = _run(arun_pod(VALID_SPEC, exec_fn=_exec(_OK), runner_step_fn=symbolic_runner_step_fn,
                          triager_fn=None, trace_fn=_no_trace, memory_store=store,
                          spec_id=SPEC_ID, run_id="run-1"))
+    assert env1["verdict"] == "successful"
+    assert store.read_pod_export(SPEC_ID, "run-1") == env1
+    assert store.list_pod_exports(SPEC_ID) == ["run-1"]   # one file, overwritten
+
     env2 = _run(arun_pod({**VALID_SPEC, "verification_symptoms": ["reflects the marker"]},
                          exec_fn=_exec(_ABSENT), runner_step_fn=symbolic_runner_step_fn,
                          triager_fn=_terminate_space, trace_fn=_no_trace,
                          memory_store=store, spec_id=SPEC_ID, run_id="run-1"))
-    assert env1["verdict"] == "successful"
-    assert env2["verdict"] == "unsuccessful"
-    assert store.read_pod_export(SPEC_ID, "run-1") == env2
-    assert store.list_pod_exports(SPEC_ID) == ["run-1"]   # one file, overwritten
+    # A second DOMAIN verdict never replaces the first (rule a): the re-run
+    # reads back the first evaluation instead of rewriting it.
+    assert env2 == env1
+    assert store.read_pod_export(SPEC_ID, "run-1") == env1
 
 
 def test_export_write_failure_degrades_to_the_envelope(tmp_path):

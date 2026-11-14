@@ -381,7 +381,13 @@ def _export(state: PodState, *, verdict: str, reason: str, clean: bool,
         run_id=state.get("run_id") or POD_DEFAULT_RUN_ID,
         terminal=terminal, log=log, replace_existing=True,
     )
-    return {"export": envelope, "verdict": verdict, "terminal_reason": reason}
+    # The finalizer is the monotonicity authority: the returned envelope may be
+    # an earlier durable terminal, so the in-memory result reads back the
+    # envelope's own verdict and reason and can never disagree with the record.
+    evidence = envelope.get("evidence") or {}
+    return {"export": envelope,
+            "verdict": envelope.get("verdict", verdict),
+            "terminal_reason": evidence.get("terminal_reason", reason)}
 
 
 def _root_spec_id(state: PodState, spec_id: str | None) -> str:

@@ -221,6 +221,35 @@ def _normalise_terminal(terminal: PodTerminal) -> PodTerminal:
     return terminal
 
 
+def _export_reason(envelope: Any) -> str:
+    """The terminal reason of a persisted envelope, or '' when absent."""
+    if not isinstance(envelope, dict):
+        return ""
+    evidence = envelope.get("evidence")
+    if not isinstance(evidence, dict):
+        return ""
+    return str(evidence.get("terminal_reason") or "")
+
+
+def _latched(envelope: Any) -> bool:
+    """Whether a persisted envelope is an EVALUABLE terminal (monotonicity
+    rule d): a binary verdict AND a terminal reason from the pod vocabulary.
+    Anything else - no verdict, an empty verdict, no reason, or a foreign
+    reason - does not latch, so the next write may fill it."""
+    if not isinstance(envelope, dict):
+        return False
+    if envelope.get("verdict") not in ("successful", "unsuccessful"):
+        return False
+    return _export_reason(envelope) in TERMINAL_REASONS
+
+
+def _is_domain(envelope: Any) -> bool:
+    """Whether a terminal (a PodTerminal or an envelope) is a DOMAIN verdict."""
+    if isinstance(envelope, PodTerminal):
+        return envelope.reason in DOMAIN_TERMINAL_REASONS
+    return _export_reason(envelope) in DOMAIN_TERMINAL_REASONS
+
+
 def finalize_pod(
     *,
     store: Any,
@@ -246,8 +275,21 @@ def finalize_pod(
       replaces a prior export for the same spec and run, so a legitimate
       re-dispatch of the same spec still rewrites its own result.
 
+    Monotonicity ladder (the ratified lifecycle v2 rules, enforced here because
+    this is the ONE writer):
+
+    1. a latched DOMAIN verdict is final: no later write replaces it, whatever
+       `replace_existing` says;
+    2. a DOMAIN verdict may replace a latched HARNESS terminal (the pod did
+       evaluate after the infrastructure stop); the superseded control-plane
+       end reason survives additively as `evidence.control_plane_end_reason`;
+    3. a HARNESS terminal may replace a latched HARNESS terminal only through
+       the `replace_existing` policy;
+    4. an unlatched export (no verdict, an empty verdict, or no terminal
+       reason) never latches: the next write fills it, even from the backstop.
+
     The graph and the surfer are therefore idempotent clients of one writer,
-    and the surfer can never downgrade a domain terminal to a backstop terminal.
+    and no caller can downgrade a domain terminal to a backstop terminal.
     """
     if terminal is None and envelope is None:
         raise ValueError("finalize_pod needs a terminal or an envelope")
@@ -260,9 +302,12 @@ def finalize_pod(
     run_key = str(run_id or "")
     lock = _lock_for(spec_key, run_key)
     with lock:
-        # A fallback terminal never overwrites an existing terminal. An
-        # execution terminal is authoritative and may replace its own prior
-        # export (the legitimate re-run case).
+        # The monotonicity gate. An unlatched export does not latch, so the
+        # write falls through and fills it. A latched domain verdict is final.
+        # A latched harness terminal yields to a domain verdict (rule 2) and
+        # yields to another harness terminal only under `replace_existing`
+        # (rule 3).
+        superseded_reason = ""
         if store is not None and spec_key and run_key:
             reader = getattr(store, "read_pod_export", None)
             if reader is not None:
@@ -272,10 +317,20 @@ def finalize_pod(
                     # An unreadable export is not proof of absence.
                     logger.warning("pod export read failed (%s)", exc)
                     existing = {}
-                if existing and not replace_existing:
-                    _clear_resume(store, spec_key, run_key)
-                    _check_terminal_summary(store, spec_key, run_key, log)
-                    return existing
+                if existing:
+                    latched = _latched(existing)
+                    if latched and not replace_existing \
+                            and not _is_domain(terminal or {}):
+                        _clear_resume(store, spec_key, run_key)
+                        _check_terminal_summary(store, spec_key, run_key, log)
+                        return existing
+                    if latched and _is_domain(existing):
+                        _clear_resume(store, spec_key, run_key)
+                        _check_terminal_summary(store, spec_key, run_key, log)
+                        return existing
+                    if latched and not _is_domain(existing) \
+                            and _is_domain(terminal or {}):
+                        superseded_reason = _export_reason(existing)
 
         if envelope is not None:
             built = envelope
@@ -312,6 +367,14 @@ def finalize_pod(
         if store is not None and spec_key and run_key:
             writer = getattr(store, "write_pod_export", None)
             if writer is not None:
+                if superseded_reason:
+                    # Monotonicity rule 2: the control-plane end reason the
+                    # harness wrote survives the domain replacement as an
+                    # additive fact. A domain verdict says what the evidence
+                    # shows; this says why the runner stopped. Both are true.
+                    evidence = built.get("evidence")
+                    if isinstance(evidence, dict):
+                        evidence["control_plane_end_reason"] = superseded_reason
                 try:
                     writer(spec_key, run_key, built)
                 except Exception as exc:  # noqa: BLE001 - fail-open (O3/IA-4)

@@ -193,7 +193,10 @@ def test_only_the_finalizer_writes_pod_exports():
     assert offenders == []
 
 
-def test_a_new_execution_terminal_replaces_the_prior_export(tmp_path):
+def test_a_second_domain_verdict_never_replaces_the_first(tmp_path):
+    # Monotonicity rule (a): a durable DOMAIN verdict is final, whatever
+    # replace_existing says. A legitimate re-dispatch may rewrite its own
+    # harness terminal, but it can never rewrite a domain evaluation.
     store = PodMemoryStore(tmp_path)
     _seed(store)
     store.write_pod_export(SPEC_ID, RUN, {
@@ -209,6 +212,123 @@ def test_a_new_execution_terminal_replaces_the_prior_export(tmp_path):
         replace_existing=True,
     )
 
+    assert envelope["verdict"] == "successful"
+    assert envelope["evidence"]["terminal_reason"] == "symptom-confirmed"
+    assert store.read_pod_export(SPEC_ID, RUN) == envelope
+
+
+def test_a_domain_verdict_supersedes_a_harness_terminal(tmp_path):
+    # Monotonicity rule (b): a domain verdict may replace a harness terminal,
+    # because the pod did evaluate after the infrastructure stop. The control
+    # plane's end reason survives the replacement as an additive fact.
+    store = PodMemoryStore(tmp_path)
+    _seed(store)
+    store.write_pod_export(SPEC_ID, RUN, {
+        "verdict": "unsuccessful",
+        "evidence": {"terminal_reason": "node-timeout", "clean": False},
+    })
+
+    envelope = finalize_pod(
+        store=store, spec_id=SPEC_ID, run_id=RUN,
+        terminal=PodTerminal.domain(
+            verdict="successful", reason="symptom-confirmed",
+            clean=True, iterations=3),
+        replace_existing=True,
+    )
+
+    assert envelope["verdict"] == "successful"
+    assert envelope["evidence"]["terminal_reason"] == "symptom-confirmed"
+    assert envelope["evidence"]["control_plane_end_reason"] == "node-timeout"
+    assert store.read_pod_export(SPEC_ID, RUN) == envelope
+
+
+def test_a_domain_verdict_supersedes_a_harness_terminal_even_as_a_backstop(tmp_path):
+    # Rule (b) is not qualified by the flag: a domain write is always an
+    # improvement over a harness stop, so the backstop lets it through too.
+    store = PodMemoryStore(tmp_path)
+    _seed(store)
+    store.write_pod_export(SPEC_ID, RUN, {
+        "verdict": "unsuccessful",
+        "evidence": {"terminal_reason": "tool-timeout", "clean": False},
+    })
+
+    envelope = finalize_pod(
+        store=store, spec_id=SPEC_ID, run_id=RUN,
+        terminal=PodTerminal.domain(
+            verdict="unsuccessful", reason="no-symptom-evidence",
+            clean=False),
+    )
+
     assert envelope["evidence"]["terminal_reason"] == "no-symptom-evidence"
-    assert envelope["evidence"]["clean"] is False
+    assert envelope["evidence"]["control_plane_end_reason"] == "tool-timeout"
+    assert store.read_pod_export(SPEC_ID, RUN) == envelope
+
+
+def test_a_harness_terminal_never_supersedes_a_domain_verdict(tmp_path):
+    # Monotonicity rule (c): the ladder's floor. A harness terminal cannot
+    # replace a durable domain verdict, and it adds no control-plane fact.
+    store = PodMemoryStore(tmp_path)
+    _seed(store)
+    existing = {
+        "verdict": "unsuccessful",
+        "evidence": {"terminal_reason": "no-symptom-evidence", "clean": False},
+    }
+    store.write_pod_export(SPEC_ID, RUN, existing)
+
+    envelope = finalize_pod(
+        store=store, spec_id=SPEC_ID, run_id=RUN,
+        terminal=PodTerminal.infrastructure(reason="node-timeout"),
+        replace_existing=True,
+    )
+
+    assert envelope == existing
+    assert "control_plane_end_reason" not in envelope["evidence"]
+    assert store.read_pod_export(SPEC_ID, RUN) == existing
+
+
+def test_a_harness_terminal_still_replaces_a_harness_terminal(tmp_path):
+    # Monotonicity rule (3): the existing replace_existing policy keeps the
+    # scheduler backstop from overwriting the pod's own infrastructure stop.
+    store = PodMemoryStore(tmp_path)
+    _seed(store)
+    store.write_pod_export(SPEC_ID, RUN, {
+        "verdict": "unsuccessful",
+        "evidence": {"terminal_reason": "tool-timeout", "clean": False},
+    })
+
+    envelope = finalize_pod(
+        store=store, spec_id=SPEC_ID, run_id=RUN,
+        terminal=PodTerminal.infrastructure(
+            reason="node-timeout", error="second stop"),
+        replace_existing=True,
+    )
+
+    assert envelope["evidence"]["terminal_reason"] == "node-timeout"
+    assert store.read_pod_export(SPEC_ID, RUN) == envelope
+
+
+@pytest.mark.parametrize("existing", [
+    {"evidence": {"terminal_reason": "node-timeout", "clean": False}},
+    {"verdict": "", "evidence": {"terminal_reason": "node-timeout"}},
+    {"verdict": "successful", "evidence": {}},
+    {"verdict": "successful",
+     "evidence": {"terminal_reason": "not-a-reason", "clean": True}},
+])
+def test_an_unlatched_export_does_not_block_a_fill(tmp_path, existing):
+    # Monotonicity rule (d): an export with no verdict, an empty verdict, or no
+    # terminal reason is not evaluable. It does not latch, and the next write
+    # fills it, even from the replace_existing=False backstop.
+    store = PodMemoryStore(tmp_path)
+    _seed(store)
+    store.write_pod_export(SPEC_ID, RUN, existing)
+
+    envelope = finalize_pod(
+        store=store, spec_id=SPEC_ID, run_id=RUN,
+        terminal=PodTerminal.domain(
+            verdict="unsuccessful", reason="no-symptom-evidence", clean=False),
+    )
+
+    assert envelope["verdict"] == "unsuccessful"
+    assert envelope["evidence"]["terminal_reason"] == "no-symptom-evidence"
+    assert "control_plane_end_reason" not in envelope["evidence"]
     assert store.read_pod_export(SPEC_ID, RUN) == envelope
