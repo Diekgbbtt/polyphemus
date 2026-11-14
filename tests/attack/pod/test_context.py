@@ -8,12 +8,15 @@ from polymerhus.attack.hunting.pod.context import (
     ExperimentLog,
     _dicts_to_lc,
     _lc_to_dicts,
+    compose_assess_packet,
     compose_divergence_delta,
     compose_terminal_delta,
     compose_triage_delta,
     compose_triager_delta,
+    probe_success_marker,
 )
 from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore, spec_identifier
+from polymerhus.attack.hunting.pod.triage_state import TriageFacts
 from polymerhus.attack.hunting.pod.types import (
     Interpretation,
     KbObservation,
@@ -246,6 +249,91 @@ def test_the_full_triager_delta_stays_full(tmp_path):
     assert "## Probes executed" in delta
     assert "## Recent interpretations" in delta
     assert "Pod experiment memory" in delta
+
+
+# --- the lifecycle v2 ASSESS packet (slice 5) -----------------------------------
+
+_FACTS = TriageFacts(runner_failed=False, runner_exhausted=False,
+                     runner_terminated=None, variant_allowed=True,
+                     lap=2, thread_id="pod:s:s0")
+
+
+def test_the_assess_packet_carries_every_judgement_material(tmp_path):
+    store, spec_id, log, spec, observation = _staged_log_and_spec(tmp_path)
+    packet = compose_assess_packet(log, spec, observation, _FACTS, store=store,
+                                   spec_id=spec_id, order=1)
+    assert "the consolidated stretch note" in packet
+    assert "## Verification symptoms" in packet
+    assert "## Target identity" in packet
+    assert "## Assumptions" in packet
+    assert "## Skill procedure" in packet          # the typed excerpt, when present
+    assert "the role check trusts the session" in packet
+    assert "## Probes executed" in packet
+    assert "## Latest observation" in packet
+    assert "## Harness facts" in packet
+    assert "lap=2" in packet
+    assert "variant_allowed=True" in packet
+    assert "runner_failed=False" in packet
+
+
+def test_the_probe_lines_carry_the_raw_integrity_fields(tmp_path):
+    store, spec_id, log, spec, observation = _staged_log_and_spec(tmp_path)
+    log.record_observation(RawObservation(
+        variant_ref="v1", request={"command": "curl -k https://svc/x"},
+        status=None, returncode=7, stdout="", stderr="curl: (7) refused",
+        error_code="CONN_REFUSED", warning={"hint": "proxy"}))
+    packet = compose_assess_packet(log, spec, observation, _FACTS, store=store,
+                                   spec_id=spec_id, order=1)
+    assert "rc=7" in packet
+    assert "success=unknown" in packet
+    assert "error_code=CONN_REFUSED" in packet
+    assert "warning=proxy" in packet
+
+
+def test_the_probe_lines_name_the_structured_success_marker(tmp_path):
+    store, spec_id, log, spec, observation = _staged_log_and_spec(tmp_path)
+    log.record_observation(RawObservation(
+        variant_ref="v1", request={"command": "tool --json"},
+        status=0, returncode=0, stdout='{"success": false, "detail": "blocked"}'))
+    packet = compose_assess_packet(log, spec, observation, _FACTS, store=store,
+                                   spec_id=spec_id, order=1)
+    assert "success=false" in packet
+
+
+def test_probe_success_marker_reads_true_false_unknown():
+    assert probe_success_marker(RawObservation(status=200, body='{"success": true}')) == "true"
+    assert probe_success_marker(RawObservation(status=0, stdout='{"success": false}')) == "false"
+    assert probe_success_marker(RawObservation(status=404, body="not found")) == "unknown"
+    assert probe_success_marker(RawObservation(status=200, body="not json")) == "unknown"
+    assert probe_success_marker(RawObservation(
+        status=200, body='{"nested": {"success": false}}')) == "unknown"   # top level only
+    assert probe_success_marker(RawObservation(status=200, body="")) == "unknown"
+
+
+def test_the_assess_packet_bounds_the_trail_and_the_body(tmp_path):
+    store, spec_id, log, spec, observation = _staged_log_and_spec(tmp_path)
+    for i in range(20):
+        log.record_observation(RawObservation(
+            variant_ref="v1", request={"command": f"curl probe-{i}"}, status=200))
+    big = RawObservation(variant_ref="v1", status=200, body="x" * 5000)
+    packet = compose_assess_packet(log, spec, big, _FACTS, store=store,
+                                   spec_id=spec_id, order=1)
+    assert packet.count("- v1") <= 12            # _PROBE_LINES bounds the trail
+    assert "probe-19" in packet                  # the LAST probes survive
+    assert "probe-0" not in packet
+    assert "x" * 1300 not in packet              # the body keeps only its slice
+
+
+def test_the_assess_packet_rides_the_verbatim_only_on_the_first_lap(tmp_path):
+    store, spec_id, log, spec, observation = _staged_log_and_spec(tmp_path)
+    base = compose_assess_packet(log, spec, observation, _FACTS, store=store,
+                                 spec_id=spec_id, order=1, include_verbatim=True)
+    tail = compose_assess_packet(log, spec, observation, _FACTS, store=store,
+                                 spec_id=spec_id, order=1)
+    assert "# ASSESS phase" in base
+    assert "submit_assessment" in base
+    assert "# ASSESS phase" not in tail          # later laps append material only
+    assert "## Latest observation" in tail
 
 
 def test_start_run_clears_stale_summaries_across_all_on_file_orders(tmp_path):

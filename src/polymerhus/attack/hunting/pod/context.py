@@ -92,7 +92,12 @@ def _variant_detail_line(spec: dict) -> str:
 
 def _executed_probe_lines(observations: list[RawObservation]) -> list[str]:
     """The executed probe commands from the D6 trail, bounded: the triager's
-    coverage judgement needs what was actually run, not a plan restatement."""
+    coverage judgement needs what was actually run, not a plan restatement.
+
+    Each line carries the RAW integrity fields (the lifecycle v2 clean test):
+    the return code, the structured success marker, the error code, and the
+    warning - so a masked shell failure is visible in the trail, not only in
+    the latest observation."""
     lines = []
     for obs in observations[-_PROBE_LINES:]:
         request = obs.request if isinstance(obs.request, dict) else {}
@@ -100,8 +105,39 @@ def _executed_probe_lines(observations: list[RawObservation]) -> list[str]:
         what = what.strip()
         if not what:
             continue
-        lines.append(f"- {obs.variant_ref or 'v?'} status={obs.status}: {what[:_PROBE_SLICE]}")
+        warning = getattr(obs, "warning", None)
+        warning_token = ""
+        if isinstance(warning, dict) and warning:
+            warning_token = str(next(iter(warning.values())))
+        elif isinstance(warning, str) and warning:
+            warning_token = warning
+        lines.append(
+            f"- {obs.variant_ref or 'v?'} status={obs.status} "
+            f"rc={obs.returncode} success={probe_success_marker(obs)} "
+            f"error_code={getattr(obs, 'error_code', '') or ''} "
+            f"warning={warning_token}: {what[:_PROBE_SLICE]}")
     return lines
+
+
+def probe_success_marker(observation: RawObservation) -> str:
+    """The structured `success` marker a probe's payload carries: `true`,
+    `false`, or `unknown`.
+
+    The CLI's JSON contract reports `success: false` for a masked failure the
+    shell still exits 0 on (FF-06), so the trail must name it. Only a TOP-LEVEL
+    key of a JSON-object body or stdout counts; anything else - prose, a nested
+    key, no payload - is `unknown`, never a guessed read."""
+    for payload in (getattr(observation, "body", ""),
+                    getattr(observation, "stdout", "")):
+        if not isinstance(payload, str) or not payload.strip():
+            continue
+        try:
+            parsed = json.loads(payload)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(parsed, dict) and isinstance(parsed.get("success"), bool):
+            return "true" if parsed["success"] else "false"
+    return "unknown"
 
 
 def _message_id(role: str, content: str) -> str:
@@ -445,6 +481,53 @@ def _observation_block(observation: RawObservation | None) -> str:
     obs = observation.model_dump()
     obs["body"] = (obs.get("body") or "")[:_BODY_SLICE]
     return f"## Latest observation\n{json.dumps(obs, indent=2)}"
+
+
+def _facts_block(facts) -> str:
+    """The harness facts one triage decision rides (lifecycle v2): prompt
+    material, never model fields. `runner_terminated` is the control-plane end
+    reason - a kill makes `variant_allowed` false and forces a final pass."""
+    return ("## Harness facts\n"
+            f"- lap={facts.get('lap', 0)}\n"
+            f"- runner_failed={facts.get('runner_failed', False)}\n"
+            f"- runner_exhausted={facts.get('runner_exhausted', False)}\n"
+            f"- runner_terminated={facts.get('runner_terminated') or 'none'}\n"
+            f"- variant_allowed={facts.get('variant_allowed', True)}\n"
+            f"- thread_id={facts.get('thread_id', '')}")
+
+
+def compose_assess_packet(log: ExperimentLog, spec: dict,
+                          observation: RawObservation | None, facts,
+                          *, store, spec_id: str, order: int,
+                          include_verbatim: bool = False) -> str:
+    """The ASSESS phase packet (lifecycle v2, slice 5): everything the one
+    assessment turn judges from.
+
+    First lap (`include_verbatim=True`) the packet opens with the ASSESS
+    verbatim - the one phase verbatim that is not a tool response, because no
+    prior tool call exists to answer it. Every later lap appends material only:
+    the verbatim is already in the thread, so the message stays a strict tail
+    append and the provider's cached prefix is never reset.
+
+    Material: the harness facts, the Runner's note, the verification symptoms,
+    the target identity, the assumptions, the typed procedure excerpt when the
+    spec carries one, the executed probe trail WITH the raw integrity fields,
+    and the latest observation with its body slice."""
+    from polymerhus.attack.hunting.pod.prompts import load_pod_assess_verbatim
+
+    parts: list[str] = [_facts_block(facts)]
+    if include_verbatim:
+        parts.append(load_pod_assess_verbatim())
+    parts.append(_note_block(store, spec_id, order))
+    parts.append(_symptom_block(spec))
+    parts.append(_identity_block(spec))
+    parts.append(_assumption_block(spec))
+    parts.append(_skill_concretised_procedure_context(spec))
+    probes = _executed_probe_lines(log.raw_observations)
+    if probes:
+        parts.append("## Probes executed (the D6 trail)\n" + "\n".join(probes))
+    parts.append(_observation_block(observation))
+    return "\n\n".join(part for part in parts if part)
 
 
 def compose_triage_delta(log: ExperimentLog, spec: dict,
