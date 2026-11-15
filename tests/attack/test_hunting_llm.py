@@ -176,7 +176,8 @@ def test_conciseness_directive_appears_verbatim_in_every_role_prompt():
     through the store/notes tool DESCRIPTIONS (`append_conciseness_directive`),
     not its system prompt."""
     prompts_dir = Path(HL.__file__).resolve().parent / "prompts"
-    for name in ("hunting-agent.md", "pod-runner.md", "pod-triager.md"):
+    for name in ("hunting-agent.md", "pod-runner.md", "pod-triager-contract.md",
+                 "pod-triage-decide.md"):
         text = (prompts_dir / name).read_text(encoding="utf-8")
         assert HL.HUNTING_CONCISENESS_DIRECTIVE in text, name
 

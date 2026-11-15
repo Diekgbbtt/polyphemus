@@ -96,16 +96,16 @@ def test_disabled_omits_the_meta_skill_binding(monkeypatch):
 def test_disabled_removes_the_lesson_line_from_the_pod_prompts(monkeypatch):
     monkeypatch.setenv(SKILL_EVOLUTION_ENV, "0")
     monkeypatch.setattr(pod_prompts, "_RUNNER_SKILL", None)
-    monkeypatch.setattr(pod_prompts, "_TRIAGER_SKILL", None)
+    monkeypatch.setattr(pod_prompts, "_TRIAGER_CONTRACT", None)
 
     assert "record_skill_lesson" not in pod_prompts.load_pod_runner_skill()
-    assert "record_skill_lesson" not in pod_prompts.load_pod_triager_skill()
+    assert "record_skill_lesson" not in pod_prompts.load_pod_triager_contract()
 
 
 def test_enabled_keeps_the_lesson_line_in_the_pod_prompts(monkeypatch):
     monkeypatch.delenv(SKILL_EVOLUTION_ENV, raising=False)
     monkeypatch.setattr(pod_prompts, "_RUNNER_SKILL", None)
-    monkeypatch.setattr(pod_prompts, "_TRIAGER_SKILL", None)
+    monkeypatch.setattr(pod_prompts, "_TRIAGER_CONTRACT", None)
 
     assert "record_skill_lesson" in pod_prompts.load_pod_runner_skill()
-    assert "record_skill_lesson" in pod_prompts.load_pod_triager_skill()
+    assert "record_skill_lesson" in pod_prompts.load_pod_triager_contract()

@@ -84,4 +84,4 @@ def test_prompt_verbatims_contain_no_differential_reference():
     source = inspect.getsource(prompts_mod)
     assert "differential" not in source
     assert "differential" not in prompts_mod.load_pod_runner_skill()
-    assert "differential" not in prompts_mod.load_pod_triager_skill()
+    assert "differential" not in prompts_mod.load_pod_triager_contract()

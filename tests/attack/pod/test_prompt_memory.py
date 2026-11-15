@@ -13,9 +13,10 @@ import pytest
 
 from polymerhus.attack.hunting.pod.context import (
     ExperimentLog,
+    compose_assess_packet,
     compose_runner_delta,
-    compose_triager_delta,
 )
+from polymerhus.attack.hunting.pod.triage_state import TriageFacts
 from polymerhus.attack.hunting.pod.pod_memory import (
     PodMemoryStore,
     compose_memory_guidance,
@@ -85,46 +86,60 @@ def test_runner_delta_is_fail_open_without_a_store(log, spec_id):
 
 def test_triager_delta_reads_the_verbatim_p3_note(log, store, spec_id):
     # D84-35: the summary is the TERMINAL RECORD of the variant's log slice,
-    # so the delta's read resolves it from there (read_variant_summary).
+    # so the packet's read resolves it from there (read_variant_summary).
     store.write_experiment_log(spec_id, 1, {"order": 1, "variant_ref": "v1",
                                             "raw_observations": [], "interpretations": [],
                                             "executed": []})
     store.write_variant_summary(spec_id, 1, _NOTE_BODY)
     obs = RawObservation(status=404, body="not found")
-    delta = compose_triager_delta(log, SPEC, obs, store=store, spec_id=spec_id, order=1)
-    assert _NOTE_BODY in delta                          # verbatim, un-truncated
-    assert "404" in delta                               # the filtered context
-    assert "v0" in delta and "v1" in delta              # variant_refs for dedup
-    assert "indexable keys" in delta.lower()            # the memory guidance
-    assert "experiment_summary" in delta
+    facts = TriageFacts(runner_failed=False, runner_exhausted=False,
+                        runner_terminated=None, variant_allowed=True,
+                        lap=1, thread_id="pod:triager:" + spec_id)
+    packet = compose_assess_packet(log, SPEC, obs, facts, store=store,
+                                   spec_id=spec_id, order=1)
+    assert _NOTE_BODY in packet                          # verbatim, un-truncated
+    assert "404" in packet                               # the observation
+    assert "indexable keys" in packet.lower()            # the memory guidance
+    assert "experiment_summary" in packet
 
 
-def test_triager_delta_falls_back_when_no_consolidation_note_yet(log, store, spec_id):
-    delta = compose_triager_delta(log, SPEC, None, store=store, spec_id=spec_id, order=0)
-    assert "no consolidation note" in delta.lower()     # fail-open: no note yet
-    assert "v0" in delta                                # the context still flows
+def test_assess_packet_falls_back_when_no_consolidation_note_yet(log, store, spec_id):
+    facts = TriageFacts(runner_failed=False, runner_exhausted=False,
+                        runner_terminated=None, variant_allowed=True,
+                        lap=1, thread_id="pod:triager:" + spec_id)
+    packet = compose_assess_packet(log, SPEC, None, facts, store=store,
+                                   spec_id=spec_id, order=0)
+    assert "no consolidation note" in packet.lower()     # fail-open: no note yet
 
 
-def test_triager_delta_is_fail_open_without_a_store(log, spec_id):
-    delta = compose_triager_delta(log, SPEC, None, store=None, spec_id=spec_id, order=0)
-    assert "no consolidation note" in delta.lower()
-    assert "variant" in delta.lower()
-    assert "indexable keys" in delta.lower()
+def test_assess_packet_is_fail_open_without_a_store(log, spec_id):
+    facts = TriageFacts(runner_failed=False, runner_exhausted=False,
+                        runner_terminated=None, variant_allowed=True,
+                        lap=1, thread_id="pod:triager:" + spec_id)
+    packet = compose_assess_packet(log, SPEC, None, facts, store=None,
+                                   spec_id=spec_id, order=0)
+    assert "no consolidation note" in packet.lower()
+    assert "## Target identity" in packet
 
 
-def test_triager_delta_carries_the_typed_skill_concretisation(log, store, spec_id):
-    """T9 (S5 8.6): the triager's delta carries the bounded concretisation read
-    from the spec - the material its procedure diff tests - and an absent object
-    is rendered as a recorded gap."""
+def test_assess_packet_carries_the_typed_skill_concretisation(log, store, spec_id):
+    """T9 (S5 8.6): the ASSESS packet carries the bounded concretisation read
+    from the spec - the material the DECIDE phase's procedure diff tests - and
+    an absent object is rendered as a recorded gap."""
+    facts = TriageFacts(runner_failed=False, runner_exhausted=False,
+                        runner_terminated=None, variant_allowed=True,
+                        lap=1, thread_id="pod:triager:" + spec_id)
     spec = {**SPEC, "skill_concretised_procedure": {
         "bypass_technique": "swap the id in a signed URL",
         "pro_tips": "compare the owner id"}}
-    delta = compose_triager_delta(log, spec, None, store=store, spec_id=spec_id, order=0)
-    assert "swap the id in a signed URL" in delta
-    assert "compare the owner id" in delta
-    assert "skipped class" in delta.lower()   # the five empty sections
+    packet = compose_assess_packet(log, spec, None, facts, store=store,
+                                   spec_id=spec_id, order=0)
+    assert "swap the id in a signed URL" in packet
+    assert "compare the owner id" in packet
+    assert "skipped class" in packet.lower()   # the empty sections
 
-    absent = compose_triager_delta(log, SPEC, None, store=store, spec_id=spec_id, order=0)
+    absent = compose_assess_packet(log, SPEC, None, facts, store=store,
+                                   spec_id=spec_id, order=0)
     assert "recorded gap" in absent.lower()
     assert "no variant basis" in absent.lower()
 

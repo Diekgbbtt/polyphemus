@@ -1,8 +1,8 @@
 # DECIDE phase
 You own the pod's discriminating judgment: terminate with the honest terminal, or mint ONE new falsifiable variant that covers one gap. Read the phase material: the variants already tried with their bases, the interpretations, the KB flags, the memory guidance, and `variant_allowed`. Submit through `submit_decision` with its exact fields.
 
-## Variant minting
-A variant decision is a new falsifiable prediction: it changes the spec so the next stretch covers one gap. It carries one basis literal, the derived spec, and feedback to the Runner. Mint in this order:
+# Variant minting
+A variant decision is a new falsifiable prediction: it changes the spec so the next stretch covers one gap. It carries one basis literal, the derived spec, the covered gap classes in `covered_gap_classes`, and feedback to the Runner. Mint in this order:
 1. Read the typed `SkillConcretisedProcedure` excerpt from the phase material. Its nine fields map one-to-one onto the nine procedure gap bases in the table order below. When the excerpt is fully absent it is a recorded gap: note it; no variant basis is derivable.
 2. Read the executed procedure from the trail: the variant specs, the probe commands, the raw observations, the interpretations.
 3. Test the execution triggers FIRST: a failed execution means basis `runner-failure`; a completely diverged execution means basis `runner-divergence`. These outrank the procedure diff.

@@ -12,19 +12,13 @@ from __future__ import annotations
 
 import polymerhus.attack.hunting.pod.prompts as prompts_mod
 from polymerhus.attack.hunting.pod.prompts import (
-    load_pod_divergence_skill,
+    load_pod_decide_verbatim,
     load_pod_runner_skill,
-    load_pod_terminal_skill,
-    load_pod_triage_skill,
-    load_pod_triager_skill,
 )
 
 KB_TOOL = "query_lightrag"
 POD_RUNNER_SYSTEM = load_pod_runner_skill()
-POD_TRIAGER_SYSTEM = load_pod_triager_skill()
-POD_TRIAGE_SYSTEM = load_pod_triage_skill()
-POD_DIVERGENCE_SYSTEM = load_pod_divergence_skill()
-POD_TERMINAL_SYSTEM = load_pod_terminal_skill()
+DECIDE_VERBATIM = load_pod_decide_verbatim()
 
 
 # --- the Runner: the P0-P3 plan (D84-16) --------------------------------------
@@ -78,22 +72,22 @@ def test_triager_prompt_variant_table_matches_the_typed_bases():
     from polymerhus.attack.hunting.pod.variant_basis import VARIANT_BASES
 
     for basis in VARIANT_BASES:
-        assert basis in POD_TRIAGER_SYSTEM, basis
+        assert basis in DECIDE_VERBATIM, basis
 
 
 def test_triager_prompt_names_the_critics_terminal_reasons():
-    """`budget-timeout` is a harness terminal, not a critic choice; the prompt
-    must name the five reasons the triager can actually decide."""
+    """`budget-timeout` is a harness terminal, not a critic choice; the DECIDE
+    verbatim names the five reasons the triager can actually decide."""
     for reason in ("symptom-confirmed", "technical-infeasibility",
                    "specific-defence-prevention", "space-exhausted",
                    "no-symptom-evidence"):
-        assert reason in POD_TRIAGER_SYSTEM, reason
+        assert reason in DECIDE_VERBATIM, reason
 
 
-def test_triager_prompt_names_every_bound_tool():
-    for name in ("note", "query_lightrag", "graph_view", "load_skill",
-                 "record_skill_lesson", "auth_store"):
-        assert name in POD_TRIAGER_SYSTEM, name
+def test_triager_prompt_names_the_phase_tools():
+    # The DECIDE verbatim's submission contract: the decide gate names itself.
+    assert "submit_decision" in DECIDE_VERBATIM
+    assert "variant_allowed" in DECIDE_VERBATIM
 
 
 def test_runner_prompt_names_the_full_three_tool_surface():
@@ -149,24 +143,23 @@ def test_runner_prompt_system_user_split_holds():
 
 # --- the Triager: the third-party variant miner (D84-23) ----------------------
 
-def test_triager_prompt_is_a_third_party_miner():
-    lc = POD_TRIAGER_SYSTEM.lower()
-    assert "third-party" in lc or "third party" in lc
+def test_the_contract_prompt_is_a_third_party_critic():
+    lc = prompts_mod.load_pod_triager_contract().lower()
+    assert "third-party" in lc
     assert "variant" in lc
-    assert "never re-derive" in lc or "never re-run" in lc
 
 
 def test_triager_prompt_requires_a_falsifiable_variant():
-    lc = POD_TRIAGER_SYSTEM.lower()
+    lc = DECIDE_VERBATIM.lower()
     assert "falsifiable" in lc
-    assert "fundamental parameter" in lc             # D84-16: change a fundamental parameter
+    assert "changes the spec" in lc                     # the variant changes the spec
     assert "duplicate" in lc                          # never mine a duplicate
 
 
 def test_triager_prompt_keeps_the_binary_vocabulary():
     for token in ("symptom-confirmed", "space-exhausted", "technical-infeasibility",
                   "specific-defence-prevention", "no-symptom-evidence", "clean"):
-        assert token in POD_TRIAGER_SYSTEM
+        assert token in DECIDE_VERBATIM
 
 
 def test_triager_prompt_presents_verdict_and_terminal_reason_separately():
@@ -175,7 +168,7 @@ def test_triager_prompt_presents_verdict_and_terminal_reason_separately():
     slash-joined string (`successful / symptom-confirmed`) is copied verbatim
     by the model into `verdict`, fails the binary guard, and the degradation
     mis-records a confirmed symptom as unsuccessful."""
-    vocab = POD_TRIAGER_SYSTEM.split("Decision vocabulary", 1)[1]
+    vocab = DECIDE_VERBATIM.split("Terminal vocabulary", 1)[1]
     # the vocabulary names BOTH fields as separate outputs
     assert "verdict" in vocab
     assert "terminal_reason" in vocab
@@ -185,14 +178,15 @@ def test_triager_prompt_presents_verdict_and_terminal_reason_separately():
 
 
 def test_triager_prompt_keeps_the_exhaustion_rule():
-    lc = POD_TRIAGER_SYSTEM.lower()
+    lc = DECIDE_VERBATIM.lower()
     assert "exhaustion" in lc
     assert "no precise new variant" in lc or "yields nothing new" in lc
 
 
-def test_triager_prompt_names_its_tools():
-    assert "note" in POD_TRIAGER_SYSTEM
-    assert KB_TOOL in POD_TRIAGER_SYSTEM
+def test_the_contract_prompt_names_the_read_surface():
+    text = prompts_mod.load_pod_triager_contract()
+    assert "note" in text
+    assert KB_TOOL in text
 
 
 # --- T9: the variant-basis minting algorithm (S5 8.6) -------------------------
@@ -214,97 +208,65 @@ VARIANT_BASES = (
 
 def test_triager_prompt_names_all_eleven_variant_bases():
     for basis in VARIANT_BASES:
-        assert basis in POD_TRIAGER_SYSTEM, basis
+        assert basis in DECIDE_VERBATIM, basis
 
 
 def test_triager_prompt_carries_the_first_uncovered_order():
-    lc = POD_TRIAGER_SYSTEM.lower()
+    lc = DECIDE_VERBATIM.lower()
     assert "first uncovered" in lc
     assert "table order" in lc
-    positions = [POD_TRIAGER_SYSTEM.index(b) for b in VARIANT_BASES[:9]]
+    positions = [DECIDE_VERBATIM.index(b) for b in VARIANT_BASES[:9]]
     assert positions == sorted(positions)
 
 
 def test_triager_prompt_reads_the_typed_concretisation_from_the_spec():
-    assert "skill_concretised_procedure" in POD_TRIAGER_SYSTEM
-    assert "SkillConcretisedProcedure" in POD_TRIAGER_SYSTEM
+    assert "skill_concretised_procedure" in DECIDE_VERBATIM
+    assert "SkillConcretisedProcedure" in DECIDE_VERBATIM
 
 
 def test_triager_prompt_states_the_skipped_section_and_absent_excerpt_rules():
-    lc = POD_TRIAGER_SYSTEM.lower()
+    lc = DECIDE_VERBATIM.lower()
     assert "empty" in lc
     assert "skipped" in lc
     assert "recorded gap" in lc
 
 
 def test_triager_prompt_has_no_failure_mode_fallback():
-    lc = POD_TRIAGER_SYSTEM.lower()
+    lc = DECIDE_VERBATIM.lower()
     assert "failure-mode" not in lc
     assert "no variant basis is derivable" in lc
-    assert "verification_symptoms" in POD_TRIAGER_SYSTEM
-    assert "assumptions" in POD_TRIAGER_SYSTEM
+    packet = prompts_mod.load_pod_assess_verbatim() + prompts_mod.load_pod_triager_contract()
+    assert "verification symptoms" in packet.lower()
+    assert "assumptions" in packet.lower()
 
 
 def test_triager_prompt_states_the_execution_triggers():
-    lc = POD_TRIAGER_SYSTEM.lower()
+    lc = DECIDE_VERBATIM.lower()
     assert "runner-failure" in lc and "failed" in lc
     assert "runner-divergence" in lc and "diverged" in lc
 
 
 def test_triager_prompt_states_the_duplicate_guard():
-    lc = POD_TRIAGER_SYSTEM.lower()
+    lc = DECIDE_VERBATIM.lower()
     assert "duplicate" in lc
     assert "basis" in lc and "detail" in lc
 
 
-def test_triager_prompt_names_the_coverage_assessment_fields():
-    # The production tool schema carries the material the graph's deterministic
-    # diff needs, so the prompt must name every field.
-    for field in ("covered_gap_classes", "runner_failed", "runner_diverged",
-                  "declined_attribute"):
-        assert field in POD_TRIAGER_SYSTEM, field
+def test_the_decide_verbatim_names_the_coverage_field():
+    # The decision gate schema carries the material the graph's deterministic
+    # diff needs; the DECIDE verbatim names the field the model fills.
+    for field in ("covered_gap_classes", "declined_attribute"):
+        assert field in DECIDE_VERBATIM, field
+    # runner_failed/diverged are the ASSESS phase's harness fact and judgment,
+    # not decision fields.
+    from polymerhus.attack.hunting.pod.prompts import load_pod_assess_verbatim
+
+    assess = load_pod_assess_verbatim()
+    assert "runner_failed" in assess
+    assert "runner_diverged" in assess
 
 
 # --- the STAGED triage prompts (the compact stages) ---------------------------
-
-def test_the_triage_prompt_is_compact_and_has_no_variant_mining():
-    """Stage A carries only the failure and symptom-confirmation judgments; the
-    variant-mining material stays in the Stage C prompt. This is the structural
-    half of the first-call token claim: a smaller fixed prompt and no tool
-    descriptions."""
-    assert len(POD_TRIAGE_SYSTEM) < len(POD_TRIAGER_SYSTEM)
-    assert "runner_failed" in POD_TRIAGE_SYSTEM
-    assert "symptom_confirmed" in POD_TRIAGE_SYSTEM
-    assert "clean" in POD_TRIAGE_SYSTEM
-    assert "Variant minting" not in POD_TRIAGE_SYSTEM
-    for basis in VARIANT_BASES:
-        assert basis not in POD_TRIAGE_SYSTEM, basis
-
-
-def test_the_divergence_prompt_names_the_typed_procedure_and_divergence():
-    assert "SkillProcedure" in POD_DIVERGENCE_SYSTEM
-    assert "runner_diverged" in POD_DIVERGENCE_SYSTEM
-    assert "diverge" in POD_DIVERGENCE_SYSTEM.lower()
-    assert "procedure" in POD_DIVERGENCE_SYSTEM.lower()
-
-
-def test_the_terminal_prompt_keeps_the_binary_vocabulary():
-    for token in ("symptom-confirmed", "space-exhausted", "technical-infeasibility",
-                  "specific-defence-prevention", "no-symptom-evidence",
-                  "budget-timeout", "clean", "degraded"):
-        assert token in POD_TERMINAL_SYSTEM, token
-    assert "variant mining" not in POD_TERMINAL_SYSTEM.lower()
-
-
-def test_the_stage_prompts_carry_the_shared_cortex():
-    from polymerhus.attack.hunting.cortex import cognitive_architecture_map
-
-    cortex = cognitive_architecture_map()
-    for prompt in (POD_TRIAGE_SYSTEM, POD_DIVERGENCE_SYSTEM, POD_TERMINAL_SYSTEM):
-        assert prompt.endswith(cortex)
-
-
-# --- T9: the runner honours the basis, not the retired attribute decline ------
 
 def test_runner_prompt_names_the_variant_basis():
     assert "declined an attribute into" not in POD_RUNNER_SYSTEM
@@ -317,18 +279,12 @@ def test_kb_bullet_is_the_neutral_methodology_signature():
     """#207 defect 2: both KB-tool bullets use the neutral pointer + trigger
     signature - the KB is a methodology KB (retrieve missing ontology concepts),
     never a "fault knowledge base" used to verify or adjudicate a bug."""
-    sig = (
-        "the knowledge base from which you retrieve the testing ontology's "
-        "concepts when missing from your reasoning; query it when stack-shape, "
-        "payload/vector, technique, or verification-symptom knowledge is missing."
-    )
-    for prompt in (POD_RUNNER_SYSTEM, POD_TRIAGER_SYSTEM):
+    for prompt in (POD_RUNNER_SYSTEM, prompts_mod.load_pod_triager_contract()):
         assert KB_TOOL in prompt
-        # the neutral signature is present verbatim (after the tool name)
-        idx = prompt.index(KB_TOOL)
-        assert sig in prompt[idx:].split("\n")[0] or sig in prompt[idx:]
-        # the stale "fault knowledge base" + binary ontology list is gone
-        assert "fault knowledge base" not in prompt
+        # the neutral signature: a methodology KB, never a fault oracle
+        lc = prompt.lower()
+        assert "fault knowledge base" not in lc
+        assert "verification-symptom knowledge is missing" in lc
         for stale in ("fault, symptom, assumption", "defence, payload, vector"):
             assert stale not in prompt
 
@@ -339,8 +295,8 @@ def test_both_prompts_name_the_two_skill_tools():
     """The pod roles' tool sections name the two bound skill tools. The read and
     usage discipline itself arrives through the `meta-usage-skill` protocol
     appended on every load, so the prompt never duplicates it."""
-    for prompt in (POD_RUNNER_SYSTEM, POD_TRIAGER_SYSTEM):
-        assert "- load_skill -" in prompt
+    for prompt in (POD_RUNNER_SYSTEM, prompts_mod.load_pod_triager_contract()):
+        assert "- load_skill" in prompt
         assert "- record_skill_lesson -" in prompt
         assert "# Lesson sub-phase" not in prompt
 
@@ -351,7 +307,7 @@ def test_both_prompts_carry_the_shared_cortex():
     from polymerhus.attack.hunting.cortex import cognitive_architecture_map
 
     cortex = cognitive_architecture_map()
-    for prompt in (POD_RUNNER_SYSTEM, POD_TRIAGER_SYSTEM):
+    for prompt in (POD_RUNNER_SYSTEM, DECIDE_VERBATIM):
         assert prompt.endswith(cortex)
 
 
@@ -362,20 +318,15 @@ def test_prompts_carry_no_differential_reference():
 
     source = inspect.getsource(prompts_mod)
     assert "differential" not in source
-    for prompt in (POD_RUNNER_SYSTEM, POD_TRIAGER_SYSTEM, POD_TRIAGE_SYSTEM,
-                   POD_DIVERGENCE_SYSTEM, POD_TERMINAL_SYSTEM):
+    for prompt in (POD_RUNNER_SYSTEM, DECIDE_VERBATIM,
+                   prompts_mod.load_pod_triager_contract(),
+                   prompts_mod.load_pod_assess_verbatim()):
         assert "differential" not in prompt
-
-def test_terminal_prompt_names_the_harness_terminal_reasons():
-    for reason in ("node-timeout", "context-window-exceeded", "tool-timeout",
-                   "graph-limit", "pod-watchdog-timeout"):
-        assert reason in POD_TERMINAL_SYSTEM, reason
-
 
 def test_triager_prompt_does_not_offer_harness_terminal_reasons():
     for reason in ("node-timeout", "context-window-exceeded", "tool-timeout",
                    "graph-limit", "pod-watchdog-timeout"):
-        assert reason not in POD_TRIAGER_SYSTEM, reason
+        assert reason not in DECIDE_VERBATIM, reason
 
 
 # --- the lifecycle v2 contract prompt (slice 3) --------------------------------

@@ -23,13 +23,9 @@ _PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 # missing prompt file is a defect: reads FAIL CLOSED (raise), so a pod role never
 # reasons without its prompt.
 _RUNNER_SKILL: str | None = None
-_TRIAGER_SKILL: str | None = None
 _TRIAGER_CONTRACT: str | None = None
 _ASSESS_VERBATIM: str | None = None
 _DECIDE_VERBATIM: str | None = None
-_TRIAGE_SKILL: str | None = None
-_DIVERGENCE_SKILL: str | None = None
-_TERMINAL_SKILL: str | None = None
 
 
 def _compose(name: str) -> str:
@@ -63,16 +59,6 @@ def load_pod_runner_skill() -> str:
     if _RUNNER_SKILL is None:
         _RUNNER_SKILL = _compose("pod-runner.md")
     return _RUNNER_SKILL
-
-
-def load_pod_triager_skill() -> str:
-    """The legacy four-stage `pod_triager` system prompt. Superseded by the
-    lifecycle v2 contract (`load_pod_triager_contract`); kept until the staged
-    lane is torn down."""
-    global _TRIAGER_SKILL
-    if _TRIAGER_SKILL is None:
-        _TRIAGER_SKILL = _compose("pod-triager.md")
-    return _TRIAGER_SKILL
 
 
 def load_pod_triager_contract() -> str:
@@ -109,30 +95,4 @@ def load_pod_decide_verbatim() -> str:
         _DECIDE_VERBATIM = _compose("pod-triage-decide.md")
     return _DECIDE_VERBATIM
 
-
-def load_pod_triage_skill() -> str:
-    """Stage A's compact system prompt: failure and symptom confirmation only.
-    Memoized; FAIL-CLOSED."""
-    global _TRIAGE_SKILL
-    if _TRIAGE_SKILL is None:
-        _TRIAGE_SKILL = _compose("pod-triage.md")
-    return _TRIAGE_SKILL
-
-
-def load_pod_divergence_skill() -> str:
-    """Stage B's compact system prompt: the typed-procedure divergence check.
-    Memoized; FAIL-CLOSED."""
-    global _DIVERGENCE_SKILL
-    if _DIVERGENCE_SKILL is None:
-        _DIVERGENCE_SKILL = _compose("pod-divergence.md")
-    return _DIVERGENCE_SKILL
-
-
-def load_pod_terminal_skill() -> str:
-    """Stage D's compact system prompt: the terminal verdict when no procedure
-    attribute can be bent into a variant. Memoized; FAIL-CLOSED."""
-    global _TERMINAL_SKILL
-    if _TERMINAL_SKILL is None:
-        _TERMINAL_SKILL = _compose("pod-terminal.md")
-    return _TERMINAL_SKILL
 

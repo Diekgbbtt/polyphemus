@@ -9,10 +9,7 @@ from polymerhus.attack.hunting.pod.context import (
     _dicts_to_lc,
     _lc_to_dicts,
     compose_assess_packet,
-    compose_divergence_delta,
     compose_terminal_delta,
-    compose_triage_delta,
-    compose_triager_delta,
     probe_success_marker,
 )
 from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore, spec_identifier
@@ -189,42 +186,6 @@ def _staged_log_and_spec(tmp_path):
     return store, spec_id, log, spec, observation
 
 
-def test_the_triage_delta_is_compact(tmp_path):
-    """Stage A reads the note, the symptoms, the identity, the assumptions, and
-    the observation - and nothing the first-pass check does not need: no typed
-    procedure, no variants, no probe trail, no interpretations, no memory
-    key-list."""
-    store, spec_id, log, spec, observation = _staged_log_and_spec(tmp_path)
-    delta = compose_triage_delta(log, spec, observation, store=store,
-                                 spec_id=spec_id, order=1)
-    assert "the consolidated stretch note" in delta
-    assert "## Verification symptoms" in delta
-    assert "reflects the marker" in delta
-    assert "## Target identity" in delta
-    assert "http://svc/" in delta
-    assert "## Assumptions" in delta
-    assert "the session cookie" in delta
-    assert "## Latest observation" in delta
-    assert "## Skill procedure" not in delta
-    assert "## Variants already tried" not in delta
-    assert "## Probes executed" not in delta
-    assert "## Recent interpretations" not in delta
-    assert "Pod experiment memory" not in delta
-
-
-def test_the_divergence_delta_adds_the_typed_procedure_and_the_probes(tmp_path):
-    store, spec_id, log, spec, observation = _staged_log_and_spec(tmp_path)
-    delta = compose_divergence_delta(log, spec, observation, store=store,
-                                     spec_id=spec_id, order=1)
-    assert "## Skill procedure" in delta
-    assert "the role check trusts the session" in delta
-    assert "## Probes executed" in delta
-    assert "curl -k https://svc/search?q=marker" in delta
-    # Divergence is a procedure comparison, not a duplicate check.
-    assert "## Variants already tried" not in delta
-    assert "## Recent interpretations" not in delta
-
-
 def test_the_terminal_delta_carries_the_trail_and_the_kb_flags(tmp_path):
     store, spec_id, log, spec, observation = _staged_log_and_spec(tmp_path)
     delta = compose_terminal_delta(log, spec, observation, store=store,
@@ -238,17 +199,6 @@ def test_the_terminal_delta_carries_the_trail_and_the_kb_flags(tmp_path):
     assert "## Recent interpretations" in delta
     # The terminal stage does not need the procedure diff material.
     assert "## Skill procedure" not in delta
-
-
-def test_the_full_triager_delta_stays_full(tmp_path):
-    store, spec_id, log, spec, observation = _staged_log_and_spec(tmp_path)
-    delta = compose_triager_delta(log, spec, observation, store=store,
-                                  spec_id=spec_id, order=1)
-    assert "## Skill procedure" in delta
-    assert "## Variants already tried" in delta
-    assert "## Probes executed" in delta
-    assert "## Recent interpretations" in delta
-    assert "Pod experiment memory" in delta
 
 
 # --- the lifecycle v2 ASSESS packet (slice 5) -----------------------------------

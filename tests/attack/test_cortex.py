@@ -33,7 +33,7 @@ ROLE_PROMPTS = (
     ("pod-runner", "polymerhus.attack.hunting.pod.prompts",
      "load_pod_runner_skill"),
     ("pod-triager", "polymerhus.attack.hunting.pod.prompts",
-     "load_pod_triager_skill"),
+     "load_pod_triager_contract"),
 )
 
 # Internal codebase identifiers the agents must stay blind to: tool names,
@@ -183,7 +183,9 @@ def test_role_prompt_files_do_not_duplicate_the_map():
         "prompts/threat-modeller.md",
         "prompts/hunting-agent.md",
         "prompts/pod-runner.md",
-        "prompts/pod-triager.md",
+        "prompts/pod-triager-contract.md",
+        "prompts/pod-triage-decide.md",
+        "prompts/pod-triage-assess.md",
     ):
         assert cognitive_architecture_map() not in (base / name).read_text(
             encoding="utf-8")

@@ -424,26 +424,6 @@ def compose_runner_delta(log: ExperimentLog, spec: dict, feedback: str,
     return f"{base}\n\n{compose_memory_guidance(store, spec_id)}"
 
 
-def compose_triager_delta(log: ExperimentLog, spec: dict,
-                          observation: RawObservation | None, *, store,
-                          spec_id: str, order: int) -> str:
-    """The Triager's delta (D84-23): the VERBATIM P3 consolidation note (read
-    from the pod-owned store) + the filtered `triager_context` + the per-turn
-    memory key-list/guidance. No structured `RunnerStep` crosses the seam; a
-    missing note degrades to the raw context (fail-open)."""
-    from polymerhus.attack.hunting.pod.pod_memory import (
-        compose_memory_guidance,
-        read_variant_summary,
-    )
-
-    note_body = read_variant_summary(store, spec_id, order)
-    note_part = (f"## Runner's consolidation note (verbatim)\n{note_body}" if note_body
-                 else "## Runner's consolidation note (verbatim)\n"
-                       "(no consolidation note for this stretch yet)")
-    return (f"{note_part}\n\n{log.triager_context(spec, observation)}\n\n"
-            f"{compose_memory_guidance(store, spec_id)}")
-
-
 def _note_block(store, spec_id: str, order: int) -> str:
     from polymerhus.attack.hunting.pod.pod_memory import read_variant_summary
 
@@ -516,7 +496,8 @@ def compose_assess_packet(log: ExperimentLog, spec: dict,
     Material: the harness facts, the Runner's note, the verification symptoms,
     the target identity, the assumptions, the typed procedure excerpt when the
     spec carries one, the executed probe trail WITH the raw integrity fields,
-    and the latest observation with its body slice."""
+    the memory guidance, and the latest observation with its body slice."""
+    from polymerhus.attack.hunting.pod.pod_memory import compose_memory_guidance
     from polymerhus.attack.hunting.pod.prompts import load_pod_assess_verbatim
 
     parts: list[str] = [_facts_block(facts)]
@@ -530,6 +511,7 @@ def compose_assess_packet(log: ExperimentLog, spec: dict,
     probes = _executed_probe_lines(log.raw_observations)
     if probes:
         parts.append("## Probes executed (the D6 trail)\n" + "\n".join(probes))
+    parts.append(compose_memory_guidance(store, spec_id))
     parts.append(_observation_block(observation))
     return "\n\n".join(part for part in parts if part)
 
@@ -553,52 +535,18 @@ def compose_decide_packet(log: ExperimentLog, spec: dict, facts,
     return "\n\n".join(part for part in parts if part)
 
 
-def compose_triage_delta(log: ExperimentLog, spec: dict,
-                         observation: RawObservation | None, *, store,
-                         spec_id: str, order: int) -> str:
-    """Stage A's COMPACT delta: the note, the verification symptoms, the target
-    identity, the assumptions, and the latest observation.
-
-    It deliberately excludes the typed procedure excerpt, the variants already
-    tried, the executed probe trail, the interpretations, and the memory
-    guidance - the material the first-pass failure/confirmation check does not
-    need and the full miner loads only when it is reached."""
-    parts = [_note_block(store, spec_id, order), _symptom_block(spec),
-             _identity_block(spec), _assumption_block(spec),
-             _observation_block(observation)]
-    return "\n\n".join(part for part in parts if part)
-
-
-def compose_divergence_delta(log: ExperimentLog, spec: dict,
-                             observation: RawObservation | None, *, store,
-                             spec_id: str, order: int) -> str:
-    """Stage B's delta: the compact triage delta plus the typed `SkillConcretisedProcedure`
-    excerpt and the executed probe trail.
-
-    The typed excerpt is the procedure-diff material the spec renders; the
-    probes are what actually ran. The variants and the interpretations stay out:
-    divergence is a procedure comparison, not a duplicate check."""
-    parts = [compose_triage_delta(log, spec, observation, store=store,
-                                  spec_id=spec_id, order=order),
-             _skill_concretised_procedure_context(spec)]
-    probes = _executed_probe_lines(log.raw_observations)
-    if probes:
-        parts.append("## Probes executed (the D6 trail)\n" + "\n".join(probes))
-    return "\n\n".join(part for part in parts if part)
-
-
 def compose_terminal_delta(log: ExperimentLog, spec: dict,
                            observation: RawObservation | None, *, store,
                            spec_id: str, order: int) -> str:
-    """Stage D's delta: the compact triage delta plus the executed probe trail,
-    the variant bases already tried, the recent interpretations, and the KB
-    degraded flags.
+    """The DECIDE material's core: the executed probe trail, the variant bases
+    already tried, the recent interpretations, and the KB degraded flags.
 
     The terminal reason needs the coverage and the KB impairment, not the typed
     procedure or the skill surface. A degraded KB observation is printed as
-    such so the compact turn can refuse a clean absence."""
-    parts = [compose_triage_delta(log, spec, observation, store=store,
-                                  spec_id=spec_id, order=order)]
+    such so the decide turn can refuse a clean absence."""
+    parts: list[str] = [_note_block(store, spec_id, order),
+                        _symptom_block(spec), _identity_block(spec),
+                        _assumption_block(spec)]
     probes = _executed_probe_lines(log.raw_observations)
     if probes:
         parts.append("## Probes executed (the D6 trail)\n" + "\n".join(probes))
