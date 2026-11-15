@@ -1,5 +1,12 @@
 # Staged triage decision tree: implementation plan
 
+> **SUPERSEDED (2026-11-14).** The ratified two-phase triage lifecycle
+> (`docs/design/pod-triager-lifecycle-v2.md`, the pod spec 8.11 rewrite) replaces
+> this plan: the stage identity in the system prompt at position 0 was the
+> measured cache defect, so the stages are retired for two gate phases on one
+> immutable prompt. This document is retained for the measurement history only;
+> the stage callables, schemas, and prompt files are removed from the codebase.
+
 **Branch:** `feat/staged-triage-decision-tree`.
 **Base:** `fix/context-lifecycle-followup` (`8aca8552`), which carries the typed-procedure context dedup and the pod compaction wiring.
 **Worktree:** `/Users/diekgbbtt/.local/share/opencode/worktree/7b3bba/staged-triage`.

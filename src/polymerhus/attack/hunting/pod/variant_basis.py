@@ -80,7 +80,7 @@ def first_uncovered_gap(
         covered: Collection[str]) -> VariantBasis | None:
     """The first procedure-gap class the executed procedure does not cover.
 
-    Iterates the seven fields in the S5 8.6 table order. A field the skill left
+    Iterates the nine procedure-gap fields in the S5 8.6 table order. A field the skill left
     EMPTY is a SKIPPED class, not a gap: there is no authored procedure for the
     triager to execute or the variant to cover, so re-minting it every lap
     would threat to the budget cap without a new prediction (T10 H1). A populated

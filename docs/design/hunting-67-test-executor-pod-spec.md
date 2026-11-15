@@ -574,12 +574,10 @@ The minting algorithm is:
 7. Record the variant with the basis in `declined_attribute`, the parent ref, and the derived spec.
    The derived spec keeps the base `provenance`, including the typed skill procedure; the graph enforces the field (T10 H6).
 
-The triager is STAGED (8.11).
-The Stage A delta carries the note, the verification symptoms, the target identity, the assumptions, and the latest observation.
-The Stage B delta adds the bounded skill procedure excerpt and the executed probe trail.
-The Stage C (variant miner) delta carries the note, the filtered experiment log, the base spec, and the bounded skill procedure excerpt.
-The Stage D delta carries the note, the verification symptoms, the latest observation, the executed probe trail, the variant bases, the recent interpretations, and the KB degraded flags.
-The triager prompt's mining section is rewritten to the algorithm above (the Stage C prompt).
+The triager is TWO-PHASE (8.11, lifecycle v2).
+The ASSESS packet carries the harness facts, the note, the verification symptoms, the target identity, the assumptions, the bounded skill procedure excerpt, the executed probe trail WITH the raw integrity fields, the memory guidance, and the latest observation.
+The DECIDE packet carries the harness facts, the note, the symptoms, the identity, the assumptions, the probe trail, the variant bases already tried, the KB degraded flags, the recent interpretations, and the memory guidance.
+The DECIDE verbatim's mining section is rewritten to the algorithm above.
 The terminal decision output is unchanged.
 
 The `space-exhausted` exhaustion rule is prompt-level, not symbolically enforced (T10 H2).
@@ -661,54 +659,54 @@ The reduced D4 surface is shared with S3 8.6.
 The variant basis is the only new decision object.
 The pod's binary terminal invariant, six-way termination, fixed caps, and experiment-log shape stay.
 
-### 8.11 Staged triage decision tree (2026-10-23)
+### 8.11 The two-phase triage lifecycle (2026-11-14, supersedes the 2026-10-23 staged tree)
 
-The triager walks four decisions in this order.
-The order is structural: a confirmed or failed execution short-circuits before the later stages, and the bounded variant miner is never paid when the spec carries no populated procedure attribute.
+The triager walks TWO phases on ONE append-only per-pod thread, in this order.
+The full assessment and the ratification live in `docs/design/pod-triager-lifecycle-v2.md`.
 
-**Stage A: failure and symptom confirmation.**
-The compact turn reads the spec's verification symptoms, target identity, and assumptions, the Runner's verbatim consolidation note, and the latest observation.
-It returns `TriageDecision` (`runner_failed`, `symptom_confirmed`, `clean`, `note`).
-It binds no tools, no skill, no KB, and no procedure excerpt.
-A `runner_failed` outcome mints the `runner-failure` recovery variant (8.6 step 3).
-A `symptom_confirmed` outcome terminates `successful` / `symptom-confirmed` and the deterministic terminal writes the `PodExport`.
-Anything else walks on.
+**The shape.**
+ASSESS (one turn through `submit_assessment`: `symptom_confirmed`, `runner_diverged`, `clean`, `note`) then, on a negative assessment, DECIDE (one turn through `submit_decision`: terminate with the honest terminal, or mint ONE new falsifiable variant).
+A lap loops assess -> decide -> assess on the SAME thread; a decision never renders a pod terminal directly - the pod graph's terminal nodes render the `PodExport` from it, and `pod/finalize.py` (the ONE writer) applies the monotonicity rules.
 
-**Stage B: divergence.**
-The compact turn reads the note, the spec's typed `SkillProcedure` excerpt, the executed probe trail, and the latest observation.
-It returns `DivergenceDecision` (`runner_diverged`, `note`).
-It binds no tools.
-A divergence mints the `runner-divergence` recovery variant (8.6 step 3).
+**The cache-first contract.**
+One immutable system prompt (`pod-triager-contract.md`): role, third-party stance, what you read, surgical conciseness, observation integrity, evidence sufficiency, and output discipline.
+It never carries a spec, a skill name, a phase verbatim, or a stage label.
+One constant tool surface: the read-only triager tools, the #236 skill binding, and the two gates - bound identically on every step and every lap.
+The bound-skill LISTING rides the first human packet; the ASSESS verbatim rides it too (no prior tool call exists to answer).
+The DECIDE verbatim and its material ride the accepted `submit_assessment` gate response.
+The request side rides request-only OpenAI tool dicts, and the harness is the sole tool executor.
+Each decision's packet carries the thread's prior-turn count, so a re-dispatched pod's packet is never byte-identical on its thread, and the final gate call is answered by a bounded closing turn (the #280 positional-adjacency contract).
 
-**Stage C: bounded variant mining.**
-The miner runs only when the spec carries at least one populated `SkillProcedure` attribute.
-It keeps the full context and tool surface of 8.6 and returns the existing `TriagerDecision`.
-The graph resolves the basis, refuses a duplicate, and mints at most one variant per decision.
-The `failure-mode` fallback of 8.6 step 5 remains available when every populated class is covered.
+**The gate semantics.**
+A gate is a pure validator-acknowledgement; it never mutates the trial state.
+The phase machine accepts a signal only when the gate result says accepted; a malformed or wrong-phase submission is a coded rejection, never a phase move.
+The gates are phase-specific transaction gates: `submit_assessment` accepts only in ASSESS, `submit_decision` only in DECIDE.
+`space-exhausted` over `clean=false` is refused at the gate (unclean observations are the canonical PARTIAL-COVERAGE case: mint a variant for the unobserved execution modes, or terminate `no-symptom-evidence`).
+A variant is refused when `runner_terminated` is set.
 
-**Stage D: terminal verdict.**
-The terminal turn runs when the spec carries no populated `SkillProcedure` attribute.
-It reads the note, the verification symptoms, the latest observation, the executed probe trail, the variant bases, the recent interpretations, and the KB degraded flags.
-It returns `TerminalDecision` (`verdict`, `terminal_reason`, `clean`, `note`).
-It binds no tools and mines no variant.
-The binary terminal vocabulary and the `clean` rule are the existing 8.6/#304 rules.
+**Ownership (Q9).**
+`clean` is fully triager-owned (`submit_assessment.clean`, carried into the terminal); the harness grep and the #304 forcing are gone.
+Evidence sufficiency has no field; it is implicit in the action.
+Every domain terminal comes from the triager, except two structural terminals: the spec's INIT validation rejection and the runner's INIT-gate infeasibility.
+An exhausted stretch WITH observations routes to the triager (`runner_exhausted=true`); a no-probe exhaustion stays a harness terminal.
+The budget cap reaches the triager through `variant_allowed=false`, so a variant decision degrades to the honest domain terminal instead of a harness `budget-timeout`.
+A runner kill (node/tool timeout) routes to the triager for a final pass with `runner_terminated=<reason>`; a successful evaluation replaces the harness terminal and the control-plane end reason survives as `evidence.control_plane_end_reason`; a no-evaluation triage outcome keeps the harness terminal standing.
 
 **The seam.**
-`build_pod_graph(..., triager_stages=...)` / `arun_pod(..., triager_stages=...)` inject the four stage callables (`TriageStages`).
-The production defaults are the stateful turns in `pod/agents.py`; an injected `triager_fn` keeps the pre-staging single-turn critic for the contract tier.
-`pod/triage.py::make_staged_triager` owns the order.
-A stage provider failure propagates as the typed `ProviderUnavailableError`; any other stage exception degrades to a safe `no-symptom-evidence` terminal, exactly like the single-turn triager.
+`build_pod_graph(..., triager_fn=...)` / `arun_pod(..., triager_fn=...)` inject ONE critic seam with the shape `(spec, observation, log, facts) -> decision`.
+The production default is `pod/agents.py::default_triager_fn`, which runs the harness loop (`pod/triage.py::run_triage_harness`) over the phase machine (`pod/triage_state.py` + `pod/triage_graph.py`).
+`TriageFacts` (harness facts: `runner_failed`, `runner_exhausted`, `runner_terminated`, `variant_allowed`, `lap`, `thread_id`) is prompt material and graph state, never model fields.
+A provider failure propagates as the typed `ProviderUnavailableError`; the step budget exhausts to a marked `degraded` no-symptom-evidence decision; a provider failure is never laundered into a domain verdict.
 
 **The off-spec guard.**
 `pod/graph.py::_resolve_variant_decision` appends an `[off-spec: ...]` marker when the derived variant's `verification_symptoms` differ from the base spec's.
 The variant is recorded as its own derived spec; its confirmation is not the base spec's confirmation.
 The variant record shape stays four fields.
 
-**The token intent.**
-Stage A removes the tool-description block, the skill index, the typed procedure, the variants, and the probe trail from the first call.
-The confirmed first-shot path is one compact call instead of the single-turn triager's 2-6 calls.
-The full miner and its tool surface are paid only on the ambiguous pods.
-The measured baseline and the estimate are recorded in the experiment report on the docs branch; the implementation does not change the terminal or variant contracts.
+**The measurement.**
+The marginal cache-hit ratio is the KPI: the ledger counts the cold-call turns (`first_calls`, `first_cached`, `first_uncached`) and the eval CLI prints `prefix_hit_ratio`, `marginal_hit_ratio`, and `first_call_share`.
+The token intent of the retired staged tree is superseded: instead of four shrinking prompts, one prompt and one tool surface ride a strict prefix extension across every turn and lap.
+
 ### 8.12 Context dedup amendment (2026-10-23)
 
 The shared decision record is `docs/design/hunting-context-dedup-2026-10-23-adr.md`.
