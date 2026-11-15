@@ -97,12 +97,13 @@ def _detect(state: TriageGraphState) -> Command:
 def _advance(state: TriageGraphState) -> dict:
     """The push: `advance_triage_state` moves the phase, the node records the
     trail entry (an advance, or the decision kind - the ratified phase-path
-    vocabulary), then consumes the observation. The DECIDE packet is a
-    SENTINEL: the harness composes the material only when an advance actually
-    happened, and replaces the sentinel before the packet rides the gate
-    response."""
+    vocabulary), then consumes the observation. The DECIDE packet sentinel is
+    set ONLY on a real transition (an assessment that advanced ASSESS ->
+    DECIDE): a second gate call in the same turn lands on the phase the
+    machine already holds, so it can never compose a second packet."""
     outcome = state.get("observed_outcome") or {"kind": "advance", "decision": None}
-    phase = advance_triage_state(state.get("phase") or "assess", outcome)
+    previous_phase = state.get("phase") or "assess"
+    phase = advance_triage_state(previous_phase, outcome)
     decision = outcome.get("decision")
     kind = "advance" if decision is None else (
         "variant" if decision.get("action") == "variant" else "terminal")
@@ -112,7 +113,8 @@ def _advance(state: TriageGraphState) -> dict:
         "phase": phase,
         "decision": decision,
         "injected_constant": (DECIDE_PACKET_SENTINEL
-                              if decision is None else None),
+                              if decision is None and phase != previous_phase
+                              else None),
         "trail": [entry],
         "observed_signal": None,
         "observed_args": None,

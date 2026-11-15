@@ -340,7 +340,7 @@ class PodState(TypedDict, total=False):
     error: str
     export: dict          # the rendered IA-4 envelope
     # lifecycle v2: the harness facts channel. `control_plane_end_reason` is
-    # the runner end reason a kill wrote before triage; `runner_exhausted` is
-    # the exhaustion fact the router passes to the triager.
+    # the runner end reason a kill wrote before triage. `runner_exhausted` is
+    # DERIVED from the pending step (the router routes, the node reads); it is
+    # deliberately NOT a state channel, so a kill can never claim exhaustion.
     control_plane_end_reason: str | None
-    runner_exhausted: bool

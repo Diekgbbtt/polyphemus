@@ -1148,6 +1148,27 @@ def test_the_terminal_default_reason_is_the_weakest_absence():
     assert env["evidence"]["terminal_reason"] == "no-symptom-evidence"
 
 
+def test_a_duplicate_variant_degrade_keeps_the_assessed_clean():
+    # Q9: clean is triager-owned. A duplicate refusal is a sufficiency
+    # condition, not an integrity judgement; the assessed clean stands.
+    def re_minting(spec, obs, log, facts):
+        # The contract-tier fake states its own clean judgement (the
+        # production harness stamps the assessment's clean instead).
+        return {"action": "variant", "declined_attribute": "recon-action",
+                "clean": True, "variant_spec": dict(spec),
+                "feedback": "same again", "note": "duplicate"}
+
+    spec = {**VALID_SPEC, "verification_symptoms": ["reflects the marker"],
+            "skill_concretised_procedure": {"recon_action": "fetch the login page"}}
+    env = _run(arun_pod(spec, exec_fn=_exec(_ABSENT),
+                        runner_step_fn=symbolic_runner_step_fn,
+                        triager_fn=re_minting, trace_fn=_no_trace))
+    assert env["verdict"] == "unsuccessful"
+    assert env["evidence"]["terminal_reason"] == "no-symptom-evidence"
+    # The assessment claimed clean=true; it rides into the terminal.
+    assert env["evidence"]["clean"] is True
+
+
 def test_the_variant_not_allowed_reason_names_the_three_causes():
     seen = []
 

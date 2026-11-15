@@ -111,16 +111,6 @@ def _spec_with_typed_procedure() -> dict:
     }
 
 
-def test_triager_context_renders_the_typed_procedure_once():
-    """CL-3 context-only dedup: the typed concretisation is the one rendering;
-    the full spec JSON no longer repeats `skill_concretised_procedure`."""
-    log = ExperimentLog()
-    ctx = log.triager_context(_spec_with_typed_procedure(), None)
-    assert ctx.count("## Skill procedure") == 1
-    assert "skill_concretised_procedure" not in ctx
-    assert "the role check trusts the session" in ctx
-
-
 def test_runner_context_projects_the_typed_procedure_out_of_the_spec_json():
     log = ExperimentLog()
     ctx = log.runner_context(_spec_with_typed_procedure(), feedback="", iteration=1,

@@ -433,7 +433,7 @@ It does not add a ledger dimension.
 The durable ledger is keyed by `(project_id, agent)` and records flat cumulative axes.
 
 So `extra_tags` cannot price a phase in the ledger.
-Use them for trace joins only: `thread:<mem_key>`, `lap:<n>`, `phase:<assess|decide>`.
+Use them for trace joins only: `thread:<mem_key>`, `lap:<n>`, `phase:<assess|decide>`, and `phase:close` for the bounded closing turn that answers the final gate call.
 
 The ledger needs three additive counters to compute the marginal ratio.
 Add to the entry surface:

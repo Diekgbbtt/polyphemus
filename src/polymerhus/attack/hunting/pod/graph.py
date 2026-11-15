@@ -124,7 +124,6 @@ from polymerhus.attack.hunting.pod.types import (
     RawObservation,
     RunnerStep,
     SPACE_EXHAUSTED,
-    SYMPTOM_CONFIRMED,
     TECHNICAL_INFEASIBILITY,
     TOOL_TIMEOUT,
     VariantSpec,
@@ -249,11 +248,16 @@ def _resolve_variant_decision(decision: dict, spec: dict,
         note = (note + " [skill-procedure excerpt absent: recorded gap]").strip()
 
     classification = decision.get("classification") or "noise"
+    # The triager's clean is carried through EVERY degrade: a no-basis or
+    # duplicate refusal is a sufficiency condition, not an integrity
+    # judgement (Q9; the ratified #304 change).
+    clean = decision.get("clean") if isinstance(decision.get("clean"), bool) \
+        else False
     if not basis:
         return {"classification": classification, "action": "terminate",
                 "verdict": "unsuccessful", "terminal_reason": NO_SYMPTOM_EVIDENCE,
-                "clean": False,
-                "note": (note + " [no variant basis derivable; degraded]").strip()}
+                "clean": clean,
+                "note": (note + " [no variant basis derivable; no variant minted]").strip()}
     derived = decision.get("variant_spec") or dict(spec)
     # S5 8.6 step 7: the derived spec keeps the base provenance, including the
     # typed skill procedure. Enforced here (T10 H6) so a direct-pod spec that
@@ -273,7 +277,7 @@ def _resolve_variant_decision(decision: dict, spec: dict,
     if is_duplicate_variant(log.variant_specs, basis, derived):
         return {"classification": classification, "action": "terminate",
                 "verdict": "unsuccessful", "terminal_reason": NO_SYMPTOM_EVIDENCE,
-                "clean": False,
+                "clean": clean,
                 "note": (note + f" [duplicate variant basis '{basis}'; not "
                         "re-minted]").strip()}
     return {**decision, "declined_attribute": basis, "variant_spec": derived,
@@ -935,8 +939,8 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
         # The exhaustion fact: the router routed here from an exhausted conclude
         # WITH observations (the pending step is still this stretch's). A kill
         # is NOT an exhaustion - the stale pending step never claims it.
-        runner_exhausted = bool(state.get("runner_exhausted")) \
-            or (not kill and bool(getattr(_step(state), "exhausted", False)))
+        runner_exhausted = (not kill
+                            and bool(getattr(_step(state), "exhausted", False)))
         if not has_populated_procedure(spec):
             variant_reason = ("no mintable procedure attribute (a recorded "
                               "gap); no variant basis is derivable")
@@ -1013,8 +1017,8 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
                         "action": "terminate", "verdict": "unsuccessful",
                         "terminal_reason": NO_SYMPTOM_EVIDENCE, "clean": clean,
                         "note": (str(decision.get("note") or "") +
-                                 f" [variant not allowed: {variant_reason}; "
-                                 "degraded]").strip()}
+                                 f" [variant not allowed: {variant_reason}; no "
+                                 "variant minted]").strip()}
         else:
             decision = _resolve_variant_decision(decision, spec, log)
 

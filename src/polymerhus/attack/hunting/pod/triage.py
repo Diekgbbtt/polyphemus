@@ -16,6 +16,7 @@ executor, and the phase packet appended once to the accepted gate response.
 """
 from __future__ import annotations
 
+import inspect
 import logging
 from typing import Sequence
 
@@ -45,21 +46,31 @@ def _openai_tool_dict(tool) -> dict:
 async def _thread_message_count(checkpointer, thread_id: str) -> int:
     """The thread's persisted message count, or 0 (stateless or unreadable -
     fail-open: the packet then simply repeats, which only a re-dispatch can
-    hit). An async-native saver is read through its async seam."""
+    hit). Every saver shape is served: a sync `get_tuple`, a coroutine-shaped
+    `get_tuple`, and an async-only `aget_tuple`."""
     if checkpointer is None:
         return 0
     try:
-        from polymerhus.app.llm.session import (
-            _aread_thread_state,
-            _read_thread_state,
-        )
-
-        if getattr(checkpointer, "aget_tuple", None) is not None and \
-                not hasattr(checkpointer, "get_tuple"):
-            state = await _aread_thread_state(checkpointer, thread_id)
-        else:
-            state = _read_thread_state(checkpointer, thread_id)
-        return len((state or {}).get("messages") or [])
+        get_tuple = getattr(checkpointer, "get_tuple", None)
+        tup = None
+        if get_tuple is not None:
+            tup = get_tuple({"configurable": {"thread_id": thread_id}})
+            if inspect.isawaitable(tup):
+                tup = await tup
+        if tup is None:
+            aget = getattr(checkpointer, "aget_tuple", None)
+            if aget is None:
+                return 0
+            tup = aget({"configurable": {"thread_id": thread_id}})
+            if inspect.isawaitable(tup):
+                tup = await tup
+        if tup is None:
+            return 0
+        checkpoint = getattr(tup, "checkpoint", None)
+        if checkpoint is None and isinstance(tup, dict):
+            checkpoint = tup
+        values = (checkpoint or {}).get("channel_values") or {}
+        return len(values.get("messages") or [])
     except Exception:  # noqa: BLE001 - fail-open, never into the turn
         return 0
 
@@ -92,7 +103,7 @@ async def run_triage_harness(log, spec: dict, observation, facts, *, store,
     Returns `{decision, assessment, steps, rejections}`; the pod graph's
     triager node renders the `PodExport` from the decision.
     """
-    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+    from langchain_core.messages import ToolMessage
 
     from polymerhus.attack.hunting.hunting_agent import _last_tool_calls, invoke_tool
     from polymerhus.attack.hunting.pod.agents import triager_react_tools
@@ -137,7 +148,7 @@ async def run_triage_harness(log, spec: dict, observation, facts, *, store,
     contract = load_pod_triager_contract()
     graph = build_triage_graph().compile()
 
-    def _surface(assessment, phase) -> tuple[list[dict], dict]:
+    def _surface(assessment, phase) -> tuple[list[dict], dict, Any]:
         """The CONSTANT tool surface: the read-only triager tools, the #236
         skill binding (load_skill + record_skill_lesson + the read-only auth
         store), and the two gates, bound once per lap and identical on every
@@ -159,24 +170,29 @@ async def run_triage_harness(log, spec: dict, observation, facts, *, store,
         return ([*[_openai_tool_dict(tool) for tool in base],
                  *triage_request_tools()], by_name, binding)
 
-    state: dict = {
-        "phase": "assess", "observed_signal": None, "observed_args": None,
-        "observed_outcome": None, "facts": dict(facts), "assessment": None,
-        "injected_constant": None, "trail": [], "decision": None,
-    }
     # The thread's prior message count rides the facts: every decision's
     # packet is unique on its thread, so a re-dispatched pod's lap-1 packet is
     # never byte-identical to the one already there (an identical stamped id
     # would replace in place instead of appending).
     facts["prior_turns"] = await _thread_message_count(session_ctx.checkpointer,
                                                        mem_key)
-    request_tools, tools_by_name, binding = _surface(None, "assess")
-    # The ASSESS verbatim rides the base packet on the FIRST decision of the
-    # thread - the lap counter on a resumed pod is not enough (a resumed pod
-    # starts at lap N on a thread that has never seen the verbatim).
-    include_verbatim = lap <= 1 or facts.get("prior_turns", 0) == 0
+    state: dict = {
+        "phase": "assess", "observed_signal": None, "observed_args": None,
+        "observed_outcome": None, "facts": dict(facts), "assessment": None,
+        "injected_constant": None, "trail": [], "decision": None,
+    }
+    # The bound-skill listing's context comes from the binding (the loop's
+    # first _surface call owns the actual tool surface).
+    binding = auth_capable_binding(
+        role_id, task_skills=harness_ctx.task_skills,
+        project_id=project_id or None,
+        with_readonly_auth_store=True)
+    # The ASSESS verbatim and the bound-skill LISTING ride the first decision
+    # of the THREAD - the lap counter on a resumed pod is not enough (a
+    # resumed pod starts at lap N on a thread that has never seen either).
+    include_base = lap <= 1 or facts.get("prior_turns", 0) == 0
     base_parts = []
-    if lap <= 1:
+    if include_base:
         # Q5: the bound-skill LISTING rides the first human message - the one
         # phase surface that names the skills, never the system prompt.
         from polymerhus.app.llm.skills import render_skill_index
@@ -189,7 +205,7 @@ async def run_triage_harness(log, spec: dict, observation, facts, *, store,
     base_parts.append(compose_assess_packet(log, spec, observation, facts,
                                             store=store, spec_id=spec_id,
                                             order=order,
-                                            include_verbatim=include_verbatim))
+                                            include_verbatim=include_base))
     base = "\n\n".join(part for part in base_parts if part)
     new_messages = _dicts_to_lc([{"role": "human", "content": base}])
     rejections: list[str] = []
@@ -236,6 +252,12 @@ async def run_triage_harness(log, spec: dict, observation, facts, *, store,
                 state = await graph.ainvoke({
                     **state, "observed_signal": signal,
                     "observed_args": tc.get("args") or {}})
+                # The gate closures are phase transaction gates: after an
+                # accepted signal the machine may have moved, so the surface's
+                # gates re-bind to the LIVE phase before the next call in this
+                # turn is answered.
+                tools_by_name.update(build_triage_gate_tools(
+                    facts, state.get("assessment"), state["phase"]))
             # The advance node set the SENTINEL only when the route continues
             # (an assessment that advanced to DECIDE); the packet is composed
             # here, once, and the DECIDE material is this lap's state.
@@ -250,9 +272,7 @@ async def run_triage_harness(log, spec: dict, observation, facts, *, store,
                                        content=result))
         if state["phase"] == "done":
             break
-        new_messages = [
-            m if isinstance(m, (ToolMessage, HumanMessage, AIMessage)) else m
-            for m in results]
+        new_messages = list(results)
 
     # The thread contract (#280 positional adjacency): the gate's answer must
     # FOLLOW its call in the thread. The loop exits as soon as the machine is
@@ -264,15 +284,17 @@ async def run_triage_harness(log, spec: dict, observation, facts, *, store,
     # accepted signal. A closing turn whose model emits more calls gets its
     # calls answered once more (bounded); on exhaustion the leftover calls are
     # surfaced for the operator.
-    closing_tools = {**{t.name: t for t in
-                        (triager_react_tools(
-                            harness_ctx.memory_store, harness_ctx.spec_id,
-                            log=harness_ctx.log,
-                            variant_ref=harness_ctx.variant_ref or "",
-                            graph_view_fn=harness_ctx.graph_view_fn,
-                            browser_tool=harness_ctx.browser_tool))},
-                     **build_triage_gate_tools(facts, state.get("assessment"),
-                                               "done")}
+    closing_tools = {
+        **{t.name: t for t in triager_react_tools(
+            harness_ctx.memory_store, harness_ctx.spec_id,
+            log=harness_ctx.log,
+            variant_ref=harness_ctx.variant_ref or "",
+            graph_view_fn=harness_ctx.graph_view_fn,
+            browser_tool=harness_ctx.browser_tool)},
+        # The skill binding's tools ride the closing turns too: the closing
+        # surface is the SAME constant surface with the gates closed.
+        **{t.name: t for t in binding.tools},
+        **build_triage_gate_tools(facts, state.get("assessment"), "done")}
     closing_budget = 3
     while results and closing_budget:
         closing_budget -= 1
@@ -315,17 +337,28 @@ async def run_triage_harness(log, spec: dict, observation, facts, *, store,
             "note": ("triage step budget exhausted without a gate submission; "
                      "degraded"),
         }
-    # The phase path: the ratified vocabulary. An advance records the phase
-    # the machine moved to; a decision records the decision kind.
-    def _path_token(entry: dict) -> str:
-        if entry.get("kind") in ("variant", "terminal"):
-            return str(entry["kind"])
-        return str(entry.get("phase", ""))
+    # The phase path: the ratified vocabulary (assess, assess>decide,
+    # assess>variant, assess>decide>variant, assess>decide>terminal). An
+    # advance records the phase the machine moved to; a decision records its
+    # kind - unless it landed at ASSESS, where a confirmation is the bare
+    # assess path and only a divergence extends it.
+    tokens = ["assess"]
+    advanced = False
+    for entry in state.get("trail", []):
+        kind = str(entry.get("kind") or "")
+        if kind in ("variant", "terminal"):
+            if advanced:
+                tokens.append(kind)
+            elif kind == "variant":
+                tokens.append("variant")
+            # a terminal landing at ASSESS is the bare assess path
+        else:
+            advanced = True
+            tokens.append(str(entry.get("phase") or "decide"))
 
     return {"decision": decision, "assessment": state.get("assessment"),
             "steps": steps, "rejections": rejections,
-            "phase_path": ">".join(
-                ["assess", *[_path_token(e) for e in state.get("trail", [])]])}
+            "phase_path": ">".join(tokens)}
 
 
 def has_populated_procedure(spec: dict) -> bool:

@@ -249,7 +249,7 @@ def detect_triage_outcome(facts: TriageFacts, assessment: dict | None,
                 return {"kind": "decision",
                         "decision": _terminate(
                             "unsuccessful", NO_SYMPTOM_EVIDENCE, clean,
-                            f"[variant not allowed: {reason}; degraded] "
+                            f"[variant not allowed: {reason}; no variant minted] "
                             f"{note}".strip())}
             return {"kind": "decision",
                     "decision": _variant(validated.declined_attribute or "",

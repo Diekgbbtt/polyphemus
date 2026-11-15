@@ -381,7 +381,7 @@ The `declined_attribute` storage field carries the variant basis.
 13. As the triager, I want the skill procedure in my context, so that I can diff it against the executed procedure.
 14. As the triager, I want a fixed gap-class vocabulary, so that every variant basis is named consistently.
 15. As the triager, I want the first uncovered gap class to be the basis, so that the mining order is deterministic.
-16. As the triager, I want a failure-mode fallback, so that a fully covered procedure can still yield a variant.
+16. As the triager, I want a fully covered procedure to end the honest negative, so that no speculative variant is minted (the failure-mode fallback is retired, lifecycle v2).
 17. As the triager, I want runner-failure and runner-divergence triggers, so that a broken execution yields a recovery variant.
 18. As the triager, I want the experiment log in my context, so that I never mint a duplicate variant.
 19. As the triager, I want the terminal decision vocabulary unchanged, so that the binary verdict and the six terminal reasons stay stable.
@@ -389,7 +389,7 @@ The `declined_attribute` storage field carries the variant basis.
 21. As an operator, I want `declined_attribute` to carry the basis, so that the stored lineage names the real reason.
 22. As an operator, I want the nine procedure gaps named after the skill's procedure, so that the triager and the hunter use the same entities.
 23. As an operator, I want the skill procedure excerpt bounded, so that the pod context does not grow with the whole skill.
-24. As an operator, I want the pod to fall back to the failure-mode reasoning when the excerpt is absent, so that a missing provenance field degrades rather than blocks.
+24. As an operator, I want an absent skill-procedure excerpt recorded as a gap, so that no variant basis is derivable and the pod still lands an honest export.
 25. As a reviewer, I want the INIT gate's mandatory set fixed, so that no implementation invents a third requirement.
 26. As a reviewer, I want the retired fields absent from every fixture and prompt, so that no stale `testing_pattern` path survives.
 27. As a reviewer, I want the variant basis persisted, so that a later audit can reconstruct why the variant was mined.
@@ -540,20 +540,21 @@ The variant basis vocabulary is:
 | `pro-tips` | A pro tip in the skill procedure was not executed. |
 | `advanced-technique` | An advanced technique was not leveraged. |
 | `preliminary-chaining` | A preliminary vulnerability that could grant the required capability was not exploited. |
+| `payload-vector` | The payload vector (the effective request item, its content, or its encoding) was not exercised as the concretisation names it. |
+| `technology-misconfiguration` | The protocol or technology misconfiguration the concretisation names was not exercised. |
 | `interpretation-pitfall` | The interpretation failed in a common pitfall named by the skill. |
-| `failure-mode` | No procedure gap exists; an additional observable failure mode is plausible. |
 | `runner-failure` | The runner execution failed. |
 | `runner-divergence` | The execution diverged completely from the spec. |
 
 The first nine are procedure gaps.
-The `failure-mode` basis is the fallback.
 The last two are execution triggers.
+The `failure-mode` fallback basis is RETIRED (lifecycle v2): a fully covered space is the triager's honest negative, never a speculative variant.
 
 The minting algorithm is:
 
-1. Read the typed `SkillProcedure` from `spec.provenance["skill_procedure"]`.
-   The nine fields map to the nine procedure gap bases in table order.
-   When the excerpt is absent, record the gap and go to step 5.
+1. Read the typed `SkillConcretisedProcedure` from the spec's TOP-LEVEL `skill_concretised_procedure` field.
+   The nine fields map one-to-one to the nine procedure gap bases in table order.
+   When the excerpt is fully absent, record the gap: no variant basis is derivable.
    A section is covered when the executed procedure in the D6 trail contains the action, technique, or check that the section names.
    The triager judges coverage from the trail; the mapping is one-to-one.
    An EMPTY section is a skipped class, not a coverage gap: there is no authored procedure to execute or cover, so the diff passes over it (T10 H1).
@@ -565,13 +566,10 @@ The minting algorithm is:
 4. Test the nine populated gap classes in the table order.
    The first gap class that the executed procedure does not cover is the basis.
    The variant changes the spec to cover it.
-5. If every populated gap class is covered, reason on the additional observable failure modes the spec's `verification_symptoms` and `assumptions` could yield.
-   If a new observable failure mode is plausible, mint a `failure-mode` variant.
-   The fallback uses only the material the pod holds; it does not read the modeller's failure-mode space.
-6. Never mint a duplicate of a basis and detail already present in the experiment log.
+5. Never mint a duplicate of a basis and detail already present in the experiment log.
    The triager reads the log before deciding.
    The detail comparison is exact text over the canonical key-sorted JSON of the derived spec: a changed field is a new variant, a re-worded but semantically identical spec is not caught (T10 H7).
-7. Record the variant with the basis in `declined_attribute`, the parent ref, and the derived spec.
+6. Record the variant with the basis in `declined_attribute`, the parent ref, and the derived spec.
    The derived spec keeps the base `provenance`, including the typed skill procedure; the graph enforces the field (T10 H6).
 
 The triager is TWO-PHASE (8.11, lifecycle v2).
@@ -601,11 +599,11 @@ The `declined_attribute` field's semantics change from a declined spec attribute
 - The replay capability stays; the structured vector does not.
 - A non-derivable probe lands `no-symptom-evidence` with `clean=false`.
 - The variant basis vocabulary is the table in 8.6.
-- The triager reads the typed `SkillProcedure` from the spec provenance.
+- The triager reads the typed `SkillConcretisedProcedure` from the spec's top-level `skill_concretised_procedure` field.
 - The baseline is `provenance.baseline_ref` when present.
 - The first uncovered gap class is the basis.
 - The `variants` concept stays pod-side: a variant is a combination of a subset of the skills-ontology entities.
-- The failure-mode fallback and the runner triggers are explicit.
+- The runner triggers are explicit; the failure-mode fallback is retired (lifecycle v2).
 - The variant record shape is unchanged.
 - The triager prompt's mining section is rewritten.
 - The retired fields are removed from the model, the gate, the prompts, the fixtures, and the tests.
@@ -624,9 +622,9 @@ Seams:
 - The D4 schema: the reduced fields parse; the retired fields are rejected as unknown.
 - The INIT gate: URL missing, symptoms empty, both missing, the all-violations collection, the zero-tool-call rejection.
 - The runner: a first probe authored from the reduced spec; a non-derivable probe landing `no-symptom-evidence` with `clean=false`; a replay ref when the hunter names one.
-- The variant basis: each of the ten literals.
+- The variant basis: each of the eleven literals (nine procedure gaps plus the two execution triggers).
 - The procedure diff: the first uncovered class wins; the order is fixed.
-- The fallback: a fully covered procedure mints a `failure-mode` variant.
+- A fully covered procedure is the triager's honest negative; the retirement of the fallback basis is lifecycle v2.
 - The execution triggers: runner failure and runner divergence.
 - The duplicate guard: a basis and detail already in the log is not re-minted.
 - The storage: the variant record shape; `declined_attribute` carries the basis.

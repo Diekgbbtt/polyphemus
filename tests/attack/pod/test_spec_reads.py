@@ -7,7 +7,7 @@ The typed `SkillConcretisedProcedure` has ONE home
 recorded gap (None), never a raise: no variant basis is derivable
 basis (S5 8.6).
 """
-from polymerhus.attack.hunting.pod.context import ExperimentLog
+from polymerhus.attack.hunting.pod.context import ExperimentLog, compose_assess_packet
 from polymerhus.attack.hunting.pod.types import (
     TestImplementationSpec as D4Spec,
     baseline_ref_from_spec,
@@ -18,6 +18,11 @@ from polymerhus.attack.hunting.spec_contract import (
     SKILL_CONCRETISED_PROCEDURE_FIELDS,
     SkillConcretisedProcedure,
 )
+
+_FACTS = {"runner_failed": False, "runner_exhausted": False,
+           "runner_terminated": None, "variant_allowed": True,
+           "lap": 1, "thread_id": "pod:triager:x", "prior_turns": 0}
+
 
 PROCEDURE = {
     "recon_action": "crawl the item ids from the listing page",
@@ -104,7 +109,13 @@ def test_spec_provenance_is_empty_for_a_malformed_value():
 def test_the_triager_context_carries_the_typed_concretisation():
     """S5 8.6 step 1: the triager reads the typed concretisation from the spec
     and diffs each field against the executed procedure."""
-    ctx = ExperimentLog().triager_context(SPEC, None)
+    from polymerhus.attack.hunting.pod.context import compose_assess_packet
+
+    facts = {"runner_failed": False, "runner_exhausted": False,
+             "runner_terminated": None, "variant_allowed": True,
+             "lap": 1, "thread_id": "pod:triager:x", "prior_turns": 0}
+    ctx = compose_assess_packet(ExperimentLog(), SPEC, None, facts,
+                                store=None, spec_id="x", order=0)
     assert "skill procedure" in ctx.lower()
     for field, text in PROCEDURE.items():
         assert text in ctx, field
@@ -114,8 +125,9 @@ def test_the_triager_context_carries_the_typed_concretisation():
 
 
 def test_the_triager_context_marks_an_absent_procedure_as_a_recorded_gap():
-    ctx = ExperimentLog().triager_context(
-        {**SPEC, "skill_concretised_procedure": None}, None)
+    ctx = compose_assess_packet(
+        ExperimentLog(), {**SPEC, "skill_concretised_procedure": None}, None,
+        _FACTS, store=None, spec_id="x", order=0)
     assert "recorded gap" in ctx.lower()
     assert "no variant basis" in ctx.lower()
 
@@ -123,6 +135,7 @@ def test_the_triager_context_marks_an_absent_procedure_as_a_recorded_gap():
 def test_the_triager_context_marks_an_empty_section_as_a_skipped_class():
     spec = {**SPEC, "skill_concretised_procedure": {
         **PROCEDURE, "pro_tips": ""}}
-    ctx = ExperimentLog().triager_context(spec, None)
+    ctx = compose_assess_packet(ExperimentLog(), spec, None, _FACTS,
+                                store=None, spec_id="x", order=0)
     assert "pro-tips" in ctx
     assert "skipped" in ctx.lower()

@@ -200,6 +200,107 @@ def test_a_provider_failure_propagates_untouched(tmp_path):
         _run_harness(boom, PodMemoryStore(tmp_path))
 
 
+def test_the_multi_gate_call_turn_composes_one_packet(tmp_path, monkeypatch):
+    # Two gate calls in ONE AI message: the first accepted, the second is a
+    # wrong-phase submission after the advance. One packet, one advance.
+    import polymerhus.attack.hunting.pod.context as context_mod
+
+    compose_calls = {"n": 0}
+    real_compose = context_mod.compose_decide_packet
+
+    async def scripted(role, thread, messages, **kw):
+        if "phase:close" in (kw.get("extra_tags") or []):
+            return _turn([], content="done closing")
+        return _turn([
+            {"name": "submit_assessment", "id": "g1",
+             "args": {"symptom_confirmed": False, "runner_diverged": False,
+                      "clean": True, "note": "first"}},
+            {"name": "submit_assessment", "id": "g2",
+             "args": {"symptom_confirmed": True, "runner_diverged": False,
+                      "clean": True, "note": "second"}},
+        ])
+
+    def counting_compose(*a, **k):
+        compose_calls["n"] += 1
+        return real_compose(*a, **k)
+
+    monkeypatch.setattr(context_mod, "compose_decide_packet", counting_compose)
+    result = _run_harness(scripted, PodMemoryStore(tmp_path))
+    assert compose_calls["n"] <= 1, (
+        "the DECIDE material is composed only when the route continues")
+    # The second call is a wrong-phase rejection, never a second packet.
+    decisions = [r for r in result["rejections"]
+                 if "submit_assessment" in r]
+    assert decisions, "the late submission is a coded rejection"
+    # The machine saw exactly one assessment.
+    assert result["assessment"]["note"] == "first"
+
+
+def test_the_phase_path_uses_the_ratified_vocabulary(tmp_path):
+    # pod-triager-lifecycle-v2.md: the path is one of assess, assess>decide,
+    # assess>variant, assess>decide>variant, assess>decide>terminal.
+    confirmed = {"name": "submit_assessment", "id": "a1",
+                 "args": {"symptom_confirmed": True, "runner_diverged": False,
+                          "clean": True, "note": "n"}}
+    diverged = {"name": "submit_assessment", "id": "a1",
+                "args": {"symptom_confirmed": False, "runner_diverged": True,
+                         "clean": True, "note": "n"}}
+    cases = [
+        ([_turn([confirmed])], "assess"),
+        ([_turn([diverged])], "assess>variant"),
+        ([_turn([_ASSESS_CALL]), _turn([_DECIDE_CALL])],
+         "assess>decide>terminal"),
+    ]
+    for turns, expected in cases:
+        script = _TurnScript(list(turns) + [_turn([], content="close")])
+        result = _run_harness(script, PodMemoryStore(tmp_path))
+        assert result["phase_path"] == expected, (expected, result["phase_path"])
+
+
+def test_the_thread_count_serves_every_saver_shape():
+    # The prior-turn read must work for a sync saver, a coroutine-shaped
+    # get_tuple, and an async-only aget_tuple; a broken read degrades to 0.
+    from langchain_core.messages import HumanMessage
+
+    from polymerhus.attack.hunting.pod.triage import _thread_message_count
+
+    class _T:
+        checkpoint = {"channel_values": {"messages": []}}
+
+    class _SyncSaver:
+        def get_tuple(self, config):
+            t = _T()
+            t.checkpoint = {"channel_values": {"messages": [HumanMessage(content="x")] * 4}}
+            return t
+
+    class _CoroutineSaver:
+        def get_tuple(self, config):
+            async def _read():
+                t = _T()
+                t.checkpoint = {"channel_values": {"messages": [HumanMessage(content="x")] * 3}}
+                return t
+
+            return _read()
+
+    class _AsyncOnlySaver:
+        async def aget_tuple(self, config):
+            t = _T()
+            t.checkpoint = {"channel_values": {"messages": [HumanMessage(content="x")] * 2}}
+            return t
+
+    async def drive():
+        return (await _thread_message_count(_SyncSaver(), "t"),
+                await _thread_message_count(_CoroutineSaver(), "t"),
+                await _thread_message_count(_AsyncOnlySaver(), "t"),
+                await _thread_message_count(object(), "t"))
+
+    sync_count, coroutine_count, async_count, broken = asyncio.run(drive())
+    assert sync_count == 4
+    assert coroutine_count == 3
+    assert async_count == 2
+    assert broken == 0
+
+
 def test_the_closing_turns_gates_are_closed(tmp_path):
     # A post-decision submission on a closing turn is a coded rejection, never
     # an accepted signal: the machine is done.
@@ -230,19 +331,17 @@ def test_the_closing_turns_gates_are_closed(tmp_path):
     assert result["rejections"], "the late submission is a coded rejection"
 
 
-def test_a_prose_turn_clears_the_stale_results(tmp_path):
-    # A no-tool-call turn already DELIVERED the previous results as its input;
-    # the closing turn must never re-send them (a duplicate ToolMessage for the
-    # same tool_call_id would sit after the correction message, off-position).
-    script = _TurnScript([_turn([_ASSESS_CALL]),
-                          _turn([], content="prose, no call"),
-                          _turn([_DECIDE_CALL])])
+def test_a_prose_budget_end_never_closes_with_stale_results(tmp_path):
+    # The budget ends on a PROSE turn after an earlier tool call: the results
+    # were already delivered (the prose turn's input), so the harness sends NO
+    # closing turn - a duplicate ToolMessage for the same tool_call_id would
+    # sit after the correction message, off-position for #280.
+    script = _TurnScript([_turn([_ASSESS_CALL])] + [_turn([], content="prose")] * 9)
     result = _run_harness(script, PodMemoryStore(tmp_path))
-    closing = script.calls[-1]
-    closing_ids = [getattr(m, "tool_call_id", None)
-                   for m in closing["messages"] if isinstance(m, ToolMessage)]
-    assert "a1" not in closing_ids, (
-        "an already-delivered tool result must not be re-sent")
+    close_calls = [c for c in script.calls
+                   if "phase:close" in ((c.get("kwargs") or {}).get("extra_tags") or [])]
+    assert not close_calls, "no stale results to close: they were delivered"
+    assert result["decision"]["clean"] is False
 
 
 def test_the_closing_loop_never_leaves_a_dangling_call(tmp_path):

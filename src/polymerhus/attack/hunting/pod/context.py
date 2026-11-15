@@ -385,54 +385,6 @@ class ExperimentLog:
             parts.append(f"## Triager feedback (declination to honour)\n{feedback}")
         return "\n\n".join(parts)
 
-    def runner_context(self, spec: dict, feedback: str, iteration: int,
-                       budget: int) -> str:
-        """The filtered slice the Runner's session sees each lap: the current
-        spec variant, the tried-probe signatures (so it does not duplicate),
-        the Triager's feedback, and the budget state."""
-        parts = [
-            f"# Lap {iteration} of at most {budget}",
-            f"## Current spec variant\n{json.dumps(_pod_spec_view(spec), indent=2)}",
-        ]
-        if self.executed:
-            parts.append("## Probe signatures already executed (do not repeat)\n"
-                         + "\n".join(f"- {s}" for s in self.executed))
-        if feedback:
-            parts.append(f"## Triager feedback (declination to honour)\n{feedback}")
-        return "\n\n".join(parts)
-
-    def triager_context(self, spec: dict,
-                        observation: RawObservation | None) -> str:
-        """The filtered slice the Triager's session sees each lap: the current
-        variant, the bounded typed skill-procedure excerpt, the executed
-        procedure (prior variant bases + probe commands), the latest raw
-        observation (body-capped), and every prior variant (so it does not
-        re-mine one)."""
-        parts = [f"## Current spec variant\n{json.dumps(_pod_spec_view(spec), indent=2)}",
-                 _skill_concretised_procedure_context(spec)]
-        if observation is not None:
-            obs = observation.model_dump()
-            obs["body"] = (obs.get("body") or "")[:_BODY_SLICE]
-            parts.append(f"## Latest observation\n{json.dumps(obs, indent=2)}")
-        if self.variant_specs:
-            lines = []
-            for v in self.variant_specs:
-                label = v.ref if not v.declined_attribute \
-                    else f"{v.ref} (basis: {v.declined_attribute}, parent {v.parent_ref})"
-                detail = _variant_detail_line(v.spec)
-                lines.append(f"- {label}" + (f": {detail}" if detail else ""))
-            parts.append("## Variants already tried (never mine a duplicate)\n"
-                         + "\n".join(lines))
-        probes = _executed_probe_lines(self.raw_observations)
-        if probes:
-            parts.append("## Probes executed (the D6 trail)\n" + "\n".join(probes))
-        if self.interpretations:
-            recent = self.interpretations[-5:]
-            parts.append("## Recent interpretations\n"
-                         + "\n".join(f"- [{i.classification}] {i.note}" for i in recent))
-        return "\n\n".join(parts)
-
-
 def compose_runner_delta(log: ExperimentLog, spec: dict, feedback: str,
                          iteration: int, budget: int, *, store, spec_id: str) -> str:
     """The Runner's lap-opener HumanMessage delta (D84-9/10/11/27): the filtered
