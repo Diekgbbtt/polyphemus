@@ -37,10 +37,19 @@ from polymerhus.attack.hunting.pod.pod_memory import spec_identifier
 SPEC_ID = spec_identifier("sqli", [{"axis": "technique", "value": "blind"}, {"axis": "payload-vector", "value": "boolean"}])
 
 
-def _terminate_space(spec, obs, messages, log):
-    """A triager that ends a semantic (non-symbolic) stretch space-exhausted."""
+def _terminate_space(spec, obs, log, facts):
+    """A lifecycle-v2 triager fake that ends a stretch space-exhausted."""
     return {"action": "terminate", "verdict": "unsuccessful",
-            "terminal_reason": "space-exhausted", "clean": True}
+            "terminal_reason": "space-exhausted", "clean": True,
+            "note": "space covered"}
+
+
+def _v2_confirmed(spec, obs, log, facts):
+    """A lifecycle-v2 triager fake that confirms the observation - the v2
+    replacement for the retired symbolic fast path in graph tests."""
+    return {"action": "terminate", "verdict": "successful",
+            "terminal_reason": "symptom-confirmed", "clean": True,
+            "note": "verification symptom observed"}
 
 
 VALID_SPEC = {
@@ -95,17 +104,26 @@ def test_arun_pod_is_awaitable_and_run_pod_is_gone():
 
 
 def test_async_seams_are_awaited_natively_by_the_graph():
-    """D84-15: an ASYNC runner and ASYNC terminal are awaited in-graph (the
-    `_await_seam` `iscoroutinefunction` branch), not to_thread-ed - the async
-    production path the sync fakes below only approximate."""
+    """D84-15: an ASYNC runner, ASYNC terminal, and ASYNC triager are awaited
+    in-graph (the `_await_seam` `iscoroutinefunction` branch), not
+    to_thread-ed."""
+    calls = []
+
     async def runner(spec, messages, tool_calls):
         return symbolic_runner_step_fn(spec, messages, tool_calls)
 
     async def exec_fn(command, timeout_s):
         return ExecResult(stdout=_OK, stderr="", returncode=0, duration_ms=1)
 
+    async def confirmed(spec, obs, log, facts):
+        calls.append("triage")
+        return {"action": "terminate", "verdict": "successful",
+                "terminal_reason": "symptom-confirmed", "clean": True,
+                "note": "the marker is reflected"}
+
     env = _run(arun_pod(VALID_SPEC, exec_fn=exec_fn, runner_step_fn=runner,
-                        triager_fn=None, trace_fn=_no_trace))
+                        triager_fn=confirmed, trace_fn=_no_trace))
+    assert calls == ["triage"]
     assert env["verdict"] == "successful"
     assert env["evidence"]["terminal_reason"] == "symptom-confirmed"
 
@@ -114,7 +132,7 @@ def test_init_rejection_makes_no_tool_call():
     calls = []
     env = _run(arun_pod({"target_identity": {"url": ""}, "verification_symptoms": []},
                         exec_fn=_exec(_OK, calls=calls),
-                        runner_step_fn=symbolic_runner_step_fn, triager_fn=None,
+                        runner_step_fn=symbolic_runner_step_fn, triager_fn=_v2_confirmed,
                         trace_fn=_no_trace))
     assert env["verdict"] == "unsuccessful"
     assert env["evidence"]["terminal_reason"] == "technical-infeasibility"
@@ -134,14 +152,23 @@ def test_memory_store_bound_without_spec_id_fails_closed():
 
     env = _run(arun_pod(
         VALID_SPEC, exec_fn=_exec(_OK), runner_step_fn=symbolic_runner_step_fn,
-        triager_fn=None, trace_fn=_no_trace, memory_store=PodMemoryStore(project_id="p1")))
+        triager_fn=_v2_confirmed, trace_fn=_no_trace, memory_store=PodMemoryStore(project_id="p1")))
     assert env["verdict"] == "unsuccessful"
     assert "spec_id" in (env["evidence"].get("error") or "")
 
 
-def test_symbolic_symptom_confirmed_needs_no_triager():
-    env = _run(arun_pod(VALID_SPEC, exec_fn=_exec(_OK), runner_step_fn=symbolic_runner_step_fn,
-                        triager_fn=None, trace_fn=_no_trace))
+def test_a_confirmed_triage_reaches_the_domain_terminal_through_one_lap():
+    # Lifecycle v2: the symbolic fast path is retired - every domain terminal
+    # comes from a triager decision. The confirmed observation is one ASSESS
+    # turn away from the terminal.
+    def confirmed(spec, obs, log, facts):
+        return {"action": "terminate", "verdict": "successful",
+                "terminal_reason": "symptom-confirmed", "clean": True,
+                "note": "the marker is reflected"}
+
+    env = _run(arun_pod(VALID_SPEC, exec_fn=_exec(_OK),
+                        runner_step_fn=symbolic_runner_step_fn,
+                        triager_fn=confirmed, trace_fn=_no_trace))
     assert env["verdict"] == "successful"
     assert env["evidence"]["terminal_reason"] == "symptom-confirmed"
     assert env["evidence"]["iterations"] == 1
@@ -154,7 +181,7 @@ def test_the_runner_authors_the_first_probe_from_the_reduced_spec():
     one probe from the spec - the base URL of `target_identity`."""
     calls = []
     env = _run(arun_pod(VALID_SPEC, exec_fn=_exec(_OK, calls=calls),
-                        runner_step_fn=symbolic_runner_step_fn, triager_fn=None,
+                        runner_step_fn=symbolic_runner_step_fn, triager_fn=_v2_confirmed,
                         trace_fn=_no_trace))
     assert env["verdict"] == "successful"
     assert len(calls) == 1
@@ -176,7 +203,7 @@ def test_the_baseline_ref_is_replayed_by_the_runner():
 
     env = _run(arun_pod(spec, exec_fn=_exec(_ABSENT),
                         runner_step_fn=symbolic_runner_step_fn,
-                        triager_fn=None, replay_fn=replay, project_id="proj-1",
+                        triager_fn=_v2_confirmed, replay_fn=replay, project_id="proj-1",
                         spec_id=SPEC_ID, trace_fn=_no_trace))
     assert seen == [("proj-1", baseline, {})]
     assert env["verdict"] == "successful"
@@ -195,14 +222,17 @@ def test_no_derivable_probe_lands_no_symptom_evidence_clean_false():
     steps = [RunnerStep(action="conclude", exhausted=True,
                         observation_note="no probe derivable from the spec")]
     env = _run(arun_pod(VALID_SPEC, exec_fn=_exec(_OK),
-                        runner_step_fn=_scripted(steps), triager_fn=None,
+                        runner_step_fn=_scripted(steps), triager_fn=_v2_confirmed,
                         trace_fn=_no_trace))
     assert env["verdict"] == "unsuccessful"
     assert env["evidence"]["terminal_reason"] == "no-symptom-evidence"
     assert env["evidence"]["clean"] is False
 
 
-def test_clean_from_trail_rejects_a_tool_error_observation():
+def test_runner_failed_rejects_a_tool_error_observation():
+    """The lifecycle v2 replacement for `_clean_from_trail`: the runner-failed
+    harness fact reads the RAW fields - a typed error code is a failed
+    execution, even with returncode 0 (the CLI's masked failure, FF-06)."""
     log = ExperimentLog()
     log.record_observation(RawObservation(
         returncode=0,
@@ -210,7 +240,11 @@ def test_clean_from_trail_rejects_a_tool_error_observation():
         error_message="the CLI rejected the command",
         recovery={"action": "fix_command"},
     ))
-    assert graph_mod._clean_from_trail(log) is False
+    assert graph_mod._runner_failed_from(log.raw_observations[-1]) is True
+    clean_obs = RawObservation(status=200, body="ok")
+    assert graph_mod._runner_failed_from(clean_obs) is False
+    warn_only = RawObservation(status=200, body="ok", warning={"hint": "slow"})
+    assert graph_mod._runner_failed_from(warn_only) is False
 
 
 def test_contract_tier_tool_exec_records_browser_error_fields():
@@ -230,7 +264,7 @@ def test_contract_tier_tool_exec_records_browser_error_fields():
             session_state={"name": "wj-live", "live": True},
         )
 
-    def triager(spec, obs, messages, log):
+    def triager(spec, obs, log, facts):
         return {"action": "terminate", "verdict": "unsuccessful",
                 "terminal_reason": "no-symptom-evidence", "clean": False}
 
@@ -251,7 +285,8 @@ def test_a_later_variant_with_no_derivable_probe_is_not_a_clean_exhaustion():
     observation, then the critic mints a variant with no target identity; the
     next stretch authors nothing. The base d78d2593's whole-run
     `_clean_from_trail` would have called this a clean `space-exhausted`; the
-    current-stretch scope refuses it."""
+    current-stretch scope refuses it. Under lifecycle v2 the triager owns the
+    exhausted-with-observations terminal and judges it itself."""
     variant_spec = {**VALID_SPEC, "target_identity": {}}
     decisions = iter([
         {"classification": "symptom-absent", "action": "variant",
@@ -259,14 +294,17 @@ def test_a_later_variant_with_no_derivable_probe_is_not_a_clean_exhaustion():
          "variant_spec": variant_spec,
          "feedback": "try without a target identity"},
         {"classification": "symptom-absent", "action": "terminate",
-         "verdict": "unsuccessful", "terminal_reason": "space-exhausted",
-         "clean": True},
+         "verdict": "unsuccessful", "terminal_reason": "no-symptom-evidence",
+         "clean": False},
     ])
 
-    def triager(spec, obs, messages, log):
+    def triager(spec, obs, log, facts):
         return next(decisions)
 
-    env = _run(arun_pod({**VALID_SPEC, "verification_symptoms": ["reflects the marker"]},
+    spec = {**VALID_SPEC, "verification_symptoms": ["reflects the marker"],
+            "skill_concretised_procedure": {"recon_action": "fetch the login page",
+                                            "bypass_technique": "session swap"}}
+    env = _run(arun_pod(spec,
                         exec_fn=_exec(_ABSENT), runner_step_fn=symbolic_runner_step_fn,
                         triager_fn=triager, trace_fn=_no_trace))
     assert env["evidence"]["iterations"] == 2
@@ -286,7 +324,7 @@ def test_runner_drives_a_multi_step_chain_with_intra_chain_flow():
         RunnerStep(action="conclude", observation_note="chain complete"),
     ]
 
-    def triager(spec, obs, messages, log):
+    def triager(spec, obs, log, facts):
         return {"action": "terminate", "verdict": "unsuccessful",
                 "terminal_reason": "no-symptom-evidence", "clean": True}
 
@@ -306,7 +344,7 @@ def test_inner_tool_cap_forces_conclusion(monkeypatch):
         return RunnerStep(action="tool_call", tool="exec",
                           command=f"curl -k -sS https://t/{tool_calls}")
 
-    def triager(spec, obs, messages, log):
+    def triager(spec, obs, log, facts):
         return {"action": "terminate", "verdict": "unsuccessful",
                 "terminal_reason": "space-exhausted", "clean": True}
 
@@ -327,7 +365,7 @@ def test_runner_sees_tool_results_in_its_curated_session():
             return RunnerStep(action="tool_call", tool="exec", command="curl -k -sS https://t/")
         return RunnerStep(action="conclude", observation_note="saw the result")
 
-    def triager(spec, obs, messages, log):
+    def triager(spec, obs, log, facts):
         return {"action": "terminate", "verdict": "unsuccessful",
                 "terminal_reason": "space-exhausted", "clean": True}
 
@@ -348,10 +386,13 @@ def test_variant_threat_records_provenance():
          "verdict": "unsuccessful", "terminal_reason": "space-exhausted", "clean": True},
     ])
 
-    def triager(spec, obs, messages, log):
+    def triager(spec, obs, log, facts):
         return next(decisions)
 
-    env = _run(arun_pod({**VALID_SPEC, "verification_symptoms": ["reflects the marker"]},
+    spec = {**VALID_SPEC, "verification_symptoms": ["reflects the marker"],
+            "skill_concretised_procedure": {"recon_action": "fetch the login page",
+                                            "bypass_technique": "session swap"}}
+    env = _run(arun_pod(spec,
                         exec_fn=_exec(_ABSENT), runner_step_fn=symbolic_runner_step_fn,
                         triager_fn=triager, trace_fn=_no_trace))
     assert env["evidence"]["iterations"] == 2
@@ -361,11 +402,14 @@ def test_variant_threat_records_provenance():
     assert variants[1]["declined_attribute"] == "recon-action"
 
 
-def test_pod_budget_cap_terminates_only_the_pod(monkeypatch):
+def test_pod_budget_cap_degrades_the_variant_instead_of_the_budget_terminal(monkeypatch):
+    # Lifecycle v2: the triager node knows the lap cap through `variant_allowed`
+    # BEFORE the decision, so a variant-insisting triager degrades to the honest
+    # domain terminal - the harness budget terminal is only a backstop.
     monkeypatch.setattr("polymerhus.attack.hunting.pod.graph.HUNT_POD_MAX_ITERS", 3)
     lap = {"n": 0}
 
-    def triager(spec, obs, messages, log):
+    def triager(spec, obs, log, facts):
         # A DISTINCT derived detail each lap: the S5 8.6 duplicate guard refuses
         # a repeated (basis, detail), so a degenerate re-mint would terminate
         # before the budget instead of exercising the cap.
@@ -375,10 +419,13 @@ def test_pod_budget_cap_terminates_only_the_pod(monkeypatch):
                 "variant_spec": {**spec, "rationale": f"bypass attempt {lap['n']}"},
                 "feedback": "keep trying"}
 
-    env = _run(arun_pod({**VALID_SPEC, "verification_symptoms": ["reflects the marker"]},
+    spec = {**VALID_SPEC, "verification_symptoms": ["reflects the marker"],
+            "skill_concretised_procedure": {"recon_action": "fetch the login page",
+                                            "bypass_technique": "session swap"}}
+    env = _run(arun_pod(spec,
                         exec_fn=_exec(_ABSENT), runner_step_fn=symbolic_runner_step_fn,
                         triager_fn=triager, trace_fn=_no_trace))
-    assert env["evidence"]["terminal_reason"] == "budget-timeout"
+    assert env["evidence"]["terminal_reason"] == "no-symptom-evidence"
     assert env["evidence"]["clean"] is False
     assert env["evidence"]["iterations"] == 3
 
@@ -391,7 +438,7 @@ def test_dedup_one_execution_per_identical_probe():
         RunnerStep(action="conclude", observation_note="done"),
     ]
 
-    def triager(spec, obs, messages, log):
+    def triager(spec, obs, log, facts):
         return {"action": "terminate", "verdict": "unsuccessful",
                 "terminal_reason": "space-exhausted", "clean": True}
 
@@ -405,28 +452,38 @@ def test_runner_infeasible_is_an_init_gate_with_evidence():
     steps = [RunnerStep(action="conclude", infeasible=True,
                         unverified=["no WAF on /api/a could not be confirmed"])]
     env = _run(arun_pod(VALID_SPEC, exec_fn=_exec(_OK), runner_step_fn=_scripted(steps),
-                        triager_fn=None, trace_fn=_no_trace))
+                        triager_fn=_v2_confirmed, trace_fn=_no_trace))
     assert env["verdict"] == "unsuccessful"
     assert env["evidence"]["terminal_reason"] == "technical-infeasibility"
     assert any("WAF" in v for v in env["evidence"]["init_validation"])
 
 
-def test_a_productive_runner_exhaustion_lands_a_clean_space_exhausted():
-    """S5 8.5: a stretch that DID author and execute a probe, then concludes
-    exhausted with a clean trail, keeps the still-reachable clean
-    `space-exhausted` terminal (the no-probe variant is the impaired branch)."""
+def test_a_productive_runner_exhaustion_routes_to_the_triager():
+    """Lifecycle v2: a stretch that DID author and execute a probe, then
+    concludes exhausted, routes to the TRIAGER - the exhausted-with-observations
+    terminal is a triager decision, never a harness trail grep. The triager
+    here claims a clean `space-exhausted`, which the finalizer renders."""
     steps = [RunnerStep(action="tool_call", tool="exec", command="curl -k -sS https://t/"),
              RunnerStep(action="conclude", exhausted=True,
                         observation_note="no new probe derivable")]
+    seen = []
+
+    def spaced(spec, obs, log, facts):
+        seen.append(dict(facts))
+        return {"action": "terminate", "verdict": "unsuccessful",
+                "terminal_reason": "space-exhausted", "clean": True,
+                "note": "the space is covered"}
+
     env = _run(arun_pod({**VALID_SPEC, "verification_symptoms": ["reflects the marker"]},
                         exec_fn=_exec(_ABSENT), runner_step_fn=_scripted(steps),
-                        triager_fn=None, trace_fn=_no_trace))
+                        triager_fn=spaced, trace_fn=_no_trace))
+    assert seen and seen[-1]["runner_exhausted"] is True
     assert env["evidence"]["terminal_reason"] == "space-exhausted"
     assert env["evidence"]["clean"] is True
 
 
 def test_clean_false_when_triager_reports_defence():
-    def triager(spec, obs, messages, log):
+    def triager(spec, obs, log, facts):
         return {"classification": "infeasibility-signal", "action": "terminate",
                 "verdict": "unsuccessful", "terminal_reason": "specific-defence-prevention",
                 "clean": False, "note": "WAF soft-blocked every probe"}
@@ -456,7 +513,7 @@ def test_runner_seam_observes_pod_runner_session_inside_a_hunt():
 
     with hunt_session("run-1", "hunt-A"):
         env = _run(arun_pod(VALID_SPEC, exec_fn=_exec(_OK), runner_step_fn=runner,
-                            triager_fn=None, trace_fn=_no_trace, spec_id=SPEC_ID))
+                            triager_fn=_v2_confirmed, trace_fn=_no_trace, spec_id=SPEC_ID))
 
     assert env["verdict"] == "successful"
     ctx = seen[0]
@@ -478,7 +535,7 @@ def test_runner_seam_sees_a_task_local_default_outside_a_hunt():
         return symbolic_runner_step_fn(spec, messages, tool_calls)
 
     env = _run(arun_pod(VALID_SPEC, exec_fn=_exec(_OK), runner_step_fn=runner,
-                        triager_fn=None, trace_fn=_no_trace))
+                        triager_fn=_v2_confirmed, trace_fn=_no_trace))
 
     assert env["verdict"] == "successful"
     ctx = seen[0]
@@ -517,21 +574,18 @@ def test_triager_seam_observes_pod_triager_session_inside_a_hunt():
 # --- T6 (#156): BaseMessage + add_messages channels (D84-4) -------------------
 
 def test_runner_channel_accumulates_appended_messages_in_order():
-    """D84-4: the message channels are `Annotated[list[BaseMessage],
+    """D84-4: the runner message channel is `Annotated[list[BaseMessage],
     add_messages]` - every node deposits ONLY its turn's new messages and the
     reducer appends them onto the channel, so the agentic loop's turns
     ACCUMULATE (order preserved, types intact) instead of replacing the channel
-    wholesale."""
+    wholesale. Lifecycle v2: the triager owns its OWN thread, so there is no
+    triager message channel to assert."""
     from langchain_core.messages import BaseMessage
 
     from polymerhus.attack.hunting.pod.graph import build_pod_graph
-    from polymerhus.attack.hunting.pod.prompts import (
-        load_pod_runner_skill,
-        load_pod_triager_skill,
-    )
+    from polymerhus.attack.hunting.pod.prompts import load_pod_runner_skill
 
     RUNNER_SYSTEM = load_pod_runner_skill()
-    TRIAGER_SYSTEM = load_pod_triager_skill()
 
     steps = iter([
         RunnerStep(action="tool_call", tool="exec", command="curl -k -sS https://t/"),
@@ -541,7 +595,7 @@ def test_runner_channel_accumulates_appended_messages_in_order():
     def runner(spec, messages, tool_calls):
         return next(steps)
 
-    def triager(spec, obs, messages, log):
+    def triager(spec, obs, log, facts):
         return {"action": "terminate", "verdict": "unsuccessful",
                 "terminal_reason": "space-exhausted", "clean": True}
 
@@ -556,11 +610,6 @@ def test_runner_channel_accumulates_appended_messages_in_order():
     assert "action: tool_call" in msgs[2].content            # turn 1's proposal
     assert "TOOL RESULT" in msgs[3].content                  # the recorded observation
     assert "action: conclude" in msgs[4].content             # turn 2: appended, not replaced
-
-    tmsgs = final["triager_messages"]                        # the critic's own channel
-    assert [m.type for m in tmsgs] == ["system", "human", "ai"]
-    assert tmsgs[0].content == TRIAGER_SYSTEM
-    assert "terminate" in tmsgs[2].content
 
 
 def test_duplicate_content_messages_dedup_under_same_id_in_the_channel():
@@ -578,7 +627,7 @@ def test_duplicate_content_messages_dedup_under_same_id_in_the_channel():
     def runner(spec, messages, tool_calls):
         return next(steps)
 
-    def triager(spec, obs, messages, log):
+    def triager(spec, obs, log, facts):
         return {"action": "terminate", "verdict": "unsuccessful",
                 "terminal_reason": "space-exhausted", "clean": True}
 
@@ -600,16 +649,17 @@ def test_seams_receive_curated_dict_views_with_role_and_content():
     """D84-4: the message-type conversion happens at the graph-channel boundary -
     the channel is BaseMessage, but every seam still receives its CURATED DICT
     views ({role, content}) exactly like before; the type boundary never leaks
-    into the seams."""
-    runner_views, triager_views = [], []
+    into the seams. Lifecycle v2: the triager seam's new message is the ASSESS
+    packet (a plain string, composed from the log), and the runner keeps its
+    curated dict views."""
+    runner_views, triager_facts = [], []
 
     def runner(spec, messages, tool_calls):
         runner_views.append(list(messages))
         return symbolic_runner_step_fn(spec, messages, tool_calls)
 
-    def triager(spec, obs, messages, log):
-        assert all(isinstance(m, dict) for m in messages)
-        triager_views.append(list(messages))
+    def triager(spec, obs, log, facts):
+        triager_facts.append(dict(facts))
         return {"action": "terminate", "verdict": "unsuccessful",
                 "terminal_reason": "space-exhausted", "clean": True}
 
@@ -617,12 +667,12 @@ def test_seams_receive_curated_dict_views_with_role_and_content():
                         exec_fn=_exec(_ABSENT), runner_step_fn=runner,
                         triager_fn=triager, trace_fn=_no_trace))
     assert env["verdict"] == "unsuccessful"
-    assert runner_views and triager_views
+    assert runner_views and triager_facts
     for view in runner_views[0]:
         assert "role" in view and "content" in view
         assert view["role"] in ("system", "human", "ai", "tool")
-    assert triager_views[0][0]["role"] == "system"     # the critic sees its own system prompt
-    assert all("role" in v and "content" in v for v in triager_views[0])
+    # The triager seam takes the typed facts record, not a curated view.
+    assert triager_facts[0]["thread_id"]
 
 
 # --- T7 (#183): the pod owns the persistence of its OWN terminal result ---------
@@ -636,7 +686,7 @@ def test_terminal_export_persists_to_spec_run_id(tmp_path):
 
     store = PodMemoryStore(tmp_path)
     env = _run(arun_pod(VALID_SPEC, exec_fn=_exec(_OK), runner_step_fn=symbolic_runner_step_fn,
-                        triager_fn=None, trace_fn=_no_trace, memory_store=store,
+                        triager_fn=_v2_confirmed, trace_fn=_no_trace, memory_store=store,
                         spec_id=SPEC_ID, run_id="run-42"))
     assert env["verdict"] == "successful"
     persisted = store.read_pod_export(SPEC_ID, "run-42")
@@ -657,7 +707,7 @@ def test_export_rerun_overwrites_a_harness_export(tmp_path):
         "evidence": {"terminal_reason": "node-timeout", "clean": False},
     })
     env1 = _run(arun_pod(VALID_SPEC, exec_fn=_exec(_OK), runner_step_fn=symbolic_runner_step_fn,
-                         triager_fn=None, trace_fn=_no_trace, memory_store=store,
+                         triager_fn=_v2_confirmed, trace_fn=_no_trace, memory_store=store,
                          spec_id=SPEC_ID, run_id="run-1"))
     assert env1["verdict"] == "successful"
     assert store.read_pod_export(SPEC_ID, "run-1") == env1
@@ -684,10 +734,243 @@ def test_export_write_failure_degrades_to_the_envelope(tmp_path):
 
     store = _FailingStore(tmp_path)
     env = _run(arun_pod(VALID_SPEC, exec_fn=_exec(_OK), runner_step_fn=symbolic_runner_step_fn,
-                        triager_fn=None, trace_fn=_no_trace, memory_store=store,
+                        triager_fn=_v2_confirmed, trace_fn=_no_trace, memory_store=store,
                         spec_id=SPEC_ID, run_id="run-42"))
     assert env["verdict"] == "successful"
     assert env["evidence"]["terminal_reason"] == "symptom-confirmed"
+
+
+# --- the lifecycle v2 pod wiring (slice 8) -------------------------------------
+
+def _terminate_v2(spec, obs, log, facts, seen=None):
+    """A lifecycle-v2 triager fake with the NEW seam shape: the facts are an
+    explicit argument."""
+    if seen is not None:
+        seen.append(dict(facts))
+    return {"action": "terminate", "verdict": "unsuccessful",
+            "terminal_reason": "no-symptom-evidence", "clean": False,
+            "note": "impaired observations"}
+
+
+def test_the_triager_seam_receives_the_harness_facts():
+    seen = []
+    spec = {**VALID_SPEC,
+            "skill_concretised_procedure": {
+                "recon_action": "fetch the login page",
+                "bypass_technique": "session swap"}}
+    env = _run(arun_pod(spec, exec_fn=_exec(_ABSENT),
+                        runner_step_fn=symbolic_runner_step_fn,
+                        triager_fn=lambda *a, **k: _terminate_v2(*a, seen=seen),
+                        trace_fn=_no_trace))
+    assert seen, "the v2 seam ran"
+    facts = seen[-1]
+    assert facts["lap"] == 1
+    assert facts["thread_id"]
+    assert facts["runner_failed"] is False
+    assert facts["variant_allowed"] is True
+    assert facts["runner_terminated"] is None
+
+
+def test_a_spec_without_a_mintable_procedure_disallows_variants():
+    seen = []
+    env = _run(arun_pod(VALID_SPEC, exec_fn=_exec(_ABSENT),
+                        runner_step_fn=symbolic_runner_step_fn,
+                        triager_fn=lambda *a, **k: _terminate_v2(*a, seen=seen),
+                        trace_fn=_no_trace))
+    assert seen[-1]["variant_allowed"] is False
+    assert env["verdict"] == "unsuccessful"
+
+
+def test_runner_failed_is_a_harness_fact_from_the_observation():
+    seen = []
+    # An exec failure the runner recorded: an error code names a failed
+    # execution, whatever the triager claims.
+    def failing(command, timeout_s):
+        return ExecResult(stdout="", stderr="boom", returncode=1,
+                          error_code="EXEC_FAILED", error_message="boom",
+                          duration_ms=1)
+
+    env = _run(arun_pod(VALID_SPEC, exec_fn=failing,
+                        runner_step_fn=symbolic_runner_step_fn,
+                        triager_fn=lambda *a, **k: _terminate_v2(*a, seen=seen),
+                        trace_fn=_no_trace))
+    assert seen[-1]["runner_failed"] is True
+    assert env["verdict"] == "unsuccessful"
+
+
+def test_an_exhausted_stretch_with_observations_routes_to_the_triager():
+    seen = []
+
+    # First stretch: author and run one probe (an observation lands), then
+    # conclude exhausted.
+    runner = _scripted([
+        RunnerStep(action="tool_call", tool="exec",
+                   command="curl -k https://svc/search?q=marker"),
+        RunnerStep(action="conclude", exhausted=True,
+                   observation_note="nothing new derivable"),
+    ])
+
+    env = _run(arun_pod(VALID_SPEC, exec_fn=_exec(_ABSENT),
+                        runner_step_fn=runner,
+                        triager_fn=lambda *a, **k: _terminate_v2(*a, seen=seen),
+                        trace_fn=_no_trace))
+    # The stretch observed something (the authored probe), so the triager owns
+    # the terminal; the harness exhaustion is a fact, not a terminal.
+    assert seen, "the triager judged the exhausted stretch"
+    assert seen[-1]["runner_exhausted"] is True
+    assert env["verdict"] == "unsuccessful"
+    assert env["evidence"]["terminal_reason"] == "no-symptom-evidence"
+    assert "node-timeout" not in env["evidence"]["terminal_reason"]
+
+
+def test_a_no_probe_exhaustion_is_a_harness_terminal():
+    seen = []
+
+    def conclude_empty(spec, messages, tool_calls):
+        return RunnerStep(action="conclude", exhausted=True,
+                          observation_note="no probe authored")
+
+    env = _run(arun_pod(VALID_SPEC, exec_fn=_exec(_ABSENT),
+                        runner_step_fn=conclude_empty,
+                        triager_fn=lambda *a, **k: _terminate_v2(*a, seen=seen),
+                        trace_fn=_no_trace))
+    # No observation this stretch: nothing to judge, the harness terminal stands.
+    assert seen == []
+    assert env["verdict"] == "unsuccessful"
+    assert env["evidence"]["terminal_reason"] == "no-symptom-evidence"
+    assert env["evidence"]["clean"] is False
+
+
+def test_a_runner_kill_routes_to_the_triager_with_runner_terminated():
+    seen = []
+
+    async def hung(spec, messages, tool_calls):
+        await asyncio.sleep(30)
+
+    env = _run(arun_pod(
+        VALID_SPEC, exec_fn=_exec(_OK), runner_step_fn=hung,
+        triager_fn=lambda *a, **k: _terminate_v2(*a, seen=seen),
+        trace_fn=_no_trace,
+        timeouts=PodTimeouts(node_idle_s=0.01, node_run_s=None,
+                             tool_idle_s=None, tool_run_s=None)))
+    # The kill routes to the triager for a final pass: the control-plane fact
+    # kills variant minting, and the triager still evaluates the last execution.
+    assert seen, "the triager ran after the kill"
+    assert seen[-1]["runner_terminated"] == "node-timeout"
+    assert seen[-1]["variant_allowed"] is False
+    assert env["verdict"] == "unsuccessful"
+    assert env["evidence"]["terminal_reason"] == "no-symptom-evidence"
+    assert env["evidence"]["control_plane_end_reason"] == "node-timeout"
+
+
+def test_a_triager_failure_after_a_kill_leaves_the_harness_terminal_standing():
+    async def hung(spec, messages, tool_calls):
+        await asyncio.sleep(30)
+
+    def broken(spec, obs, log, facts):
+        raise RuntimeError("no bound pod session for the triager")
+
+    env = _run(arun_pod(
+        VALID_SPEC, exec_fn=_exec(_OK), runner_step_fn=hung,
+        triager_fn=broken, trace_fn=_no_trace,
+        timeouts=PodTimeouts(node_idle_s=0.01, node_run_s=None,
+                             tool_idle_s=None, tool_run_s=None)))
+    # The triager could not evaluate, so the control-plane fact is the honest
+    # export - never a fabricated domain verdict.
+    assert env["verdict"] == "unsuccessful"
+    assert env["evidence"]["terminal_reason"] == "node-timeout"
+    assert env["evidence"]["clean"] is False
+    assert "control_plane_end_reason" not in env["evidence"]
+
+
+def test_the_budget_cap_degrades_the_variant_instead_of_the_budget_terminal():
+    seen = []
+
+    def insist_variant(spec, obs, log, facts):
+        seen.append(dict(facts))
+        return {"action": "variant", "classification": "payload-vector",
+                "declined_attribute": "payload-vector",
+                "variant_spec": {**spec, "rationale": "untested vector"},
+                "feedback": "try the vector", "note": "one more"}
+
+    env = _run(arun_pod({**VALID_SPEC, "verification_symptoms": ["never reflected"]},
+                        exec_fn=_exec(_ABSENT),
+                        runner_step_fn=symbolic_runner_step_fn,
+                        triager_fn=insist_variant, trace_fn=_no_trace,
+                        timeouts=None))
+    # The triage machine already knows the lap cap: variant_allowed rides the
+    # facts, so a variant decision degrades to the honest domain terminal
+    # instead of the harness budget-timeout.
+    assert env["verdict"] == "unsuccessful"
+    assert env["evidence"]["terminal_reason"] == "no-symptom-evidence"
+    assert "budget-timeout" != env["evidence"]["terminal_reason"]
+    assert seen[-1]["variant_allowed"] is False
+
+
+def test_the_interpretation_records_the_phase_path():
+    env = _run(arun_pod(VALID_SPEC, exec_fn=_exec(_ABSENT),
+                        runner_step_fn=symbolic_runner_step_fn,
+                        triager_fn=_terminate_v2, trace_fn=_no_trace))
+    interpretations = env["evidence"]["interpretations"]
+    assert interpretations, "the triage decision was recorded"
+    # The additive phase-path field exists on every interpretation; the
+    # production harness stamps the walked chain, a contract-tier fake is
+    # one-shot and leaves it empty (the production stamping is pinned in
+    # test_react_seams.py).
+    assert "phase_path" in interpretations[-1]
+
+
+def test__clean_from_trail_is_gone():
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[3]
+              / "src/polymerhus/attack/hunting/pod/graph.py").read_text()
+    assert "_clean_from_trail" not in source
+
+
+def test_a_degraded_kb_no_longer_forces_clean_false():
+    # The #304 guard keeps its terminal-reason downgrade but no longer touches
+    # the triager's clean: degraded KB is a sufficiency condition, not an
+    # integrity condition. (The KB-tool-level coverage lives in
+    # test_kb_degradation_guard.py; here a triager claims a clean exhaustion
+    # and the clean value survives the graph.)
+    def spaced(spec, obs, log, facts):
+        return {"action": "terminate", "verdict": "unsuccessful",
+                "terminal_reason": "space-exhausted", "clean": True,
+                "note": "space covered"}
+
+    env = _run(arun_pod(VALID_SPEC, exec_fn=_exec(_ABSENT),
+                        runner_step_fn=symbolic_runner_step_fn,
+                        triager_fn=spaced, trace_fn=_no_trace))
+    assert env["verdict"] == "unsuccessful"
+    assert env["evidence"]["terminal_reason"] == "space-exhausted"
+    assert env["evidence"]["clean"] is True
+
+
+def test_the_assessment_clean_rides_into_the_terminal():
+    def unclean_terminate(spec, obs, log, facts):
+        return {"action": "terminate", "verdict": "unsuccessful",
+                "terminal_reason": "no-symptom-evidence", "clean": False,
+                "note": "blocked observations"}
+
+    env = _run(arun_pod(VALID_SPEC, exec_fn=_exec(_ABSENT),
+                        runner_step_fn=symbolic_runner_step_fn,
+                        triager_fn=unclean_terminate, trace_fn=_no_trace))
+    assert env["evidence"]["clean"] is False
+
+
+def test_a_confirmed_symptom_still_reaches_the_domain_terminal():
+    def confirmed(spec, obs, log, facts):
+        return {"action": "terminate", "verdict": "successful",
+                "terminal_reason": "symptom-confirmed", "clean": True,
+                "note": "the marker is reflected"}
+
+    env = _run(arun_pod(VALID_SPEC, exec_fn=_exec(_OK),
+                        runner_step_fn=symbolic_runner_step_fn,
+                        triager_fn=confirmed, trace_fn=_no_trace))
+    assert env["verdict"] == "successful"
+    assert env["evidence"]["terminal_reason"] == "symptom-confirmed"
+    assert env["evidence"]["clean"] is True
 
 
 # --- pod control-plane failure handling (2026-10-26) -------------------------
@@ -859,7 +1142,7 @@ def test_a_resumed_pod_skips_an_executed_probe(tmp_path):
     ]
     calls = []
 
-    def triager(spec, obs, messages, log):
+    def triager(spec, obs, log, facts):
         return {"action": "terminate", "verdict": "unsuccessful",
                 "terminal_reason": "space-exhausted", "clean": True}
 

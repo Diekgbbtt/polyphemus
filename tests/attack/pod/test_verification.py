@@ -174,7 +174,17 @@ def test_decision_vocabulary_is_enforced():
                              "clean": "yes"})
     assert any("verdict" in v for v in bad)
     assert any("terminal_reason" in v for v in bad)  # the OLD 4-value name is rejected
-    assert any("clean" in v for v in bad)
+
+
+def test_the_decision_validation_owns_no_clean_field():
+    # The lifecycle v2 ownership model: the decision gate carries no clean; the
+    # graph takes the pod's clean from the accepted assessment. The validation
+    # therefore owns the verdict and the terminal reason only.
+    assert validate_decision({"verdict": "unsuccessful",
+                              "terminal_reason": "no-symptom-evidence"}) == []
+    assert validate_decision({"verdict": "unsuccessful",
+                              "terminal_reason": "no-symptom-evidence",
+                              "clean": "not-a-bool"}) == []
 
 
 # --- the failure taxonomy (2026-10-26) ---------------------------------------

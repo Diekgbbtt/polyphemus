@@ -23,6 +23,7 @@ from polymerhus.attack.hunting.pod.llm import (
     bind_pod_session,
 )
 from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore, spec_identifier
+from polymerhus.attack.hunting.pod.prompts import load_pod_runner_skill
 from polymerhus.recon.domain.types import ExecResult
 
 SPEC_ID = spec_identifier("sqli", [{"axis": "technique", "value": "blind"}, {"axis": "payload-vector", "value": "boolean"}])
@@ -128,17 +129,32 @@ def test_spec_skills_render_into_the_pod_triagers_system_prompt(tmp_path):
     )
 
     async def _drive():
+        from polymerhus.attack.hunting.pod.triage_state import TriageFacts
+
         with bind_pod_session("run-x", "", SPEC_ID, role_id=POD_TRIAGER_ROLE, harness=hc):
+            facts = TriageFacts(
+                runner_failed=False, runner_exhausted=False,
+                runner_terminated=None, variant_allowed=True,
+                lap=1, thread_id="pod:triager:" + SPEC_ID)
             return await default_triager_fn(
-                _spec(skills=["csrf"]), None,
-                [{"role": "human", "content": "triager delta"}], log)
+                _spec(skills=["csrf"]), None, log, facts)
 
     asyncio.run(_drive())
 
     assert seen, "the triager must have taken a turn"
+    # Lifecycle v2 (Q5): the bound-skill LISTING rides the first HUMAN message
+    # (the ASSESS packet); the system prompt is the static contract and never
+    # carries a skill name.
     system = _system_messages(seen)[0]
-    assert "`csrf`" in system
-    assert "`lightrag-query`" in system
+    for name in ("csrf", "lightrag-query", "steel-browser"):
+        assert name not in system, name
+    humans = [m for m in seen[0] if m.type == "human"]
+    assert humans, "the ASSESS packet rides a human message"
+    # The LAST human message is THIS decision's packet (the shared module
+    # checkpointer may serve a prior test's thread).
+    packet = humans[-1].content
+    for name in ("csrf", "lightrag-query", "steel-browser"):
+        assert name in packet, name
 
 
 def test_a_malformed_spec_skills_field_is_init_rejected_not_a_crash(tmp_path):
@@ -215,7 +231,7 @@ def _variant_triager(variant_spec: dict):
 
     laps = {"n": 0}
 
-    def triager_fn(spec, observation, messages, log):
+    def triager_fn(spec, observation, log, facts):
         laps["n"] += 1
         if laps["n"] == 1:
             return {
@@ -234,13 +250,61 @@ def _variant_triager(variant_spec: dict):
     return triager_fn
 
 
+def _triage_confirm_factory(seen: list):
+    """A role-aware factory: the runner gets the exec/conclude script; the
+    triager gets the confirm gate call (plus the closing text)."""
+
+    class _Model(BaseChatModel):
+        calls: int = 0
+
+        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+            import uuid
+
+            seen.append(list(messages))
+            self.calls += 1
+            if self.calls == 1:
+                return ChatResult(generations=[ChatGeneration(message=AIMessage(
+                    content="", tool_calls=[{
+                        "name": "submit_assessment",
+                        "args": {"symptom_confirmed": True, "runner_diverged": False,
+                                 "clean": True, "note": "the marker is reflected"},
+                        "id": "a1",
+                    }]))])
+            return ChatResult(generations=[ChatGeneration(
+                message=AIMessage(
+                    content="the assessment is submitted",
+                    id=f"close-{uuid.uuid4().hex}"))])
+
+        async def _agenerate(self, messages, stop=None, run_manager=None, **kwargs):
+            return self._generate(
+                messages,
+                stop=stop,
+                run_manager=run_manager.get_sync() if run_manager else None,
+                **kwargs,
+            )
+
+        @property
+        def _llm_type(self) -> str:
+            return "fake"
+
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+    def make(role_id):
+        return _Model()
+
+    return make
+
+
 def test_a_minted_variant_inherits_the_parent_specs_declared_skills(tmp_path):
     """The triager's variant spec replaces `state["spec"]` wholesale, so the
     symbolic layer carries the parent's declaration onto a variant that does not
     state its own - the runner's LATER stretch still renders the skill."""
     seen: list = []
+    spec = {**_spec(skills=["ssrf"]),
+            "skill_concretised_procedure": {"recon_action": "fetch the login page"}}
     env = asyncio.run(arun_pod(
-        _spec(skills=["ssrf"]), exec_fn=_exec(), trace_fn=_no_trace,
+        spec, exec_fn=_exec(), trace_fn=_no_trace,
         memory_store=PodMemoryStore(tmp_path), spec_id=SPEC_ID,
         triager_fn=_variant_triager({"rationale": "derived variant"}),
         model_factory=_exec_and_conclude_factory(seen),
@@ -250,15 +314,19 @@ def test_a_minted_variant_inherits_the_parent_specs_declared_skills(tmp_path):
     systems = _system_messages(seen)
     assert len(systems) >= 3, "two runner stretches, one model call each"
     for system in systems:
-        assert "`ssrf`" in system
+        # Lifecycle v2 (Q5): the runner's skill surface stays on the system
+        # prompt; the critic's listing moved to its first human packet.
+        assert "`ssrf`" in system or system.strip().startswith("# Role")
 
 
 def test_a_minted_variant_with_its_own_declaration_wins(tmp_path):
     """A variant that states its own `skills` replaces the inherited set: the
     later stretch renders the variant's declaration, not the parent's."""
     seen: list = []
+    spec = {**_spec(skills=["ssrf"]),
+            "skill_concretised_procedure": {"recon_action": "fetch the login page"}}
     asyncio.run(arun_pod(
-        _spec(skills=["ssrf"]), exec_fn=_exec(), trace_fn=_no_trace,
+        spec, exec_fn=_exec(), trace_fn=_no_trace,
         memory_store=PodMemoryStore(tmp_path), spec_id=SPEC_ID,
         triager_fn=_variant_triager({
             "rationale": "derived variant", "skills": ["csrf"],
@@ -267,7 +335,9 @@ def test_a_minted_variant_with_its_own_declaration_wins(tmp_path):
     ))
 
     systems = _system_messages(seen)
-    last = systems[-1]
+    runner_head = load_pod_runner_skill().splitlines()[0]
+    runner_systems = [s for s in systems if s.startswith(runner_head)]
+    last = runner_systems[-1]
     assert "`csrf`" in last
     assert "ssrf" not in last
 

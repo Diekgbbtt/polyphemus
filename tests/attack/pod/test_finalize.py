@@ -307,6 +307,30 @@ def test_a_harness_terminal_still_replaces_a_harness_terminal(tmp_path):
     assert store.read_pod_export(SPEC_ID, RUN) == envelope
 
 
+def test_the_control_plane_reason_rides_a_direct_domain_terminal(tmp_path):
+    store = PodMemoryStore(tmp_path)
+    _seed(store)
+
+    envelope = finalize_pod(
+        store=store, spec_id=SPEC_ID, run_id=RUN,
+        terminal=PodTerminal.domain(
+            verdict="unsuccessful", reason="no-symptom-evidence", clean=False,
+            control_plane_end_reason="node-timeout"),
+    )
+
+    assert envelope["evidence"]["control_plane_end_reason"] == "node-timeout"
+    assert store.read_pod_export(SPEC_ID, RUN) == envelope
+
+
+def test_a_harness_terminal_never_carries_a_control_plane_field_by_itself():
+    envelope = finalize_pod(
+        store=None, spec_id=SPEC_ID, run_id=RUN,
+        terminal=PodTerminal.infrastructure(reason="node-timeout"),
+    )
+
+    assert "control_plane_end_reason" not in envelope["evidence"]
+
+
 @pytest.mark.parametrize("existing", [
     {"evidence": {"terminal_reason": "node-timeout", "clean": False}},
     {"verdict": "", "evidence": {"terminal_reason": "node-timeout"}},

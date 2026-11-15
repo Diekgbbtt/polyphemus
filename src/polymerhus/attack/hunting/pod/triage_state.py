@@ -229,13 +229,13 @@ def detect_triage_outcome(facts: TriageFacts, assessment: dict | None,
 
 def advance_triage_state(phase: TriagePhase, outcome: TriageOutcome) -> TriagePhase:
     """The advance node's pure rule: a decision ends the machine, an advance
-    moves assess to decide. The harness sets the phase packet (the DECIDE
-    verbatim) on the advance."""
+    moves assess to decide. A defensive advance from decide stays put (a
+    wrong-phase gate call can never skip the machine past its decision)."""
     if outcome.get("kind") == "decision":
         return "done"
     if phase == "assess":
         return "decide"
-    return "done"
+    return "done" if phase != "decide" else "decide"
 
 
 __all__ = [

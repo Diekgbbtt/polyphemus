@@ -144,9 +144,11 @@ def validate_probe_chain(chain: ProbeChain | dict | None) -> list[str]:
 
 
 def validate_decision(decision: dict | None) -> list[str]:
-    """The triager-output guard: a terminal decision must carry a binary verdict,
-    a terminal_reason from the Q3-amended vocabulary, and a boolean `clean`.
-    Returns the violations (empty = conformant)."""
+    """The triager-output guard: a terminal decision must carry a binary verdict
+    and a terminal_reason from the Q3-amended vocabulary. The decision gate
+    carries NO `clean` field - the pod's clean comes from the accepted
+    assessment (the lifecycle v2 ownership model). Returns the violations
+    (empty = conformant)."""
     if not isinstance(decision, dict):
         return ["decision is not a mapping"]
     violations: list[str] = []
@@ -159,6 +161,4 @@ def validate_decision(decision: dict | None) -> list[str]:
             f"terminal_reason {reason!r} is not a triager-selectable "
             "Q3-amended vocabulary value"
         )
-    if not isinstance(decision.get("clean"), bool):
-        violations.append("clean must be a boolean")
     return violations

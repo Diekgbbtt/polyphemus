@@ -23,6 +23,12 @@ from polymerhus.attack.hunting.pod.agents import (
     symbolic_runner_step_fn,
     triager_compaction_middleware,
 )
+
+
+def _v2_confirmed(spec, obs, log, facts):
+    return {"action": "terminate", "verdict": "successful",
+            "terminal_reason": "symptom-confirmed", "clean": True,
+            "note": "verification symptom observed"}
 from polymerhus.attack.hunting.pod.llm import (
     POD_RUNNER_ROLE,
     POD_TRIAGER_ROLE,
@@ -138,7 +144,7 @@ def test_injected_runner_middleware_reaches_the_runner_seam():
         return symbolic_runner_step_fn(spec, messages, tool_calls)
 
     env = _run(arun_pod(VALID_SPEC, exec_fn=_exec(_OK), runner_step_fn=runner,
-                        triager_fn=None, trace_fn=_no_trace,
+                        triager_fn=_v2_confirmed, trace_fn=_no_trace,
                         runner_middleware=[fake]))
     assert env["verdict"] == "successful"
     assert seen and seen[0] == (fake,)
@@ -199,7 +205,7 @@ def test_disabled_compaction_default_runs_identical_and_unchanged():
         return symbolic_runner_step_fn(spec, messages, tool_calls)
 
     env = _run(arun_pod(VALID_SPEC, exec_fn=_exec(_OK), runner_step_fn=runner,
-                        triager_fn=None, trace_fn=_no_trace))
+                        triager_fn=_v2_confirmed, trace_fn=_no_trace))
     assert env["verdict"] == "successful"
     assert env["evidence"]["terminal_reason"] == "symptom-confirmed"
     assert seen and seen[0] == ()

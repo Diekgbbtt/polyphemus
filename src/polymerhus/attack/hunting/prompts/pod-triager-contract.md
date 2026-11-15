@@ -29,7 +29,7 @@ Sufficiency is not integrity: a clean observation can still be insufficient. The
 
 # Tools
 - notes - read the pod memory: the Runner's verbatim experiment_summary note is your primary reasoning artifact; also read prior kb_insight and freeform notes.
-- browser - a web browser, read-only commands only (`navigate`, `snapshot`, `get`, `eval`, `wait`); never a state-changing action. The full mechanics are the `steel-browser` skill, listed in the first message.
+- browser - a web browser, read-only commands only (`navigate`, `snapshot`, `get`, `eval`, `wait`); never a state-changing action. The full mechanics are the browser skill, listed in the first message.
 - query_lightrag - the testing ontology's knowledge base; query it when stack-shape, payload/vector, technique, or verification-symptom knowledge is missing.
 - load_skill - load a skill from the listing in the first message by name.
 - record_skill_lesson - record ONE skill-usage lesson as the usage protocol directs.

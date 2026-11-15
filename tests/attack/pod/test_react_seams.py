@@ -23,19 +23,11 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 import polymerhus.attack.hunting.pod.graph as graph_mod
 from polymerhus.attack.hunting.pod import arun_pod, build_pod_graph
 from polymerhus.attack.hunting.pod.agents import (
-    DivergenceDecision,
-    TerminalDecision,
-    TriageDecision,
-    default_divergence_fn,
     default_runner_step_fn,
-    default_terminal_fn,
-    default_triage_fn,
     default_triager_fn,
 )
 from polymerhus.attack.hunting.pod.prompts import (
-    load_pod_divergence_skill,
-    load_pod_terminal_skill,
-    load_pod_triage_skill,
+    load_pod_triager_contract,
 )
 from polymerhus.attack.hunting.pod.context import (
     ExperimentLog,
@@ -72,10 +64,18 @@ class _FakeModel(BaseChatModel):
     idx: dict = {}
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        import uuid
+
         i = self.idx.get("i", 0)
         self.idx["i"] = i + 1
-        return ChatResult(generations=[ChatGeneration(
-            message=self.replies[min(i, len(self.replies) - 1)])])
+        msg = self.replies[min(i, len(self.replies) - 1)]
+        # A provider stamps a unique id on every response; a scripted fake
+        # must too. langgraph's `add_messages` derives the id from the content
+        # when it is absent, so a byte-identical reply on a RESUMED thread
+        # would replace the prior one in place instead of appending - the
+        # re-dispatch path would never see the fresh gate call.
+        msg = msg.model_copy(deep=True, update={"id": f"fake-{i}-{uuid.uuid4().hex}"})
+        return ChatResult(generations=[ChatGeneration(message=msg)])
 
     @property
     def _llm_type(self):
@@ -89,6 +89,35 @@ def _factory(replies):
     def make(role_id):
         return _FakeModel(replies=list(replies), idx={})
     return make
+
+
+def _role_factory(*, runner_replies, triager_replies):
+    """A role-aware model factory with a SHARED per-role cursor: the pod's
+    `_build_agent` builds a fresh model per turn, so the script position must
+    survive across the harness's turns (the conversation state is the thread;
+    the model identity is stateless)."""
+    cursor = {"pod_runner": 0, "pod_triager": 0}
+
+    def make(role_id):
+        key = role_id if role_id in cursor else "pod_triager"
+        script = runner_replies if key == "pod_runner" else triager_replies
+        i = cursor[key]
+        cursor[key] = i + 1
+        return _FakeModel(replies=list(script), idx={"i": i})
+    return make
+
+
+TRIAGE_CONFIRM = [
+    AIMessage(content="", tool_calls=[
+        {"name": "submit_assessment", "args": {"symptom_confirmed": True,
+                                               "runner_diverged": False,
+                                               "clean": True,
+                                               "note": "the marker is reflected"},
+         "id": "a1"}]),
+    # The closing turn's reply: the machine is done, so the model answers in
+    # plain text and the thread never ends on a dangling gate call.
+    AIMessage(content="the assessment is submitted; the pod terminates"),
+]
 
 
 REACT_EXEC_AND_CONCLUDE = [
@@ -229,14 +258,16 @@ def test_production_seams_are_async():
 
 # --- the production Triager seam: note-reading stateful_turn -------------------
 
-def _drive_triager(spec, hc, log):
+def _drive_triager(spec, hc, log, facts=None):
+    from polymerhus.attack.hunting.pod.triage_state import TriageFacts
+
     async def _drive():
         with bind_pod_session("run-x", "", SPEC_ID, role_id="pod_triager", harness=hc):
-            # The graph passes the composed delta as DICT views (the seam's
-            # boundary conversion is `_dicts_to_lc`) - mirror that here.
-            return await default_triager_fn(spec, None,
-                                            [{"role": "human",
-                                              "content": "triager delta"}], log)
+            resolved = facts or TriageFacts(
+                runner_failed=False, runner_exhausted=False,
+                runner_terminated=None, variant_allowed=True,
+                lap=1, thread_id="pod:triager:" + SPEC_ID)
+            return await default_triager_fn(spec, None, log, resolved)
     return _drive()
 
 
@@ -249,166 +280,34 @@ def test_triager_seam_reads_the_note_and_returns_a_decision(tmp_path, monkeypatc
                                             "raw_observations": [], "interpretations": [],
                                             "executed": []})
     store.write_variant_summary(spec_id, 0, "the verbatim consolidation")
-    # The #99 negotiation seam (#147): a no-tools schema turn resolves the pod
-    # role's env model key and capability profile. Point it at a tool-calling-
-    # only profile so the fake's TriagerDecision tool_calls become the
-    # structured output (ToolStrategy) instead of an unmet json_schema probe.
     monkeypatch.setenv("LLM_POD_TRIAGER", "openrouter:some/model")
-    import polymerhus.app.llm.session as S
-
-    monkeypatch.setattr(
-        S, "resolve_capability",
-        lambda provider, model: type("_P", (), {
-            "supports_structured_output": False, "supports_tool_calling": True})())
+    # The v2 harness drives the gate calls: one ASSESS turn (negative, clean),
+    # then one DECIDE turn (the honest space-exhausted terminal).
     hc = PodHarnessContext(exec_fn=_exec(_OK), memory_store=store,
                            spec_id=spec_id, log=log, variant_ref="v0",
-                           model_factory=_factory([AIMessage(content="", tool_calls=[
-                               {"name": "TriagerDecision", "id": "c1", "args": {
-                                   "classification": "symptom-absent",
-                                   "action": "terminate", "verdict": "unsuccessful",
-                                   "terminal_reason": "space-exhausted", "clean": True,
-                                   "note": "third-party miner verdict"}}])]))
+                           model_factory=_role_factory(
+                               runner_replies=[AIMessage(content="unused")],
+                               triager_replies=[
+                                   AIMessage(content="", tool_calls=[
+                                       {"name": "submit_assessment", "id": "a1", "args": {
+                                           "symptom_confirmed": False,
+                                           "runner_diverged": False,
+                                           "clean": True,
+                                           "note": "third-party assessment"}}]),
+                                   AIMessage(content="", tool_calls=[
+                                       {"name": "submit_decision", "id": "d1", "args": {
+                                           "action": "terminate",
+                                           "verdict": "unsuccessful",
+                                           "terminal_reason": "space-exhausted",
+                                           "note": "third-party miner verdict"}}]),
+                               ]))
     decision = _run(_drive_triager(SPEC, hc, log))
     assert decision["action"] == "terminate"
     assert decision["terminal_reason"] == "space-exhausted"
     assert decision["clean"] is True
     assert "third-party miner verdict" in decision["note"]
+    assert decision["phase_path"] == "assess>decide>done"
 
-
-def test_triager_seam_normalises_a_dict_structured_response(tmp_path, monkeypatch):
-    """The staged triage shares one thread across four schemas, so a dict can
-    survive from a previous stage. The miner must validate it into
-    TriagerDecision, never call `model_dump` on the dict."""
-    log = ExperimentLog()
-    store = PodMemoryStore(tmp_path)
-    monkeypatch.setenv("LLM_POD_TRIAGER", "openrouter:some/model")
-    import polymerhus.app.llm.session as S
-
-    monkeypatch.setattr(
-        S, "stateful_turn",
-        lambda *a, **kw: {
-            "classification": "symptom-absent",
-            "action": "terminate",
-            "verdict": "unsuccessful",
-            "terminal_reason": "space-exhausted",
-            "clean": True,
-            "note": "dict response from the current turn",
-        })
-    hc = PodHarnessContext(exec_fn=_exec(_OK), memory_store=store,
-                           spec_id=SPEC_ID, log=log, variant_ref="v0",
-                           model_factory=_factory([]))
-
-    decision = _run(_drive_triager(SPEC, hc, log))
-
-    assert decision["terminal_reason"] == "space-exhausted"
-    assert decision["clean"] is True
-    assert "triager degraded" not in decision["note"]
-
-
-def _drive_stage(stage_fn, spec, hc, log, delta="stage delta"):
-    async def _drive():
-        with bind_pod_session("run-x", "", SPEC_ID, role_id=POD_TRIAGER_ROLE,
-                              harness=hc):
-            return await stage_fn(
-                spec, None, [{"role": "human", "content": delta}], log)
-    return _drive()
-
-
-def _stage_spy(seen):
-    def fake_stateful(role, thread, messages, *, checkpointer, schema=None, **kw):
-        seen.update(schema=schema, tools=tuple(kw.get("tools") or ()),
-                    system_prompt=kw.get("system_prompt"),
-                    messages=list(messages), context=kw.get("context"))
-        return schema() if schema is not None else None
-
-    return fake_stateful
-
-
-def test_triage_turn_binds_no_tools_and_the_compact_schema(tmp_path, monkeypatch):
-    """Stage A's fixed surface: the compact TriageDecision schema and NO tools -
-    the tool-description block and the skill index are not paid on the first
-    call."""
-    import polymerhus.app.llm.session as S
-
-    seen = {}
-    monkeypatch.setattr(S, "stateful_turn", _stage_spy(seen))
-    hc = PodHarnessContext(
-        exec_fn=_exec(_OK), memory_store=PodMemoryStore(tmp_path), spec_id=SPEC_ID,
-        log=ExperimentLog(), variant_ref="v0", model_factory=_factory([]))
-    result = _run(_drive_stage(default_triage_fn, SPEC, hc, hc.log))
-
-    assert seen["schema"] is TriageDecision
-    assert seen["tools"] == ()
-    assert seen["context"] is None
-    assert seen["system_prompt"] == load_pod_triage_skill()
-    assert result["symptom_confirmed"] is False
-
-
-def test_divergence_turn_binds_no_tools_and_the_compact_schema(tmp_path, monkeypatch):
-    import polymerhus.app.llm.session as S
-
-    seen = {}
-    monkeypatch.setattr(S, "stateful_turn", _stage_spy(seen))
-    hc = PodHarnessContext(
-        exec_fn=_exec(_OK), memory_store=PodMemoryStore(tmp_path), spec_id=SPEC_ID,
-        log=ExperimentLog(), variant_ref="v0", model_factory=_factory([]))
-    result = _run(_drive_stage(default_divergence_fn, SPEC, hc, hc.log))
-
-    assert seen["schema"] is DivergenceDecision
-    assert seen["tools"] == ()
-    assert seen["system_prompt"] == load_pod_divergence_skill()
-    assert result["runner_diverged"] is False
-
-
-def test_terminal_turn_binds_no_tools_and_the_compact_schema(tmp_path, monkeypatch):
-    import polymerhus.app.llm.session as S
-
-    seen = {}
-    monkeypatch.setattr(S, "stateful_turn", _stage_spy(seen))
-    hc = PodHarnessContext(
-        exec_fn=_exec(_OK), memory_store=PodMemoryStore(tmp_path), spec_id=SPEC_ID,
-        log=ExperimentLog(), variant_ref="v0", model_factory=_factory([]))
-    result = _run(_drive_stage(default_terminal_fn, SPEC, hc, hc.log))
-
-    assert seen["schema"] is TerminalDecision
-    assert seen["tools"] == ()
-    assert seen["system_prompt"] == load_pod_terminal_skill()
-    assert result["terminal_reason"] == "no-symptom-evidence"
-
-
-def test_stage_c_turn_keeps_the_full_tool_surface(tmp_path, monkeypatch):
-    """The bounded variant miner keeps the full skill + KB + note surface; only
-    the stages before it are tool-free."""
-    log = ExperimentLog()
-    store = PodMemoryStore(tmp_path)
-    store.write_experiment_log(SPEC_ID, 0, {"order": 0, "variant_ref": "v0",
-                                            "raw_observations": [], "interpretations": [],
-                                            "executed": []})
-    store.write_variant_summary(SPEC_ID, 0, "the verbatim consolidation")
-    seen: list = []
-    monkeypatch.setenv("LLM_POD_TRIAGER", "openrouter:some/model")
-    import polymerhus.app.llm.session as S
-
-    monkeypatch.setattr(
-        S, "resolve_capability",
-        lambda provider, model: type("_P", (), {
-            "supports_structured_output": False, "supports_tool_calling": True})())
-    replies = [AIMessage(content="", tool_calls=[
-        {"name": "TriagerDecision", "id": "c1", "args": {
-            "classification": "noise", "action": "terminate",
-            "verdict": "unsuccessful", "terminal_reason": "no-symptom-evidence",
-            "clean": False, "note": "n"}}])]
-    hc = PodHarnessContext(exec_fn=_exec(_OK), memory_store=store, spec_id=SPEC_ID,
-                           log=log, variant_ref="v0",
-                           model_factory=_tool_recording_factory(replies, seen))
-
-    _run(_drive_stage(default_triager_fn, SPEC, hc, log))
-
-    assert {"notes", "query_lightrag", "load_skill", "record_skill_lesson"} <= set(seen)
-    assert "exec" not in seen
-
-
-# --- the pod seams thread the project's usage scope (token attribution) --------
 
 def test_runner_turn_threads_the_pod_project_as_usage_scope(tmp_path, monkeypatch):
     from polymerhus.app.llm.session import SessionTurn
@@ -431,22 +330,25 @@ def test_runner_turn_threads_the_pod_project_as_usage_scope(tmp_path, monkeypatc
 
 
 def test_triager_turn_threads_the_pod_project_as_usage_scope(tmp_path, monkeypatch):
+    from polymerhus.app.llm.session import SessionTurn
     from polymerhus.recon.domain.types import CaptureContext
     import polymerhus.app.llm.session as S
 
     seen = {}
 
-    def fake_stateful(role, thread, messages, *, checkpointer, schema=None, **kw):
+    async def fake_arun(role, thread, messages, *, checkpointer, **kw):
         seen["usage_scope"] = kw.get("usage_scope")
-        return None
+        seen["tags"] = kw.get("extra_tags")
+        return SessionTurn(content="done", messages=[], thread_id="t")
 
-    monkeypatch.setattr(S, "stateful_turn", fake_stateful)
+    monkeypatch.setattr(S, "arun_session_turn", fake_arun)
     hc = PodHarnessContext(
         exec_fn=_exec(_OK), memory_store=PodMemoryStore(tmp_path), spec_id=SPEC_ID,
         log=ExperimentLog(), variant_ref="v0", model_factory=_factory([]),
         capture_context=CaptureContext(project_id="proj-1"))
     _run(_drive_triager(SPEC, hc, hc.log))
     assert seen["usage_scope"] == "proj-1"
+    assert "lap:1" in seen["tags"]
 
 
 def test_triager_seam_degrades_to_a_safe_terminal_on_failure(tmp_path):
@@ -476,13 +378,13 @@ def test_triager_seam_propagates_a_provider_failure(tmp_path, monkeypatch):
     import polymerhus.app.llm.session as S
     from polymerhus.app.llm.provider_failure import ProviderUnavailableError
 
-    def provider_raising(role, thread, messages, *, checkpointer, schema=None, **kw):
+    async def provider_raising(role, thread, messages, **kw):
         request = httpx.Request("POST", "https://api.example.test/v1")
         raise openai.RateLimitError(
             "Rate limit exceeded", response=httpx.Response(429, request=request),
             body=None)
 
-    monkeypatch.setattr(S, "stateful_turn", provider_raising)
+    monkeypatch.setattr(S, "arun_session_turn", provider_raising)
     hc = PodHarnessContext(exec_fn=_exec(_OK), memory_store=PodMemoryStore(tmp_path),
                            spec_id=SPEC_ID, log=ExperimentLog(), variant_ref="v0",
                            model_factory=_factory([]))
@@ -508,39 +410,36 @@ def _tool_recording_factory(replies, seen):
 
 
 def test_triager_turn_binds_its_react_tools_and_never_exec(tmp_path, monkeypatch):
-    """Regression (found while wiring the #221 skill binding): the triager's own
-    react tools were computed and then dropped, so the critic's turn bound
-    `load_skill` alone while its prompt instructs `note` and the KB read."""
+    """The lifecycle v2 constant surface: the read-only triager tools plus the
+    two gates ride EVERY step; exec stays off it. The surface rides the REQUEST
+    (the OpenAI tool dicts), so the spy records `arun_session_turn`'s tools."""
     log = ExperimentLog()
     store = PodMemoryStore(tmp_path)
     store.write_experiment_log(SPEC_ID, 0, {"order": 0, "variant_ref": "v0",
                                             "raw_observations": [], "interpretations": [],
                                             "executed": []})
     store.write_variant_summary(SPEC_ID, 0, "the verbatim consolidation")
-    seen: list = []
     monkeypatch.setenv("LLM_POD_TRIAGER", "openrouter:some/model")
+
     import polymerhus.app.llm.session as S
+    seen = {}
+    original = S.arun_session_turn
 
-    monkeypatch.setattr(
-        S, "resolve_capability",
-        lambda provider, model: type("_P", (), {
-            "supports_structured_output": False, "supports_tool_calling": True})())
-    replies = [AIMessage(content="", tool_calls=[
-        {"name": "TriagerDecision", "id": "c1", "args": {
-            "classification": "noise", "action": "terminate",
-            "verdict": "unsuccessful", "terminal_reason": "no-symptom-evidence",
-            "clean": False, "note": "n"}}])]
-    hc = PodHarnessContext(exec_fn=_exec(_OK), memory_store=store, spec_id=SPEC_ID,
-                           log=log, variant_ref="v0",
-                           model_factory=_tool_recording_factory(replies, seen))
+    async def spy(role, thread, messages, *, tools=None, **kw):
+        seen["names"] = [t["function"]["name"] for t in (tools or [])]
+        return await original(role, thread, messages, tools=tools, **kw)
 
+    monkeypatch.setattr(S, "arun_session_turn", spy)
+    hc = PodHarnessContext(
+        exec_fn=_exec(_OK), memory_store=store, spec_id=SPEC_ID,
+        log=log, variant_ref="v0",
+        model_factory=_factory([]))
     _run(_drive_triager(SPEC, hc, log))
-
-    # #236: the full skill surface rides the critic's turn (load_skill plus the
-    # lesson sub-phase's record_skill_lesson); exec stays off it.
-    assert {"notes", "query_lightrag", "load_skill", "record_skill_lesson"} <= set(seen)
-    assert "exec" not in seen  # the critic never touches the target
-    assert "write_skill" not in seen
+    # The read-only critic surface plus the two gates; exec stays off it.
+    assert {"notes", "query_lightrag", "load_skill", "record_skill_lesson",
+            "submit_assessment", "submit_decision"} <= set(seen["names"])
+    assert "exec" not in seen["names"]   # the critic never touches the target
+    assert "write_skill" not in seen["names"]
 
 
 def test_runner_turn_binds_the_full_skill_surface(tmp_path):
@@ -579,17 +478,22 @@ def test_production_graph_has_no_tool_exec_node(monkeypatch):
 
 def test_full_production_pod_lands_symptom_confirmed_with_fake_models(tmp_path):
     """The strongest hermetic proof: `arun_pod` with NO seam injected drives the
-    production lanes - the runner ReAct turn (exec + conclude), the symbolic
-    fast-path, the envelope - with the fake model factory standing in for the
-    live model."""
+    production lanes - the runner ReAct turn (exec + conclude), the lifecycle v2
+    triage harness (the ASSESS gate call), the envelope - with the fake model
+    factory standing in for the live model."""
     env = _run(arun_pod(
         SPEC, exec_fn=_exec(_OK), trace_fn=_no_trace,
         memory_store=PodMemoryStore(tmp_path), spec_id=SPEC_ID,
-        model_factory=_factory(REACT_EXEC_AND_CONCLUDE)))
+        model_factory=_role_factory(
+            runner_replies=REACT_EXEC_AND_CONCLUDE,
+            triager_replies=TRIAGE_CONFIRM)))
     assert env["verdict"] == "successful"
     assert env["evidence"]["terminal_reason"] == "symptom-confirmed"
+    assert env["evidence"]["clean"] is True
     assert len(env["evidence"]["raw_observations"]) == 1
     assert env["evidence"]["iterations"] == 1
+    # The walked phase chain is recorded on the interpretation.
+    assert env["evidence"]["interpretations"][-1]["phase_path"]
 
 
 BASELINE = "http_01J0000000000000000000000A"
@@ -618,7 +522,9 @@ def test_production_runner_replays_the_spec_baseline(tmp_path):
         spec, exec_fn=_exec(_ABSENT), trace_fn=_no_trace,
         memory_store=PodMemoryStore(tmp_path), spec_id=SPEC_ID,
         project_id="proj-1", replay_fn=replay_fn,
-        model_factory=_factory(REACT_REPLAY_AND_CONCLUDE)))
+        model_factory=_role_factory(
+            runner_replies=REACT_REPLAY_AND_CONCLUDE,
+            triager_replies=TRIAGE_CONFIRM)))
     assert seen == [("proj-1", BASELINE, {})]
     assert env["verdict"] == "successful"
     assert env["evidence"]["terminal_reason"] == "symptom-confirmed"
@@ -696,26 +602,23 @@ def test_triager_turn_binds_the_browser_tool(tmp_path, monkeypatch):
                                             "raw_observations": [], "interpretations": [],
                                             "executed": []})
     store.write_variant_summary(SPEC_ID, 0, "the verbatim consolidation")
-    seen: list = []
     monkeypatch.setenv("LLM_POD_TRIAGER", "openrouter:some/model")
     import polymerhus.app.llm.session as S
+    seen = {}
+    original = S.arun_session_turn
 
-    monkeypatch.setattr(
-        S, "resolve_capability",
-        lambda provider, model: type("_P", (), {
-            "supports_structured_output": False, "supports_tool_calling": True})())
-    replies = [AIMessage(content="", tool_calls=[
-        {"name": "TriagerDecision", "id": "c1", "args": {
-            "classification": "noise", "action": "terminate",
-            "verdict": "unsuccessful", "terminal_reason": "no-symptom-evidence",
-            "clean": False, "note": "n"}}])]
+    async def spy(role, thread, messages, *, tools=None, **kw):
+        seen["names"] = [t["function"]["name"] for t in (tools or [])]
+        return await original(role, thread, messages, tools=tools, **kw)
+
+    monkeypatch.setattr(S, "arun_session_turn", spy)
     hc = PodHarnessContext(
         exec_fn=_exec(_OK), memory_store=store, spec_id=SPEC_ID,
         log=log, variant_ref="v0",
         browser_tool=_browser_tool(),
-        model_factory=_tool_recording_factory(replies, seen))
+        model_factory=_factory([]))
 
     _run(_drive_triager(SPEC, hc, log))
 
-    assert "browser" in seen
-    assert "exec" not in seen
+    assert "browser" in seen["names"]
+    assert "exec" not in seen["names"]

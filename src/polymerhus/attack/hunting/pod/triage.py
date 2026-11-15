@@ -1,36 +1,28 @@
-"""The staged triage decision tree.
+"""The triage harness (lifecycle v2): the two-phase chain on one thread.
 
-The triager walks four decisions in this order:
+The triager walks TWO phases in this order:
 
-1. **failure and symptom confirmation** (compact, no tools);
-2. **divergence** (the typed skill procedure and the executed trail, no tools);
-3. **bounded variant mining** (the full triager context and tool surface, only
-   when the spec carries a populated procedure attribute);
-4. **terminal verdict** (compact, no variant).
+1. **ASSESS** - one turn through `submit_assessment` (confirmation,
+   divergence, clean, note);
+2. **DECIDE** - one turn through `submit_decision` (the honest terminal, or
+   ONE new falsifiable variant).
 
-The order is STRUCTURAL: the confirmed and failed paths short-circuit before the
-divergence and mining stages run, and the miner never runs when the spec carries
-no populated procedure attribute to bend into a variant. The stage callables are
-injected (`TriageStages`) so the contract tier and the unit tier observe the
-order without a live model; the production defaults are the stateful turns in
-`agents.py`.
+The order is STRUCTURAL: the machine advances only on an accepted gate call,
+and the decision - never a pod terminal - is what the graph renders. The
+harness loop (`run_triage_harness`) mirrors `build_hunting_agent`: one
+`arun_session_turn` per step, the immutable contract prompt and the constant
+request-only tool surface on every step, the harness as the sole tool
+executor, and the phase packet appended once to the accepted gate response.
 """
 from __future__ import annotations
 
-import asyncio
-import inspect
-from dataclasses import dataclass
-from typing import Callable, Sequence
+from typing import Sequence
 
 from polymerhus.attack.hunting.pod.types import (
     NO_SYMPTOM_EVIDENCE,
-    SYMPTOM_CONFIRMED,
-    SYMPTOM_CONFIRMED_CLASS,
     skill_concretised_procedure_from_spec,
 )
 from polymerhus.attack.hunting.pod.variant_basis import PROCEDURE_GAP_FIELD
-
-StageFn = Callable[[dict, object, list, object], dict]
 
 MAX_TRIAGE_STEPS = 6
 """The bounded turn budget of one triage decision. A model that never submits
@@ -45,6 +37,21 @@ def _openai_tool_dict(tool) -> dict:
     from langchain_core.utils.function_calling import convert_to_openai_tool
 
     return convert_to_openai_tool(tool)
+
+
+def _thread_message_count(checkpointer, thread_id: str) -> int:
+    """The thread's persisted message count, or 0 (stateless or unreadable -
+    fail-open: the packet then simply repeats, which only a re-dispatch can
+    hit)."""
+    if checkpointer is None:
+        return 0
+    try:
+        from polymerhus.app.llm.session import _read_thread_state
+
+        state = _read_thread_state(checkpointer, thread_id)
+        return len((state or {}).get("messages") or [])
+    except Exception:  # noqa: BLE001 - fail-open, never into the turn
+        return 0
 
 
 def gate_correction(phase: str) -> str:
@@ -84,6 +91,8 @@ async def run_triage_harness(log, spec: dict, observation, facts, *, store,
         compose_assess_packet,
         compose_decide_packet,
     )
+    from polymerhus.app.auth.seams import auth_capable_binding
+    from polymerhus.app.llm.skills import _bound_skills
     from polymerhus.attack.hunting.pod.gates import (
         ASSESSMENT_TOOL,
         DECISION_TOOL,
@@ -115,20 +124,27 @@ async def run_triage_harness(log, spec: dict, observation, facts, *, store,
     contract = load_pod_triager_contract()
     graph = build_triage_graph().compile()
 
-    def _surface(assessment) -> tuple[list[dict], dict]:
-        """The CONSTANT tool surface: the read-only triager tools plus the two
-        gates, bound once per lap and identical on every step. The request-side
-        dicts are projected once; the gate schemas come from the gate models,
-        so the schema the model sees is the schema the gate validates."""
+    def _surface(assessment, phase) -> tuple[list[dict], dict]:
+        """The CONSTANT tool surface: the read-only triager tools, the #236
+        skill binding (load_skill + record_skill_lesson + the read-only auth
+        store), and the two gates, bound once per lap and identical on every
+        step. The request-side dicts are projected once; the gate schemas come
+        from the gate models, so the schema the model sees is the schema the
+        gate validates."""
         base = triager_react_tools(
             harness_ctx.memory_store, harness_ctx.spec_id, log=harness_ctx.log,
             variant_ref=harness_ctx.variant_ref or "",
             graph_view_fn=harness_ctx.graph_view_fn,
             browser_tool=harness_ctx.browser_tool)
+        binding = auth_capable_binding(
+            role_id, task_skills=harness_ctx.task_skills,
+            project_id=project_id or None,
+            with_readonly_auth_store=True)
+        base = [*base, *binding.tools]
         by_name = {tool.name: tool for tool in base}
-        by_name.update(build_triage_gate_tools(facts, assessment))
+        by_name.update(build_triage_gate_tools(facts, assessment, phase))
         return ([*[_openai_tool_dict(tool) for tool in base],
-                 *triage_request_tools()], by_name)
+                 *triage_request_tools()], by_name, binding)
 
     state: dict = {
         "phase": "assess", "observed_signal": None, "observed_args": None,
@@ -136,22 +152,44 @@ async def run_triage_harness(log, spec: dict, observation, facts, *, store,
         "decide_packet": None, "injected_constant": None, "trail": [],
         "decision": None,
     }
-    base = compose_assess_packet(log, spec, observation, facts, store=store,
-                                 spec_id=spec_id, order=order,
-                                 include_verbatim=lap <= 1)
+    # The thread's prior message count rides the facts: every decision's
+    # packet is unique on its thread, so a re-dispatched pod's lap-1 packet is
+    # never byte-identical to the one already there (an identical stamped id
+    # would replace in place instead of appending).
+    facts["prior_turns"] = _thread_message_count(session_ctx.checkpointer, mem_key)
+    request_tools, tools_by_name, binding = _surface(None, "assess")
+    base_parts = []
+    if lap <= 1:
+        # Q5: the bound-skill LISTING rides the first human message - the one
+        # phase surface that names the skills, never the system prompt.
+        from polymerhus.app.llm.skills import render_skill_index
+
+        listing = render_skill_index(
+            _bound_skills(binding.context),
+            project_id=project_id or None)
+        if listing:
+            base_parts.append(listing)
+    base_parts.append(compose_assess_packet(log, spec, observation, facts,
+                                            store=store, spec_id=spec_id,
+                                            order=order,
+                                            include_verbatim=lap <= 1))
+    base = "\n\n".join(part for part in base_parts if part)
     new_messages = _dicts_to_lc([{"role": "human", "content": base}])
     rejections: list[str] = []
     steps = 0
+    results: list = []
 
     for _step in range(max_steps):
         steps = _step + 1
-        request_tools, tools_by_name = _surface(state.get("assessment"))
+        request_tools, tools_by_name, binding = _surface(
+            state.get("assessment"), state["phase"])
         turn = await turn_fn(
             role_id, mem_key, new_messages,
             checkpointer=session_ctx.checkpointer,
             tools=request_tools,
             system_prompt=contract,
             middleware=list(middleware),
+            context=binding.context,
             observe=True,
             extra_tags=[run_id, mem_key, f"lap:{lap}",
                         f"phase:{state['phase']}"],
@@ -195,216 +233,69 @@ async def run_triage_harness(log, spec: dict, observation, facts, *, store,
             m if isinstance(m, (ToolMessage, HumanMessage, AIMessage)) else m
             for m in results]
 
+    # The thread contract (#280 positional adjacency): the gate's answer must
+    # FOLLOW its call in the thread. The loop exits as soon as the machine is
+    # done, so the final tool results would otherwise dangle - and any resume
+    # of this thread (the next lap, a re-dispatched pod) would trip the
+    # adjacency contract. The closing turns feed the results back; the replies
+    # are discarded. A closing turn whose model emits more calls gets its calls
+    # answered once more (bounded): the phase gates are closed, so those calls
+    # are coded rejections, and a sane model answers with plain text.
+    closing_budget = 2
+    while results and closing_budget:
+        closing_budget -= 1
+        closing = await turn_fn(
+            role_id, mem_key,
+            [m if isinstance(m, (ToolMessage, HumanMessage, AIMessage)) else m
+             for m in results],
+            checkpointer=session_ctx.checkpointer,
+            tools=request_tools,
+            system_prompt=contract,
+            middleware=list(middleware),
+            context=binding.context,
+            observe=True,
+            extra_tags=[run_id, mem_key, f"lap:{lap}", "phase:close"],
+            usage_scope=project_id,
+            model_factory=harness_ctx.model_factory,
+        )
+        calls = _last_tool_calls(closing.messages)
+        if not calls:
+            break
+        results = [
+            ToolMessage(tool_call_id=tc.get("id") or "",
+                        content=await invoke_fn(tools_by_name, tc.get("name", ""),
+                                                tc.get("args") or {}))
+            for tc in calls]
+
     decision = state.get("decision")
     if decision is None:
         # The budget exhausted without a gate call: the same honest degrade the
-        # malformed-decision path has always used.
+        # malformed-decision path has always used. It is marked `degraded` - a
+        # NO-EVALUATION outcome, which a control-plane kill overrides (the
+        # harness terminal stands; no domain verdict is fabricated).
         decision = {
             "action": "terminate", "classification": "noise",
             "verdict": "unsuccessful", "terminal_reason": NO_SYMPTOM_EVIDENCE,
-            "clean": False,
+            "clean": False, "degraded": True,
             "note": ("triage step budget exhausted without a gate submission; "
                      "degraded"),
         }
     return {"decision": decision, "assessment": state.get("assessment"),
-            "steps": steps, "rejections": rejections}
-
-
-@dataclass(frozen=True)
-class TriageStages:
-    """The four stage seams of the staged triager.
-
-    Each callable has the shape `(spec, observation, messages, log) -> dict`.
-    A sync callable is offloaded to a worker thread; an async one is awaited.
-    `assess` returns a `TriageDecision`, `diverge` a `DivergenceDecision`,
-    `mine` a `TriagerDecision`, and `terminal` a `TerminalDecision` (the models
-    live in `agents.py`)."""
-
-    assess: StageFn
-    diverge: StageFn
-    mine: StageFn
-    terminal: StageFn
+            "steps": steps, "rejections": rejections,
+            "phase_path": ">".join(
+                ["assess", *[str(e.get("phase", ""))
+                             for e in state.get("trail", [])]])}
 
 
 def has_populated_procedure(spec: dict) -> bool:
     """Whether the spec's typed `SkillProcedure` carries at least one populated
     field - the only material a bounded variant can bend.
 
-    An absent excerpt or an all-empty one has nothing to diff, so the miner is
-    skipped and the terminal stage decides. This is the deterministic gate the
-    staged tree promises: the full miner is paid only when a variant could be
-    derived."""
+    An absent excerpt or an all-empty one has nothing to diff, so no variant
+    basis is derivable: `variant_allowed` is false and the triager terminates
+    with the honest terminal."""
     procedure = skill_concretised_procedure_from_spec(spec)
     if procedure is None:
         return False
     return any(str(getattr(procedure, field) or "").strip()
                for field in PROCEDURE_GAP_FIELD.values())
-
-
-async def _call_stage(fn: StageFn, *args):
-    """Await an async stage, else offload a sync one to a worker thread - the
-    same `_await_seam` pattern the graph uses, so the context-local pod session
-    reaches sync fakes too."""
-    if inspect.iscoroutinefunction(fn):
-        return await fn(*args)
-    return await asyncio.to_thread(fn, *args)
-
-
-def _as_model(model, raw):
-    """Coerce a stage result to its typed decision model.
-
-    A dict is validated through the model; a model passes through; anything
-    else is the model's default. A malformed dict raises and the orchestrator's
-    fail-open wrapper degrades honestly."""
-    if isinstance(raw, model):
-        return raw
-    if isinstance(raw, dict):
-        return model(**raw)
-    return model()
-
-
-def _normalize_decision(raw) -> dict:
-    """Normalise the miner's decision to the graph-facing dict.
-
-    The graph validates a terminal and resolves a variant; an unknown action
-    degrades to a safe terminal so a malformed stage result never mints."""
-    if hasattr(raw, "model_dump"):
-        decision = raw.model_dump()
-    elif isinstance(raw, dict):
-        decision = dict(raw)
-    else:
-        decision = {}
-    if decision.get("action") not in ("terminate", "variant"):
-        decision["action"] = "terminate"
-    if decision["action"] == "terminate":
-        decision.setdefault("verdict", "unsuccessful")
-        decision.setdefault("terminal_reason", NO_SYMPTOM_EVIDENCE)
-        decision.setdefault("clean", False)
-    decision.setdefault("note", "")
-    return decision
-
-
-def _pod_harness_or_none():
-    from polymerhus.attack.hunting.pod.llm import pod_harness  # noqa: PLC0415
-
-    return pod_harness()
-
-
-def _order_of(hc) -> int:
-    from polymerhus.attack.hunting.pod.pod_memory import order_of  # noqa: PLC0415
-
-    return order_of(getattr(hc, "variant_ref", "") or "")
-
-
-def _divergence_delta(spec, observation, log, hc) -> list[dict]:
-    from polymerhus.attack.hunting.pod.context import (  # noqa: PLC0415
-        compose_divergence_delta,
-    )
-
-    if hc is None:
-        return [{"role": "human", "content": "no bound pod harness"}]
-    return [{"role": "human", "content": compose_divergence_delta(
-        log, spec, observation, store=hc.memory_store, spec_id=hc.spec_id,
-        order=_order_of(hc))}]
-
-
-def _triager_delta(spec, observation, log, hc) -> list[dict]:
-    from polymerhus.attack.hunting.pod.context import (  # noqa: PLC0415
-        compose_triager_delta,
-    )
-
-    if hc is None:
-        return [{"role": "human", "content": "no bound pod harness"}]
-    return [{"role": "human", "content": compose_triager_delta(
-        log, spec, observation, store=hc.memory_store, spec_id=hc.spec_id,
-        order=_order_of(hc))}]
-
-
-def _terminal_delta(spec, observation, log, hc) -> list[dict]:
-    from polymerhus.attack.hunting.pod.context import (  # noqa: PLC0415
-        compose_terminal_delta,
-    )
-
-    if hc is None:
-        return [{"role": "human", "content": "no bound pod harness"}]
-    return [{"role": "human", "content": compose_terminal_delta(
-        log, spec, observation, store=hc.memory_store, spec_id=hc.spec_id,
-        order=_order_of(hc))}]
-
-
-def make_staged_triager(stages: TriageStages):
-    """Build the graph's `triager_fn` from the four stage seams.
-
-    The returned coroutine walks the tree strictly:
-
-    - a failed runner mints the recovery variant (the current behaviour);
-    - a confirmed symptom terminates `successful` / `symptom-confirmed` and the
-      deterministic terminal writes the `PodExport`;
-    - a diverged runner mints the divergence recovery variant;
-    - otherwise the miner runs only when a populated procedure attribute exists,
-      else the compact terminal stage decides the verdict.
-
-    A provider failure propagates as the typed `ProviderUnavailableError`; any
-    other stage exception degrades to a safe `no-symptom-evidence` terminal,
-    exactly like the single-turn triager it replaces."""
-
-    async def triager(spec, observation, messages, log):
-        from polymerhus.app.llm.provider_failure import as_provider_error  # noqa: PLC0415
-        from polymerhus.attack.hunting.pod.agents import (  # noqa: PLC0415
-            DivergenceDecision,
-            TerminalDecision,
-            TriageDecision,
-        )
-
-        try:
-            assessment = _as_model(
-                TriageDecision,
-                await _call_stage(stages.assess, spec, observation, list(messages), log))
-            if assessment.runner_failed:
-                return {"classification": "runner-failure", "action": "variant",
-                        "runner_failed": True,
-                        "note": assessment.note or "the runner execution failed",
-                        "feedback": assessment.note or "recover the failed execution"}
-            if assessment.symptom_confirmed:
-                return {"classification": SYMPTOM_CONFIRMED_CLASS,
-                        "action": "terminate", "verdict": "successful",
-                        "terminal_reason": SYMPTOM_CONFIRMED, "clean": True,
-                        "note": assessment.note or "verification symptom observed"}
-
-            hc = _pod_harness_or_none()
-            divergence = _as_model(
-                DivergenceDecision,
-                await _call_stage(stages.diverge, spec, observation,
-                                  _divergence_delta(spec, observation, log, hc), log))
-            if divergence.runner_diverged:
-                return {"classification": "runner-divergence", "action": "variant",
-                        "runner_diverged": True,
-                        "note": divergence.note or "the execution diverged from the spec",
-                        "feedback": divergence.note or "return the execution to the spec"}
-
-            if has_populated_procedure(spec):
-                mined = await _call_stage(
-                    stages.mine, spec, observation,
-                    _triager_delta(spec, observation, log, hc), log)
-                return _normalize_decision(mined)
-
-            terminal = _as_model(
-                TerminalDecision,
-                await _call_stage(stages.terminal, spec, observation,
-                                  _terminal_delta(spec, observation, log, hc), log))
-            return {"classification": terminal.classification or "symptom-absent",
-                    "action": "terminate", "verdict": terminal.verdict,
-                    "terminal_reason": terminal.terminal_reason,
-                    "clean": terminal.clean, "note": terminal.note}
-        except Exception as exc:  # noqa: BLE001 - fail-open safe terminal
-            failure = as_provider_error(exc)
-            if failure is not None:
-                # #329: a provider failure is infrastructure, not a triager
-                # assessment. Propagate the typed error; never launder a throttle
-                # into a benign domain verdict.
-                raise failure from exc
-            return {"classification": "noise", "action": "terminate",
-                    "verdict": "unsuccessful", "terminal_reason": NO_SYMPTOM_EVIDENCE,
-                    "clean": False, "note": f"triager degraded: {exc}"}
-
-    return triager

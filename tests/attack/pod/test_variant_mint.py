@@ -10,7 +10,7 @@ basis.
 import asyncio
 
 from polymerhus.attack.hunting.pod import arun_pod
-from polymerhus.attack.hunting.pod.agents import TriagerDecision, symbolic_runner_step_fn
+from polymerhus.attack.hunting.pod.agents import symbolic_runner_step_fn
 from polymerhus.attack.hunting.pod.types import (
     DOMAIN_TERMINAL_REASONS,
     HARNESS_TERMINAL_REASONS,
@@ -80,7 +80,7 @@ def _variant(**overrides):
 def _drive(decisions, spec=SPEC):
     it = iter(decisions)
 
-    def triager(s, obs, messages, log):
+    def triager(s, obs, log, facts):
         try:
             return dict(next(it))
         except StopIteration:
@@ -252,14 +252,17 @@ def test_the_terminal_vocabulary_separates_domain_and_harness_reasons():
     assert TERMINAL_REASONS == DOMAIN_TERMINAL_REASONS | HARNESS_TERMINAL_REASONS
 
 
-def test_the_triager_decision_carries_the_coverage_assessment():
-    # The production triager's structured schema carries the material the
-    # deterministic diff needs; an omitted coverage assessment stays None.
-    decision = TriagerDecision()
+def test_the_decision_gate_carries_the_coverage_assessment():
+    # The lifecycle v2 gate schema carries the material the deterministic diff
+    # needs; an omitted coverage assessment stays None, and the decision gate
+    # carries NO clean field - the assessment owns it.
+    from polymerhus.attack.hunting.pod.triage_state import DecisionSubmission
+
+    decision = DecisionSubmission(action="variant", note="n")
     assert decision.covered_gap_classes is None
-    assert decision.runner_failed is False
-    assert decision.runner_diverged is False
-    filled = TriagerDecision(covered_gap_classes=["recon-action"])
+    assert not hasattr(decision, "clean")
+    filled = DecisionSubmission(action="variant", note="n",
+                                covered_gap_classes=["recon-action"])
     assert filled.model_dump()["covered_gap_classes"] == ["recon-action"]
 
 

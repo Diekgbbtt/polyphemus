@@ -224,11 +224,14 @@ class KbObservation(BaseModel):
 
 class Interpretation(BaseModel):
     """One Triager classification (D6). NL notes the parent's feedback rides on
-    (hunting-83: `interpretations` are pure NL, no per-variant machine outcome)."""
+    (hunting-83: `interpretations` are pure NL, no per-variant machine outcome).
+    `phase_path` (lifecycle v2) is the phase chain the decision walked, e.g.
+    `assess>decide` - the phase telemetry the next trial prices."""
 
     variant: str = ""
     classification: str = ""
     note: str = ""
+    phase_path: str = ""
 
 
 class VariantSpec(BaseModel):
@@ -256,10 +259,15 @@ class PodExport(BaseModel):
     raw_observations: list[dict] = Field(default_factory=list)
     interpretations: list[dict] = Field(default_factory=list)
     error: str | None = None
+    control_plane_end_reason: str | None = None
 
     def to_envelope(self) -> dict:
         """The IA-4 return shape: `{verdict, evidence:{...}}`. `evidence` carries
-        the D5 fields the parent's derivation reads plus the full D6 log."""
+        the D5 fields the parent's derivation reads plus the full D6 log.
+        `control_plane_end_reason` (lifecycle v2) is the harness's runner end
+        reason, carried additively ONLY when a domain verdict replaced a
+        harness stop - a domain verdict says what the evidence shows, this says
+        why the runner stopped; both are true."""
         evidence: dict[str, Any] = {
             "terminal_reason": self.terminal_reason,
             "iterations": self.iterations,
@@ -271,6 +279,8 @@ class PodExport(BaseModel):
         }
         if self.error:
             evidence["error"] = self.error
+        if self.control_plane_end_reason:
+            evidence["control_plane_end_reason"] = self.control_plane_end_reason
         return {"verdict": self.verdict, "evidence": evidence}
 
 
@@ -329,3 +339,8 @@ class PodState(TypedDict, total=False):
     clean: bool
     error: str
     export: dict          # the rendered IA-4 envelope
+    # lifecycle v2: the harness facts channel. `control_plane_end_reason` is
+    # the runner end reason a kill wrote before triage; `runner_exhausted` is
+    # the exhaustion fact the router passes to the triager.
+    control_plane_end_reason: str | None
+    runner_exhausted: bool

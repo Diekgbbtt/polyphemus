@@ -41,7 +41,10 @@ _LOCKS: dict[tuple[str, str], threading.Lock] = {}
 
 @dataclass(frozen=True)
 class PodTerminal:
-    """One pod terminal: a domain verdict or a harness-owned infrastructure end."""
+    """One pod terminal: a domain verdict or a harness-owned infrastructure end.
+    `control_plane_end_reason` (lifecycle v2) rides ONLY a domain terminal that
+    was rendered after a harness kill - the control-plane fact the triage
+    evaluated over; a harness terminal IS its own end reason."""
 
     verdict: Literal["successful", "unsuccessful"]
     reason: str
@@ -49,6 +52,7 @@ class PodTerminal:
     error: str | None = None
     iterations: int | None = None
     init_validation: tuple[str, ...] = ()
+    control_plane_end_reason: str | None = None
 
     @classmethod
     def domain(
@@ -60,6 +64,7 @@ class PodTerminal:
         error: str | None = None,
         iterations: int | None = None,
         init_validation: Iterable[str] = (),
+        control_plane_end_reason: str | None = None,
     ) -> "PodTerminal":
         """A triager-selectable domain terminal."""
         if verdict not in ("successful", "unsuccessful"):
@@ -73,6 +78,7 @@ class PodTerminal:
             verdict=verdict, reason=reason, clean=clean, error=error,
             iterations=iterations,
             init_validation=tuple(init_validation),
+            control_plane_end_reason=control_plane_end_reason,
         )
 
     @classmethod
@@ -199,6 +205,7 @@ def _assemble(
         raw_observations=[o.model_dump() for o in log.raw_observations] if log else [],
         interpretations=[i.model_dump() for i in log.interpretations] if log else [],
         error=terminal.error,
+        control_plane_end_reason=terminal.control_plane_end_reason,
     )
     return export.to_envelope()
 
@@ -213,6 +220,7 @@ def _normalise_terminal(terminal: PodTerminal) -> PodTerminal:
             verdict="unsuccessful", reason=terminal.reason, clean=False,
             error=terminal.error, iterations=terminal.iterations,
             init_validation=terminal.init_validation,
+            control_plane_end_reason=None,
         )
     if terminal.verdict not in ("successful", "unsuccessful"):
         raise ValueError(f"verdict {terminal.verdict!r} is not a binary pod verdict")

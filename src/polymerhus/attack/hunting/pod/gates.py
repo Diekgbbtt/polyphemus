@@ -83,13 +83,23 @@ def _reject(tool: str, detail: str) -> str:
                        "detail": detail, "accepted": False})
 
 
-def _validate_assessment(facts: Mapping, args: dict) -> str:
+def _validate_assessment(phase: str, args: dict) -> str:
+    if phase != "assess":
+        return _reject(
+            ASSESSMENT_TOOL,
+            "the ASSESS gate is closed on this phase; submit through "
+            "submit_decision instead")
     AssessmentSubmission.model_validate(args)
     return _accept("assessment")
 
 
-def _validate_decision(facts: Mapping, assessment: Mapping | None,
+def _validate_decision(phase: str, facts: Mapping, assessment: Mapping | None,
                        args: dict) -> str:
+    if phase != "decide":
+        return _reject(
+            DECISION_TOOL,
+            "the DECIDE gate is closed on this phase; submit through "
+            "submit_assessment instead")
     submission = DecisionSubmission.model_validate(args)
     if submission.action == "variant":
         terminated = facts.get("runner_terminated")
@@ -118,9 +128,14 @@ def _validate_decision(facts: Mapping, assessment: Mapping | None,
 
 
 def build_triage_gate_tools(facts: Mapping,
-                            assessment: Mapping | None = None) -> dict[str, Any]:
+                            assessment: Mapping | None = None,
+                            phase: str = "assess") -> dict[str, Any]:
     """The two gate tools for one triage decision, closed over the harness
-    facts and the assessment the decision rides.
+    facts, the assessment the decision rides, and the CURRENT phase.
+
+    A gate is a transaction gate: it accepts only on its own phase. A wrong-
+    phase submission is a coded rejection, never a signal, so the phase
+    machine's transitions are exactly the ratified tree.
 
     `assessment` is the accepted ASSESS submission (the graph state carries it
     across laps); the DECIDE gate reads its `clean` for the space-exhausted
@@ -128,10 +143,10 @@ def build_triage_gate_tools(facts: Mapping,
     return {
         ASSESSMENT_TOOL: _GateTool(
             ASSESSMENT_TOOL, _ASSESSMENT_DESCRIPTION,
-            lambda args: _validate_assessment(facts, args)),
+            lambda args: _validate_assessment(phase, args)),
         DECISION_TOOL: _GateTool(
             DECISION_TOOL, _DECISION_DESCRIPTION,
-            lambda args: _validate_decision(facts, assessment, args)),
+            lambda args: _validate_decision(phase, facts, assessment, args)),
     }
 
 

@@ -30,10 +30,10 @@ _ASSESSMENT = {"symptom_confirmed": True, "runner_diverged": False,
                "clean": True, "note": "the marker is reflected"}
 
 
-def _tools(facts=None, assessment=None):
+def _tools(facts=None, assessment=None, phase="assess"):
     return build_triage_gate_tools(facts or _FACTS,
                                    _CLEAN_ASSESSMENT if assessment is None
-                                   else assessment)
+                                   else assessment, phase)
 
 
 # --- the assessment gate -------------------------------------------------------
@@ -59,7 +59,7 @@ def test_the_assessment_gate_rejects_a_malformed_submission_with_a_coded_message
 # --- the decision gate ---------------------------------------------------------
 
 def test_the_decision_gate_accepts_a_honest_terminal():
-    result = _tools()["submit_decision"].invoke({
+    result = _tools(phase="decide")["submit_decision"].invoke({
         "action": "terminate", "verdict": "unsuccessful",
         "terminal_reason": "no-symptom-evidence", "note": "impaired observations"})
     assert gate_accepted(result)
@@ -77,7 +77,7 @@ def test_the_decision_gate_never_reads_clean_from_the_submission():
     # A space-exhausted claim over an UNCLEAN assessment is rejected even when
     # the submission asserts clean=true: the assessment owns clean, never the
     # decision.
-    result = _tools(assessment=_UNCLEAN_ASSESSMENT)["submit_decision"].invoke({
+    result = _tools(assessment=_UNCLEAN_ASSESSMENT, phase="decide")["submit_decision"].invoke({
         "action": "terminate", "verdict": "unsuccessful",
         "terminal_reason": SPACE_EXHAUSTED, "clean": True, "note": "done"})
     assert not gate_accepted(result)
@@ -90,7 +90,7 @@ def test_the_decision_gate_never_reads_clean_from_the_submission():
 
 
 def test_the_decision_gate_accepts_space_exhausted_over_a_clean_assessment():
-    result = _tools(assessment=_CLEAN_ASSESSMENT)["submit_decision"].invoke({
+    result = _tools(assessment=_CLEAN_ASSESSMENT, phase="decide")["submit_decision"].invoke({
         "action": "terminate", "verdict": "unsuccessful",
         "terminal_reason": SPACE_EXHAUSTED, "note": "space covered"})
     assert gate_accepted(result)
@@ -99,7 +99,7 @@ def test_the_decision_gate_accepts_space_exhausted_over_a_clean_assessment():
 def test_the_decision_gate_rejects_a_variant_when_the_runner_is_terminated():
     facts = TriageFacts(**{**_FACTS, "runner_terminated": "node-timeout",
                            "variant_allowed": False})
-    result = _tools(facts)["submit_decision"].invoke({
+    result = _tools(facts, phase="decide")["submit_decision"].invoke({
         "action": "variant", "declined_attribute": "payload-vector",
         "variant_spec": {"rationale": "untested vector"}, "note": "try it"})
     assert not gate_accepted(result)
@@ -109,7 +109,7 @@ def test_the_decision_gate_rejects_a_variant_when_the_runner_is_terminated():
 
 
 def test_the_decision_gate_accepts_a_variant_when_allowed():
-    result = _tools()["submit_decision"].invoke({
+    result = _tools(phase="decide")["submit_decision"].invoke({
         "action": "variant", "declined_attribute": "payload-vector",
         "variant_spec": {"rationale": "untested vector"}, "note": "try it"})
     assert gate_accepted(result)
@@ -126,6 +126,18 @@ def test_the_decision_gate_rejects_an_unknown_basis_or_reason():
 
 
 # --- the request-side schema ---------------------------------------------------
+
+def test_the_gate_is_phase_specific():
+    # A transaction gate accepts only on its own phase: a wrong-phase
+    # submission is a coded rejection, never a signal.
+    rejected = _tools(phase="decide")["submit_assessment"].invoke(_ASSESSMENT)
+    assert not gate_accepted(rejected)
+    rejected = _tools(phase="assess")["submit_decision"].invoke({
+        "action": "terminate", "verdict": "unsuccessful",
+        "terminal_reason": "no-symptom-evidence", "note": "n"})
+    assert not gate_accepted(rejected)
+    assert "closed" in json.loads(rejected)["detail"]
+
 
 def test_the_request_tools_are_the_two_gate_schemas_in_order():
     tools = triage_request_tools()

@@ -87,7 +87,7 @@ def _laundering_triager(*, degraded: bool):
     """The triager seam the ticket observed: query the KB, then, because it
     'returned nothing new', terminate clean space-exhausted."""
 
-    def triager(spec, obs, messages, log):
+    def triager(spec, obs, log, facts):
         kb = KbQueryTool(log=log, variant_ref="v0", tool=_fallback_lightrag(degraded=degraded))
         kb.invoke(_kb_spec())
         return {"classification": "symptom-absent", "action": "terminate",
@@ -128,7 +128,9 @@ def test_degraded_kb_blocks_a_clean_space_exhausted_verdict():
     # The unavailable-domain reason: observations were impaired, so the
     # derivation is insufficient-evidence, never a false absence.
     assert env["evidence"]["terminal_reason"] == "no-symptom-evidence"
-    assert env["evidence"]["clean"] is False
+    # Lifecycle v2: degraded KB is a sufficiency condition, not an integrity
+    # condition - the triager's clean stands.
+    assert env["evidence"]["clean"] is True
 
 
 def test_available_kb_keeps_a_clean_space_exhausted_verdict():

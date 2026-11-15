@@ -70,8 +70,6 @@ _ALLOWED_MSGPACK_MODULES: tuple[tuple[str, str], ...] = (
     # recon: the auth gateway verdict and the pod observation batch
     ("polymerhus.recon.control.authn_loop", "GatewayVerdict"),
     ("polymerhus.recon.domain.pod", "_ObservationBatch"),
-    # hunting: the pod triager's per-lap decision
-    ("polymerhus.attack.hunting.pod.agents", "TriagerDecision"),
 )
 
 

@@ -45,7 +45,9 @@ _MALFORMED_CALL = {"name": "submit_assessment", "id": "c3",
 
 class _TurnScript:
     """A scripted `arun_session_turn`: each call consumes the next scripted
-    turn and records the request the loop made."""
+    turn and records the request the loop made. A script exhausted by the
+    CLOSING turn answers with an empty turn - the harness discards that
+    reply."""
 
     def __init__(self, turns):
         self.turns = list(turns)
@@ -56,7 +58,7 @@ class _TurnScript:
             "role_id": role_id, "thread_id": thread_id,
             "messages": list(new_messages), **kwargs})
         if not self.turns:
-            raise AssertionError("the turn script is exhausted")
+            return _turn([])
         return self.turns.pop(0)
 
 
@@ -107,11 +109,24 @@ def _text(message) -> str:
 def test_one_turn_per_step_and_a_terminal_decision(tmp_path):
     script = _TurnScript([_turn([_ASSESS_CALL]), _turn([_DECIDE_CALL])])
     result = _run_harness(script, PodMemoryStore(tmp_path))
-    assert len(script.calls) == 2
+    # Two decision turns plus the closing turn that answers the final gate
+    # call in the thread (the #280 adjacency contract).
+    assert len(script.calls) == 3
     assert result["decision"]["action"] == "terminate"
     assert result["decision"]["terminal_reason"] == "space-exhausted"
     assert result["assessment"]["symptom_confirmed"] is False
     assert result["steps"] == 2
+
+
+def test_the_closing_turn_answers_the_final_gate_call(tmp_path):
+    script = _TurnScript([_turn([_ASSESS_CALL]), _turn([_DECIDE_CALL])])
+    result = _run_harness(script, PodMemoryStore(tmp_path))
+    closing = script.calls[-1]
+    assert any(t == "phase:close" for t in closing["extra_tags"])
+    tool_results = [m for m in closing["messages"] if isinstance(m, ToolMessage)]
+    assert len(tool_results) == 1
+    assert tool_results[0].tool_call_id == "c2"   # the submit_decision call id
+    assert "<phase-packet>" not in _text(tool_results[0])
 
 
 def test_the_same_prompt_and_the_same_tools_on_every_step(tmp_path):
@@ -144,7 +159,7 @@ def test_a_malformed_gate_call_is_a_rejection_and_never_a_phase_move(tmp_path):
     script = _TurnScript([_turn([_MALFORMED_CALL]), _turn([_ASSESS_CALL]),
                           _turn([_DECIDE_CALL])])
     result = _run_harness(script, PodMemoryStore(tmp_path))
-    assert len(script.calls) == 3
+    assert len(script.calls) == 4
     assert result["rejections"], "the coded rejection is surfaced"
     rejection = json.loads(result["rejections"][0])
     assert rejection["error"] == "rejected"
@@ -155,7 +170,7 @@ def test_a_no_tool_call_turn_gets_a_bounded_correction(tmp_path):
     script = _TurnScript([_turn(tool_calls=[], content="I think it is fine"),
                           _turn([_ASSESS_CALL]), _turn([_DECIDE_CALL])])
     result = _run_harness(script, PodMemoryStore(tmp_path))
-    assert len(script.calls) == 3
+    assert len(script.calls) == 4
     assert "submit_" in _text(script.calls[1]["messages"][0])
     assert result["decision"]["terminal_reason"] == "space-exhausted"
 

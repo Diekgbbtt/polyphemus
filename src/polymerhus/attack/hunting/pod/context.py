@@ -486,9 +486,13 @@ def _observation_block(observation: RawObservation | None) -> str:
 def _facts_block(facts) -> str:
     """The harness facts one triage decision rides (lifecycle v2): prompt
     material, never model fields. `runner_terminated` is the control-plane end
-    reason - a kill makes `variant_allowed` false and forces a final pass."""
+    reason - a kill makes `variant_allowed` false and forces a final pass.
+    `prior_turns` is the thread's message count at this decision's start: it
+    makes every decision's packet unique, so a re-dispatched pod's packet is
+    never byte-identical to the one already on the thread."""
     return ("## Harness facts\n"
             f"- lap={facts.get('lap', 0)}\n"
+            f"- prior_turns={facts.get('prior_turns', 0)}\n"
             f"- runner_failed={facts.get('runner_failed', False)}\n"
             f"- runner_exhausted={facts.get('runner_exhausted', False)}\n"
             f"- runner_terminated={facts.get('runner_terminated') or 'none'}\n"
