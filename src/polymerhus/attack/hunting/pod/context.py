@@ -530,6 +530,25 @@ def compose_assess_packet(log: ExperimentLog, spec: dict,
     return "\n\n".join(part for part in parts if part)
 
 
+def compose_decide_packet(log: ExperimentLog, spec: dict, facts,
+                          *, store, spec_id: str, order: int) -> str:
+    """The DECIDE phase packet (lifecycle v2): the verbatim rides the
+    `submit_assessment` gate response, and this packet is its material - the
+    variants already tried, the recent interpretations, the KB flags, the
+    executed trail, and the harness facts with `variant_allowed`.
+
+    The pod loads the DECIDE verbatim itself (the packet = verbatim + material
+    is assembled once, by the caller that owns the gate response), so this
+    composer renders the MATERIAL only."""
+    from polymerhus.attack.hunting.pod.pod_memory import compose_memory_guidance
+
+    parts: list[str] = [_facts_block(facts)]
+    parts.append(compose_terminal_delta(log, spec, None, store=store,
+                                        spec_id=spec_id, order=order))
+    parts.append(compose_memory_guidance(store, spec_id))
+    return "\n\n".join(part for part in parts if part)
+
+
 def compose_triage_delta(log: ExperimentLog, spec: dict,
                          observation: RawObservation | None, *, store,
                          spec_id: str, order: int) -> str:
