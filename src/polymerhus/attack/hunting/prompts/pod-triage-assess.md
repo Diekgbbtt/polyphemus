@@ -11,6 +11,8 @@ Set `symptom_confirmed` true ONLY when the latest observation, read against the 
 Set `clean` by the contract's observation-integrity test over the raw fields of every observation you relied on. A confirmed symptom over an impaired observation still reports what you judged: the verdict layer owns the consequence.
 
 ## Note
-Write the interpretation note for a reviewer who never saw the raw output: the judgment, the observation it rests on, and what was NOT covered. Cap it at roughly 500 characters.
+Write the interpretation note for a reviewer who never saw the raw output: the judgment, the observation it rests on, and what was NOT covered.
+
+Hunting-artifact conciseness (binding): cap spec `rationale` and each note body at roughly 500 characters; write assertive, specific prose with no filler, restated context, or hedging.
 
 Submit once through `submit_assessment` with `symptom_confirmed`, `runner_diverged`, `clean`, and `note`.

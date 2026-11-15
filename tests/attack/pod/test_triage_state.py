@@ -126,14 +126,19 @@ def test_a_variant_decision_when_not_allowed_degrades_to_no_symptom_evidence():
     args = {"action": "variant", "declined_attribute": "payload-vector",
             "variant_spec": {"rationale": "untested vector"},
             "feedback": "try the vector", "note": "vector untried"}
-    facts = TriageFacts(**{**_FACTS, "variant_allowed": False})
-    outcome = detect_triage_outcome(facts, _ASSESSMENT, "decision", args)
+    facts = TriageFacts(**{**_FACTS, "variant_allowed": False,
+                           "variant_allowed_reason": "the lap cap is reached"})
+    assessment = {**_ASSESSMENT, "clean": False}
+    outcome = detect_triage_outcome(facts, assessment, "decision", args)
     assert outcome["kind"] == "decision"
     decision = outcome["decision"]
     assert decision["action"] == "terminate"
     assert decision["verdict"] == "unsuccessful"
     assert decision["terminal_reason"] == NO_SYMPTOM_EVIDENCE
+    # The assessed clean rides through even on the degrade (Q9: clean is
+    # triager-owned), and the note names the why.
     assert decision["clean"] is False
+    assert "the lap cap is reached" in decision["note"]
 
 
 # --- the phase advance --------------------------------------------------------
@@ -145,3 +150,73 @@ def test_an_advance_outcome_moves_assess_to_decide():
 def test_a_decision_outcome_moves_every_phase_to_done():
     assert advance_triage_state("assess", {"kind": "decision"}) == "done"
     assert advance_triage_state("decide", {"kind": "decision"}) == "done"
+
+
+# --- the ratified conformance fixes (review round 1) ---------------------------
+
+def test_a_not_allowed_variant_carries_the_assessed_clean():
+    # Q9: clean is fully triager-owned. The not-allowed degrade rides the
+    # assessment's clean, never a hardcoded False.
+    args = {"action": "variant", "declined_attribute": "payload-vector",
+            "variant_spec": {"rationale": "untested vector"}, "note": "try it"}
+    facts = TriageFacts(**{**_FACTS, "variant_allowed": False,
+                           "variant_allowed_reason": "the lap cap is reached"})
+    assessment = {**_ASSESSMENT, "clean": True}
+    outcome = detect_triage_outcome(facts, assessment, "decision", args)
+    decision = outcome["decision"]
+    assert decision["terminal_reason"] == NO_SYMPTOM_EVIDENCE
+    assert decision["clean"] is True
+    assert "the lap cap is reached" in decision["note"]
+
+
+def test_the_not_allowed_note_names_the_kill_reason():
+    args = {"action": "variant", "declined_attribute": "payload-vector",
+            "variant_spec": {}, "note": "n"}
+    facts = TriageFacts(**{**_FACTS, "variant_allowed": False,
+                           "runner_terminated": "node-timeout",
+                           "variant_allowed_reason": "the runner is terminated (node-timeout)"})
+    outcome = detect_triage_outcome(facts, _ASSESSMENT, "decision", args)
+    assert "node-timeout" in outcome["decision"]["note"]
+
+
+def test_a_diverged_assessment_outranks_a_confirmed_symptom():
+    # The ASSESS verbatim: a diverged execution has no meaningful symptom
+    # coverage, so the divergence judgement outranks a confirmation claim.
+    args = {**_ASSESSMENT, "symptom_confirmed": True, "runner_diverged": True}
+    outcome = detect_triage_outcome(_FACTS, _ASSESSMENT, "assessment", args)
+    assert outcome["decision"]["action"] == "variant"
+    assert outcome["decision"]["declined_attribute"] == "runner-divergence"
+
+
+def test_a_terminate_decision_without_a_verdict_is_no_signal():
+    # The decision gate owns the action-conditional fields: a terminate action
+    # without its verdict/terminal_reason pair is malformed, so no signal.
+    assert detect_triage_signal("submit_decision", {"action": "terminate",
+                                                   "note": "n"}) is None
+    assert detect_triage_signal("submit_decision",
+                                {"action": "terminate",
+                                 "verdict": "successful",
+                                 "note": "n"}) is None
+
+
+def test_a_variant_decision_without_a_basis_is_no_signal():
+    assert detect_triage_signal("submit_decision",
+                                {"action": "variant", "note": "n"}) is None
+
+
+def test_the_decision_gate_carries_no_coverage_when_the_field_is_absent():
+    # The graph's rule: a STATED coverage assessment makes the diff
+    # authoritative; WITHOUT one the triager's claimed basis stands. An absent
+    # field must therefore survive as None, never coerce to [].
+    outcome = detect_triage_outcome(_FACTS, _ASSESSMENT, "decision", {
+        "action": "variant", "declined_attribute": "payload-vector",
+        "variant_spec": {}, "note": "n"})
+    assert outcome["decision"]["covered_gap_classes"] is None
+
+
+def test_a_stated_coverage_survives_the_outcome():
+    outcome = detect_triage_outcome(_FACTS, _ASSESSMENT, "decision", {
+        "action": "variant", "declined_attribute": "payload-vector",
+        "covered_gap_classes": ["recon-action"], "variant_spec": {},
+        "note": "n"})
+    assert outcome["decision"]["covered_gap_classes"] == ["recon-action"]

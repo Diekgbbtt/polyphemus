@@ -40,6 +40,8 @@ The first nine are procedure gaps. The last two are execution triggers.
 Apply `space-exhausted` ONLY when a knowledge-base query RETURNED an answer carrying no precise new variant of the symptom or its technique, your own reflection yields nothing new, every procedure gap class is covered, and the assessment's `clean` is true. The gate REJECTS `space-exhausted` over unclean observations: unclean observations are partial coverage, so mint a variant for the unobserved execution modes, or terminate with `no-symptom-evidence`. A degraded, failed, or unavailable knowledge-base result is NOT evidence of absence: it returned nothing because it failed, not because the space is empty - use `no-symptom-evidence`.
 
 ## Note
-Write the interpretation note for a reviewer who never saw the raw output: the decision, the basis or the terminal reason, and what was NOT covered. Cap it at roughly 500 characters.
+Write the interpretation note for a reviewer who never saw the raw output: the decision, the basis or the terminal reason, and what was NOT covered.
+
+Hunting-artifact conciseness (binding): cap spec `rationale` and each note body at roughly 500 characters; write assertive, specific prose with no filler, restated context, or hedging.
 
 Submit once through `submit_decision` with `action` (terminate or variant), the verdict fields or the variant fields, and `note`.

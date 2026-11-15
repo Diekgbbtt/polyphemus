@@ -220,7 +220,7 @@ def test_usage_spectrum_projects_the_cold_call_counters() -> None:
 
 def test_usage_spectrum_pins_the_schema_and_fails_open() -> None:
     # The acceptance contract (#349): one entry per agent with exactly these
-    # nine keys, in this order, every one a non-negative int.
+    # twelve keys, in this order, every one a non-negative int.
     response = {"by_agent": {"recon": {"capped_tokens": 4200}}}
     spectrum = api.usage_spectrum(response)
     assert list(spectrum["recon"]) == [

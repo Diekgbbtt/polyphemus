@@ -83,34 +83,6 @@ def test_variant_refs_expose_every_tried_variant():
     assert log.variant_refs() == ["v0", "v1"]
 
 
-def test_triager_context_surfaces_prior_variants_for_non_duplication():
-    log = ExperimentLog()
-    log.record_variant(VariantSpec(ref="v0", spec={}))
-    log.record_variant(VariantSpec(ref="v1", parent_ref="v0"))
-    log.record_interpretation(Interpretation(variant="v0", classification="symptom-absent",
-                                             note="no reflection"))
-    ctx = log.triager_context({"target_identity": {"url": "http://svc/", "unit_id": "svc"}},
-                              RawObservation(status=200, body="hi"))
-    assert "v0" in ctx and "v1" in ctx           # sees what was tried
-    assert "never mine a duplicate" in ctx.lower()
-
-
-def test_triager_context_carries_variant_bases_and_executed_probes():
-    """S5 8.6 step 2: the executed procedure comes from the D6 trail - the
-    variant bases (the duplicate guard's first half) and the probe commands."""
-    log = ExperimentLog()
-    log.record_variant(VariantSpec(
-        ref="v1", parent_ref="v0", declined_attribute="bypass-technique",
-        spec={"rationale": "swap the id in the signed URL"}))
-    log.record_observation(RawObservation(
-        variant_ref="v1", request={"command": "curl -k https://svc/item/2"}, status=404))
-    ctx = log.triager_context({"target_identity": {"url": "http://svc/", "unit_id": "svc"}},
-                              None)
-    assert "bypass-technique" in ctx
-    assert "swap the id in the signed URL" in ctx
-    assert "curl -k https://svc/item/2" in ctx
-
-
 def test_runner_context_lists_executed_signatures():
     log = ExperimentLog()
     log.mark_executed("sig-abc")
@@ -231,13 +203,19 @@ def test_the_probe_lines_carry_the_raw_integrity_fields(tmp_path):
     log.record_observation(RawObservation(
         variant_ref="v1", request={"command": "curl -k https://svc/x"},
         status=None, returncode=7, stdout="", stderr="curl: (7) refused",
-        error_code="CONN_REFUSED", warning={"hint": "proxy"}))
+        error_code="CONN_REFUSED", error_message="connection refused",
+        fatal=True, warning={"hint": "proxy"}))
     packet = compose_assess_packet(log, spec, observation, _FACTS, store=store,
                                    spec_id=spec_id, order=1)
     assert "rc=7" in packet
     assert "success=unknown" in packet
     assert "error_code=CONN_REFUSED" in packet
+    assert "error_message=connection refused" in packet
+    assert "fatal=True" in packet
     assert "warning=proxy" in packet
+    # A bounded stderr token rides every probe line, so a masked shell failure
+    # is visible without shipping the full stream.
+    assert "refused" in packet
 
 
 def test_the_probe_lines_name_the_structured_success_marker(tmp_path):

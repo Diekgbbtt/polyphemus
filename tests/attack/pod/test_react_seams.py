@@ -306,7 +306,7 @@ def test_triager_seam_reads_the_note_and_returns_a_decision(tmp_path, monkeypatc
     assert decision["terminal_reason"] == "space-exhausted"
     assert decision["clean"] is True
     assert "third-party miner verdict" in decision["note"]
-    assert decision["phase_path"] == "assess>decide>done"
+    assert decision["phase_path"] == "assess>decide>terminal"
 
 
 def test_runner_turn_threads_the_pod_project_as_usage_scope(tmp_path, monkeypatch):

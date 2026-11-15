@@ -14,7 +14,7 @@ per-drive inputs (`observed_signal` / `observed_args`) the harness hands it.
 from __future__ import annotations
 
 import operator
-from typing import Annotated, Any, Literal, TypedDict
+from typing import Annotated, Any, TypedDict
 
 from langgraph.constants import END
 from langgraph.graph import START, StateGraph
@@ -34,6 +34,11 @@ _SUPERVISE = "supervise"
 _DETECT = "detect"
 _ADVANCE = "advance"
 
+DECIDE_PACKET_SENTINEL = "__DECIDE_PACKET__"
+"""The `injected_constant` the advance node sets on an advance. The harness
+replaces it with the composed DECIDE packet before the packet rides the gate
+response, so the material is composed only when the route continues."""
+
 
 class TriageGraphState(TypedDict, total=False):
     """The compiled graph's channels. Every field is last-write EXCEPT `trail`
@@ -47,7 +52,6 @@ class TriageGraphState(TypedDict, total=False):
     observed_outcome: TriageOutcome | None
     facts: TriageFacts
     assessment: dict | None
-    decide_packet: str | None
     injected_constant: str | None
     trail: Annotated[list[dict], operator.add]
     decision: TriageDecision | None
@@ -91,17 +95,24 @@ def _detect(state: TriageGraphState) -> Command:
 
 
 def _advance(state: TriageGraphState) -> dict:
-    """The push: `advance_triage_state` moves the phase, the node injects the
-    DECIDE packet (a transient, never the system prompt) on an advance and
-    records the trail entry, then consumes the observation."""
+    """The push: `advance_triage_state` moves the phase, the node records the
+    trail entry (an advance, or the decision kind - the ratified phase-path
+    vocabulary), then consumes the observation. The DECIDE packet is a
+    SENTINEL: the harness composes the material only when an advance actually
+    happened, and replaces the sentinel before the packet rides the gate
+    response."""
     outcome = state.get("observed_outcome") or {"kind": "advance", "decision": None}
     phase = advance_triage_state(state.get("phase") or "assess", outcome)
     decision = outcome.get("decision")
-    entry = {"phase": phase, "lap": (state.get("facts") or {}).get("lap", 0)}
+    kind = "advance" if decision is None else (
+        "variant" if decision.get("action") == "variant" else "terminal")
+    entry = {"phase": phase, "kind": kind,
+             "lap": (state.get("facts") or {}).get("lap", 0)}
     return {
         "phase": phase,
         "decision": decision,
-        "injected_constant": (state.get("decide_packet") or "") if decision is None else None,
+        "injected_constant": (DECIDE_PACKET_SENTINEL
+                              if decision is None else None),
         "trail": [entry],
         "observed_signal": None,
         "observed_args": None,

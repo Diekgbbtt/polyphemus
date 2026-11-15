@@ -16,6 +16,7 @@ executor, and the phase packet appended once to the accepted gate response.
 """
 from __future__ import annotations
 
+import logging
 from typing import Sequence
 
 from polymerhus.attack.hunting.pod.types import (
@@ -23,6 +24,8 @@ from polymerhus.attack.hunting.pod.types import (
     skill_concretised_procedure_from_spec,
 )
 from polymerhus.attack.hunting.pod.variant_basis import PROCEDURE_GAP_FIELD
+
+logger = logging.getLogger(__name__)
 
 MAX_TRIAGE_STEPS = 6
 """The bounded turn budget of one triage decision. A model that never submits
@@ -39,16 +42,23 @@ def _openai_tool_dict(tool) -> dict:
     return convert_to_openai_tool(tool)
 
 
-def _thread_message_count(checkpointer, thread_id: str) -> int:
+async def _thread_message_count(checkpointer, thread_id: str) -> int:
     """The thread's persisted message count, or 0 (stateless or unreadable -
     fail-open: the packet then simply repeats, which only a re-dispatch can
-    hit)."""
+    hit). An async-native saver is read through its async seam."""
     if checkpointer is None:
         return 0
     try:
-        from polymerhus.app.llm.session import _read_thread_state
+        from polymerhus.app.llm.session import (
+            _aread_thread_state,
+            _read_thread_state,
+        )
 
-        state = _read_thread_state(checkpointer, thread_id)
+        if getattr(checkpointer, "aget_tuple", None) is not None and \
+                not hasattr(checkpointer, "get_tuple"):
+            state = await _aread_thread_state(checkpointer, thread_id)
+        else:
+            state = _read_thread_state(checkpointer, thread_id)
         return len((state or {}).get("messages") or [])
     except Exception:  # noqa: BLE001 - fail-open, never into the turn
         return 0
@@ -104,7 +114,10 @@ async def run_triage_harness(log, spec: dict, observation, facts, *, store,
         load_pod_decide_verbatim,
         load_pod_triager_contract,
     )
-    from polymerhus.attack.hunting.pod.triage_graph import build_triage_graph
+    from polymerhus.attack.hunting.pod.triage_graph import (
+    DECIDE_PACKET_SENTINEL,
+    build_triage_graph,
+)
     from polymerhus.attack.hunting.pod.triage_state import detect_triage_signal
     from polymerhus.app.llm.session import arun_session_turn
 
@@ -149,15 +162,19 @@ async def run_triage_harness(log, spec: dict, observation, facts, *, store,
     state: dict = {
         "phase": "assess", "observed_signal": None, "observed_args": None,
         "observed_outcome": None, "facts": dict(facts), "assessment": None,
-        "decide_packet": None, "injected_constant": None, "trail": [],
-        "decision": None,
+        "injected_constant": None, "trail": [], "decision": None,
     }
     # The thread's prior message count rides the facts: every decision's
     # packet is unique on its thread, so a re-dispatched pod's lap-1 packet is
     # never byte-identical to the one already there (an identical stamped id
     # would replace in place instead of appending).
-    facts["prior_turns"] = _thread_message_count(session_ctx.checkpointer, mem_key)
+    facts["prior_turns"] = await _thread_message_count(session_ctx.checkpointer,
+                                                       mem_key)
     request_tools, tools_by_name, binding = _surface(None, "assess")
+    # The ASSESS verbatim rides the base packet on the FIRST decision of the
+    # thread - the lap counter on a resumed pod is not enough (a resumed pod
+    # starts at lap N on a thread that has never seen the verbatim).
+    include_verbatim = lap <= 1 or facts.get("prior_turns", 0) == 0
     base_parts = []
     if lap <= 1:
         # Q5: the bound-skill LISTING rides the first human message - the one
@@ -172,7 +189,7 @@ async def run_triage_harness(log, spec: dict, observation, facts, *, store,
     base_parts.append(compose_assess_packet(log, spec, observation, facts,
                                             store=store, spec_id=spec_id,
                                             order=order,
-                                            include_verbatim=lap <= 1))
+                                            include_verbatim=include_verbatim))
     base = "\n\n".join(part for part in base_parts if part)
     new_messages = _dicts_to_lc([{"role": "human", "content": base}])
     rejections: list[str] = []
@@ -198,6 +215,10 @@ async def run_triage_harness(log, spec: dict, observation, facts, *, store,
         )
         tool_calls = _last_tool_calls(turn.messages)
         if not tool_calls:
+            # A model error, never a verdict: the bounded correction. The
+            # previous step's results were already delivered (they rode this
+            # turn's input), so they must not be re-sent.
+            results = []
             new_messages = _dicts_to_lc(
                 [{"role": "human", "content": gate_correction(state["phase"])}])
             continue
@@ -212,18 +233,18 @@ async def run_triage_harness(log, spec: dict, observation, facts, *, store,
             if signal is not None and not accepted:
                 signal = None
             if signal is not None:
-                # The packet is composed per advance: the DECIDE material is
-                # this lap's state, and the verbatim rides with it once.
-                material = compose_decide_packet(log, spec, facts, store=store,
-                                                 spec_id=spec_id, order=order)
-                packet = f"{load_pod_decide_verbatim()}\n\n{material}"
                 state = await graph.ainvoke({
                     **state, "observed_signal": signal,
-                    "observed_args": tc.get("args") or {},
-                    "decide_packet": packet})
-            packet = state.get("injected_constant")
-            if packet:
-                result = f"{result}\n\n<phase-packet>\n{packet}\n</phase-packet>"
+                    "observed_args": tc.get("args") or {}})
+            # The advance node set the SENTINEL only when the route continues
+            # (an assessment that advanced to DECIDE); the packet is composed
+            # here, once, and the DECIDE material is this lap's state.
+            if state.get("injected_constant") == DECIDE_PACKET_SENTINEL:
+                material = compose_decide_packet(log, spec, facts, store=store,
+                                                 spec_id=spec_id, order=order)
+                result = (f"{result}\n\n<phase-packet>\n"
+                          f"{load_pod_decide_verbatim()}\n\n{material}\n"
+                          "</phase-packet>")
                 state = {**state, "injected_constant": None}
             results.append(ToolMessage(tool_call_id=tc.get("id") or "",
                                        content=result))
@@ -238,16 +259,25 @@ async def run_triage_harness(log, spec: dict, observation, facts, *, store,
     # done, so the final tool results would otherwise dangle - and any resume
     # of this thread (the next lap, a re-dispatched pod) would trip the
     # adjacency contract. The closing turns feed the results back; the replies
-    # are discarded. A closing turn whose model emits more calls gets its calls
-    # answered once more (bounded): the phase gates are closed, so those calls
-    # are coded rejections, and a sane model answers with plain text.
-    closing_budget = 2
+    # are discarded. The gates are CLOSED on a closing turn (the machine is
+    # done), so a post-decision submission is a coded rejection, never an
+    # accepted signal. A closing turn whose model emits more calls gets its
+    # calls answered once more (bounded); on exhaustion the leftover calls are
+    # surfaced for the operator.
+    closing_tools = {**{t.name: t for t in
+                        (triager_react_tools(
+                            harness_ctx.memory_store, harness_ctx.spec_id,
+                            log=harness_ctx.log,
+                            variant_ref=harness_ctx.variant_ref or "",
+                            graph_view_fn=harness_ctx.graph_view_fn,
+                            browser_tool=harness_ctx.browser_tool))},
+                     **build_triage_gate_tools(facts, state.get("assessment"),
+                                               "done")}
+    closing_budget = 3
     while results and closing_budget:
         closing_budget -= 1
         closing = await turn_fn(
-            role_id, mem_key,
-            [m if isinstance(m, (ToolMessage, HumanMessage, AIMessage)) else m
-             for m in results],
+            role_id, mem_key, list(results),
             checkpointer=session_ctx.checkpointer,
             tools=request_tools,
             system_prompt=contract,
@@ -263,9 +293,14 @@ async def run_triage_harness(log, spec: dict, observation, facts, *, store,
             break
         results = [
             ToolMessage(tool_call_id=tc.get("id") or "",
-                        content=await invoke_fn(tools_by_name, tc.get("name", ""),
+                        content=await invoke_fn(closing_tools,
+                                                tc.get("name", ""),
                                                 tc.get("args") or {}))
             for tc in calls]
+    if results and not closing_budget:
+        logger.warning(
+            "triage closing budget exhausted with unanswered tool calls on %s",
+            mem_key)
 
     decision = state.get("decision")
     if decision is None:
@@ -280,11 +315,17 @@ async def run_triage_harness(log, spec: dict, observation, facts, *, store,
             "note": ("triage step budget exhausted without a gate submission; "
                      "degraded"),
         }
+    # The phase path: the ratified vocabulary. An advance records the phase
+    # the machine moved to; a decision records the decision kind.
+    def _path_token(entry: dict) -> str:
+        if entry.get("kind") in ("variant", "terminal"):
+            return str(entry["kind"])
+        return str(entry.get("phase", ""))
+
     return {"decision": decision, "assessment": state.get("assessment"),
             "steps": steps, "rejections": rejections,
             "phase_path": ">".join(
-                ["assess", *[str(e.get("phase", ""))
-                             for e in state.get("trail", [])]])}
+                ["assess", *[_path_token(e) for e in state.get("trail", [])]])}
 
 
 def has_populated_procedure(spec: dict) -> bool:

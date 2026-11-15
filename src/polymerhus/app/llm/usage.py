@@ -495,10 +495,17 @@ class TokenUsageMiddleware(AgentMiddleware):
             from langgraph.config import get_config
 
             metadata = (get_config() or {}).get("metadata") or {}
+            # A turn may run SEVERAL model calls (the agent's internal tool
+            # loop); only the FIRST one is the thread-opening turn the design
+            # counts. The flag is consumed on first read, so the rest of the
+            # turn records warm.
+            first_call = bool(metadata.get("usage_first_call"))
+            if first_call:
+                metadata.pop("usage_first_call", None)
             usage_ledger().record(
                 metadata.get("usage_scope"),
                 metadata.get("role_id") or "unknown", usage,
-                first_call=bool(metadata.get("usage_first_call")))
+                first_call=first_call)
         except Exception:  # noqa: BLE001 - fail-open: never break the turn
             logger.warning("token usage tracking failed; call left unaccounted",
                            exc_info=True)

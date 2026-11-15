@@ -563,7 +563,7 @@ def _reset_live_catalogue() -> None:
 SKILL_LOAD_CONTRACT = (
     "Load a skill by name at runtime: the body with YAML frontmatter stripped, "
     "plus the meta-usage-skill protocol after a `---` separator.\n\n"
-    "Your system prompt carries the direct references. Discover the full set "
+    "The role's provided material lists the direct references. Discover the full set "
     "with the `listing` (no name lists all; `pattern` narrows). Load once per "
     "skill whose discipline bears on the turn; repeat loads return the cached "
     "body.\n\n"

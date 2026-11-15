@@ -387,7 +387,7 @@ The `declined_attribute` storage field carries the variant basis.
 19. As the triager, I want the terminal decision vocabulary unchanged, so that the binary verdict and the six terminal reasons stay stable.
 20. As an operator, I want the variant record shape unchanged, so that the pod memory and the parent reads do not migrate.
 21. As an operator, I want `declined_attribute` to carry the basis, so that the stored lineage names the real reason.
-22. As an operator, I want the seven procedure gaps named after the skill's procedure, so that the triager and the hunter use the same entities.
+22. As an operator, I want the nine procedure gaps named after the skill's procedure, so that the triager and the hunter use the same entities.
 23. As an operator, I want the skill procedure excerpt bounded, so that the pod context does not grow with the whole skill.
 24. As an operator, I want the pod to fall back to the failure-mode reasoning when the excerpt is absent, so that a missing provenance field degrades rather than blocks.
 25. As a reviewer, I want the INIT gate's mandatory set fixed, so that no implementation invents a third requirement.
@@ -462,7 +462,7 @@ SkillProcedure:
 ```
 
 The hunter authors it from the loaded class skill; the total excerpt is bounded to 4000 characters.
-The seven fields map one-to-one to the seven procedure gap bases in 8.6.
+The nine fields map one-to-one to the nine procedure gap bases in 8.6.
 The pod triager reads the excerpt from the spec provenance.
 
 The retired fields are `testing_pattern`, `payload_vector_space`, and `interpretation_guidance`.
@@ -545,14 +545,14 @@ The variant basis vocabulary is:
 | `runner-failure` | The runner execution failed. |
 | `runner-divergence` | The execution diverged completely from the spec. |
 
-The first seven are procedure gaps.
+The first nine are procedure gaps.
 The `failure-mode` basis is the fallback.
 The last two are execution triggers.
 
 The minting algorithm is:
 
 1. Read the typed `SkillProcedure` from `spec.provenance["skill_procedure"]`.
-   The seven fields map to the seven procedure gap bases in table order.
+   The nine fields map to the nine procedure gap bases in table order.
    When the excerpt is absent, record the gap and go to step 5.
    A section is covered when the executed procedure in the D6 trail contains the action, technique, or check that the section names.
    The triager judges coverage from the trail; the mapping is one-to-one.
@@ -562,7 +562,7 @@ The minting algorithm is:
 3. Test the execution triggers first.
    When the runner failed, the basis is `runner-failure`; when it diverged completely from the spec, the basis is `runner-divergence`.
    A failed or diverged execution has no meaningful procedure coverage, so these triggers outrank the diff (T10 H3).
-4. Test the seven populated gap classes in the table order.
+4. Test the nine populated gap classes in the table order.
    The first gap class that the executed procedure does not cover is the basis.
    The variant changes the spec to cover it.
 5. If every populated gap class is covered, reason on the additional observable failure modes the spec's `verification_symptoms` and `assumptions` could yield.

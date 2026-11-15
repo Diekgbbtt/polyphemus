@@ -6,9 +6,10 @@ the P0-P3 plan as `system_prompt`,
 the consumed inbox delta as `new_messages` (D84-9/10/11) - the tool-call threat
 lives INSIDE `create_agent`, with the harness middleware owning G1/G4/O7
 (D84-22). Its final tool call at P3 space-exhaustion writes the consolidated
-`experiment_summary` note (D84-17/19). The `pod_triager` (critic) is a third-party
-variant miner: one `stateful_turn` with `ToolStrategy(TriagerDecision)` reading
-the verbatim P3 note + the filtered context (D84-23).
+`experiment_summary` note (D84-17/19). The `pod_triager` (critic) is the lifecycle v2
+two-phase chain: ONE harness loop per decision (`run_triage_harness`) driving
+`submit_assessment` -> `submit_decision` on the immutable contract prompt and
+the constant tool surface (the gates and the phase machine own the rest).
 
 Both default seams read their TYPED session (`pod_session()`), the run's #95
 compaction middleware (`pod_middleware()`), and the run-scoped harness

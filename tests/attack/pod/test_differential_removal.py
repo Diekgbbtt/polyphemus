@@ -74,10 +74,17 @@ def test_context_slices_carry_no_differential():
     log = ExperimentLog()
     ctx = log.runner_context({"target_identity": {"url": "http://svc/", "unit_id": "svc"}}, feedback="vary the encoding",
                              iteration=2, budget=8)
-    tctx = log.triager_context({"target_identity": {"url": "http://svc/", "unit_id": "svc"}},
-                               RawObservation(status=200, body="hi"))
+    from polymerhus.attack.hunting.pod.context import compose_assess_packet
+
+    packet = compose_assess_packet(
+        log, {"target_identity": {"url": "http://svc/", "unit_id": "svc"}},
+        RawObservation(status=200, body="hi"),
+        {"runner_failed": False, "runner_exhausted": False,
+         "runner_terminated": None, "variant_allowed": True,
+         "lap": 1, "thread_id": "pod:triager:x", "prior_turns": 0},
+        store=None, spec_id="x", order=0)
     assert "differential" not in ctx.lower()
-    assert "differential" not in tctx.lower()
+    assert "differential" not in packet.lower()
 
 
 def test_prompt_verbatims_contain_no_differential_reference():

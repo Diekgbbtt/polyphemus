@@ -33,9 +33,10 @@ The FSM (production):
                          tools=[exec, note, query_lightrag, graph_view], system_prompt = the
                          P0-P3 plan, new_messages = the consumed inbox delta;
                          the P3 note write is the runner's FINAL tool call)
-    -> triager (symbolic fast-path, else the critic's note-reading stateful turn)
-    -> decide  -> {terminal | mine variant -> [POD-BUDGET CHECK] -> runner_agent
-                   | budget_terminal}
+    -> triager (the lifecycle v2 harness loop; the harness facts are computed
+                in the node, and a runner kill routes here for a final pass)
+    -> decide  -> {terminal | mine variant -> runner_agent | budget_terminal
+                   | degraded_terminal (a no-evaluation outcome after a kill)}
     -> TERMINAL (render the D5 + D6 envelope)
 
 THE CONTRACT-TIER LANE: an injected `runner_step_fn` (a sync fake such as
@@ -76,7 +77,6 @@ from polymerhus.attack.hunting.pod.agents import (
 )
 from polymerhus.attack.hunting.pod.prompts import (
     load_pod_runner_skill,
-    load_pod_triager_contract,
 )
 from polymerhus.attack.hunting.pod.config import (
     DEFAULT_POD_TIMEOUTS,
@@ -96,10 +96,6 @@ from polymerhus.attack.hunting.pod.context import (
 )
 from polymerhus.attack.hunting.pod.triage import has_populated_procedure
 from polymerhus.attack.hunting.pod.triage_state import TriageFacts
-from polymerhus.attack.hunting.pod.types import (
-    NODE_TIMEOUT,
-    TOOL_TIMEOUT,
-)
 
 from polymerhus.attack.hunting.pod.llm import (
     POD_DEFAULT_RUN_ID,
@@ -112,7 +108,6 @@ from polymerhus.attack.hunting.pod.pod_memory import (
     PodMemoryStore,
     read_variant_summary,
 )
-from polymerhus.attack.hunting.pod.symbolic import evaluate_symptom
 from polymerhus.attack.hunting.pod.tools import (
     command_signature,
     parse_curl,
@@ -122,16 +117,16 @@ from polymerhus.attack.hunting.pod.tools import (
 from polymerhus.attack.hunting.pod.types import (
     BUDGET_TIMEOUT,
     HARNESS_TERMINAL_REASONS,
-    INFEASIBILITY_SIGNAL_CLASS,
     Interpretation,
+    NODE_TIMEOUT,
     NO_SYMPTOM_EVIDENCE,
     PodState,
     RawObservation,
     RunnerStep,
     SPACE_EXHAUSTED,
     SYMPTOM_CONFIRMED,
-    SYMPTOM_CONFIRMED_CLASS,
     TECHNICAL_INFEASIBILITY,
+    TOOL_TIMEOUT,
     VariantSpec,
     skill_concretised_procedure_from_spec,
 )
@@ -211,7 +206,7 @@ def _variant_coverage(decision: dict) -> list[str] | None:
 
     A malformed value is no assessment (the graph keeps the triager's claimed
     basis rather than inventing a gap from garbage). Every token must be one of
-    the seven procedure-gap literals (T10 H4): an unknown token means the
+    the nine procedure-gap literals (T10 H4): an unknown token means the
     assessment is not a valid subset of the table, so the whole assessment is
     ignored instead of the unknown entries reading as "uncovered"."""
     raw = decision.get("covered_gap_classes")
@@ -527,14 +522,16 @@ def _pod_error_handler(state: PodState, error: NodeError) -> Command:
     failure = classify_pod_failure(error.error, node=error.node)
     if failure is None:
         raise error.error
-    if error.node == "runner_agent" and failure.reason in (
-            NODE_TIMEOUT, TOOL_TIMEOUT):
+    if failure.reason in (NODE_TIMEOUT, TOOL_TIMEOUT):
         # The kill is a fact, not a terminal: the triager still triages the
         # most recent runner loop execution, with variant minting disabled.
+        # A kill is NOT an exhaustion - the facts must not invite a clean
+        # absence. The route keys on the FAILURE REASON (the ratified kill
+        # list: a runner node timeout, a tool timeout), never on the node
+        # name.
         return Command(
             update={"control_plane_end_reason": failure.reason,
                     "terminal_reason": failure.reason,
-                    "runner_exhausted": True,
                     "error": failure.detail},
             goto="triager",
         )
@@ -546,22 +543,19 @@ def _pod_error_handler(state: PodState, error: NodeError) -> Command:
 
 
 def _triager_error_handler(state: PodState, error: NodeError) -> Command:
-    """The triager node's own handler: a failed triage pass cannot fabricate a
-    domain verdict, so the harness terminal stands with the control-plane end
-    reason when one exists (a kill), else with the failure's own typed reason.
-    An unclassified failure without a kill keeps the caller's policy (re-raise
-    into `arun_pod`'s domain degrade)."""
-    kill = state.get("control_plane_end_reason")
-    if kill:
-        return Command(
-            update={"error": str(error.error), "terminal_reason": kill},
-            goto="degraded_terminal",
-        )
+    """The triager node's own handler: a provider failure is re-raised FIRST
+    (#329/#312: the surfer owns the retry, and no domain verdict is fabricated),
+    then a typed infrastructure failure degrades to the harness terminal with
+    the control-plane end reason when one exists (a kill), else with the
+    failure's own reason. An unclassified failure without a kill keeps the
+    caller's policy (re-raise into `arun_pod`'s domain degrade)."""
     failure = classify_pod_failure(error.error, node=error.node)
     if failure is None:
         raise error.error
+    kill = state.get("control_plane_end_reason")
+    reason = kill or failure.reason
     return Command(
-        update={"error": failure.detail, "terminal_reason": failure.reason},
+        update={"error": failure.detail, "terminal_reason": reason},
         goto="degraded_terminal",
     )
 
@@ -926,12 +920,30 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
             else RawObservation()
         mem_key = _mem_key(state, spec_id, memory_store)
         kill = state.get("control_plane_end_reason")
+        if kill and not state.get("stretch_obs", 0) and not state.get("last_observation"):
+            # A kill with NOTHING to judge: the harness terminal stands
+            # (symmetric with the no-probe exhaustion split). No evaluation,
+            # no fabricated domain verdict - a vacuously clean absence can
+            # never latch.
+            return {"decision": {
+                "action": "terminate", "classification": "noise",
+                "verdict": "unsuccessful", "terminal_reason": NO_SYMPTOM_EVIDENCE,
+                "clean": False, "degraded": True,
+                "note": (f"runner terminated ({kill}) with no observation to "
+                         "judge; degraded")}}
         runner_failed = _runner_failed_from(obs)
         # The exhaustion fact: the router routed here from an exhausted conclude
-        # WITH observations (the pending step is still this stretch's), or the
-        # kill carried it.
+        # WITH observations (the pending step is still this stretch's). A kill
+        # is NOT an exhaustion - the stale pending step never claims it.
         runner_exhausted = bool(state.get("runner_exhausted")) \
-            or bool(getattr(_step(state), "exhausted", False))
+            or (not kill and bool(getattr(_step(state), "exhausted", False)))
+        if not has_populated_procedure(spec):
+            variant_reason = ("no mintable procedure attribute (a recorded "
+                              "gap); no variant basis is derivable")
+        elif kill:
+            variant_reason = f"the runner is terminated ({kill})"
+        else:
+            variant_reason = "the lap cap is reached"
         variant_allowed = (
             has_populated_procedure(spec)
             and not kill
@@ -941,6 +953,7 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
             runner_exhausted=runner_exhausted,
             runner_terminated=kill,
             variant_allowed=variant_allowed,
+            variant_allowed_reason=variant_reason,
             lap=state.get("iteration", 1),
             # A store-less contract tier has no memory key: the thread id falls
             # back to the run-scoped role address, never empty.
@@ -971,6 +984,7 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
                 decision = {"classification": decision.get("classification", "noise"),
                             "action": "terminate", "verdict": "unsuccessful",
                             "terminal_reason": NO_SYMPTOM_EVIDENCE, "clean": False,
+                            "degraded": True,
                             "note": "triager decision malformed; degraded (" +
                                     "; ".join(violations) + ")"}
             else:
@@ -985,24 +999,21 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
             decision = {"classification": decision.get("classification", "noise"),
                         "action": "terminate", "verdict": "unsuccessful",
                         "terminal_reason": NO_SYMPTOM_EVIDENCE, "clean": False,
+                        "degraded": True,
                         "note": "triager action missing; degraded"}
         elif not variant_allowed:
-            # The facts already said no variant can run on this lap. Name the
-            # reason: no mintable procedure (a recorded gap), a control-plane
-            # kill, or the lap cap - the honest degrade, not the harness
-            # budget terminal.
-            if not has_populated_procedure(spec):
-                reason_note = ("no mintable procedure attribute (a recorded "
-                               "gap); no variant basis is derivable")
-            elif kill:
-                reason_note = f"the runner is terminated ({kill})"
-            else:
-                reason_note = "the lap cap is reached"
+            # The facts already said no variant can run on this lap (the
+            # computed `variant_allowed_reason`); the honest degrade, not the
+            # harness budget terminal. The clean value from the decision
+            # stands - the degrade is not a clean judgement.
+            clean = decision.get("clean")
+            if not isinstance(clean, bool):
+                clean = False
             decision = {"classification": decision.get("classification", "noise"),
                         "action": "terminate", "verdict": "unsuccessful",
-                        "terminal_reason": NO_SYMPTOM_EVIDENCE, "clean": False,
+                        "terminal_reason": NO_SYMPTOM_EVIDENCE, "clean": clean,
                         "note": (str(decision.get("note") or "") +
-                                 f" [variant not allowed: {reason_note}; "
+                                 f" [variant not allowed: {variant_reason}; "
                                  "degraded]").strip()}
         else:
             decision = _resolve_variant_decision(decision, spec, log)
@@ -1147,17 +1158,22 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
                 mem_key, order, exc)
 
     async def terminal(state: PodState) -> dict:
-        init_v = state.get("init_validation") or []
-        if init_v:
-            return _export(state, verdict="unsuccessful", reason=TECHNICAL_INFEASIBILITY,
-                           clean=False, init_validation=init_v)
         decision = state.get("decision", {})
-        reason = decision.get("terminal_reason", SPACE_EXHAUSTED)
+        reason = decision.get("terminal_reason") or NO_SYMPTOM_EVIDENCE
         await _ensure_summary(state, reason=reason)
         clean = decision.get("clean") if isinstance(decision.get("clean"), bool) \
             else False
         return _export(state, verdict=decision.get("verdict", "unsuccessful"),
                        reason=reason, clean=clean)
+
+    async def init_reject_terminal(state: PodState) -> dict:
+        """The spec's INIT-schema rejection: the ONE structural terminal the
+        triager can never reach, because no probe exists. Routed only from
+        `init_router`; a delivered triage decision is never overridden by it."""
+        init_v = state.get("init_validation") or []
+        await _ensure_summary(state, reason=TECHNICAL_INFEASIBILITY)
+        return _export(state, verdict="unsuccessful", reason=TECHNICAL_INFEASIBILITY,
+                       clean=False, init_validation=init_v)
 
     async def infeasible_terminal(state: PodState) -> dict:
         # The runner's INIT-gate Phase-1 rejection: assumptions the evidence
@@ -1203,7 +1219,8 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
                      ("terminal", terminal), ("infeasible_terminal", infeasible_terminal),
                      ("exhausted_terminal", exhausted_terminal),
                      ("budget_terminal", budget_terminal),
-                     ("degraded_terminal", degraded_terminal)]:
+                     ("degraded_terminal", degraded_terminal),
+                     ("init_reject_terminal", init_reject_terminal)]:
         g.add_node(name, fn)
 
     node_timeout = _timeout_policy(timeouts.node_idle_s, timeouts.node_run_s)
@@ -1214,7 +1231,8 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
 
     g.add_edge(START, "init")
     g.add_conditional_edges("init", init_router,
-                            {"reject": "terminal", "runner": "runner_agent"})
+                            {"reject": "init_reject_terminal",
+                             "runner": "runner_agent"})
     if production_runner:
         # D84-29: the ReAct tool-call threat lives INSIDE `create_agent` - the
         # `tool_exec` node is NOT registered for the production lane. The harness
@@ -1240,7 +1258,7 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
                              "degraded_terminal": "degraded_terminal"})
     g.add_edge("mint_variant", "runner_agent")
     for t in ("terminal", "infeasible_terminal", "exhausted_terminal",
-              "budget_terminal", "degraded_terminal"):
+              "budget_terminal", "degraded_terminal", "init_reject_terminal"):
         g.add_edge(t, END)
     return g.compile()
 

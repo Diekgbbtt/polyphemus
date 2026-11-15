@@ -125,7 +125,7 @@ def test_the_triage_lane_is_a_strict_prefix_extension(spy, tmp_path):
         exec_fn=lambda command, timeout_s: ExecResult(
             stdout=_ABSENT, stderr="", returncode=0, duration_ms=1),
         trace_fn=lambda run_id: [], memory_store=PodMemoryStore(tmp_path),
-        spec_id=SPEC_ID, project_id="proj-1",
+        spec_id=SPEC_ID + "_cache", project_id="proj-1",
         model_factory=factory))
 
     assert env["verdict"] == "unsuccessful"

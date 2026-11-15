@@ -107,7 +107,7 @@ def mint_variant_basis(
 
     The execution triggers come first (S5 8.6 steps 3): a failed or diverged
     runner never yields a meaningful procedure diff, so its recovery basis is
-    the variant. Then the seven populated classes in table order - the first
+    the variant. Then the nine populated classes in table order - the first
     uncovered class wins; an empty class is skipped. When the excerpt is absent,
     the gap is recorded and no variant basis is derivable.
     `covered=None` means the triager stated no coverage assessment, so no

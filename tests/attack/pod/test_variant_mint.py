@@ -258,10 +258,12 @@ def test_the_decision_gate_carries_the_coverage_assessment():
     # carries NO clean field - the assessment owns it.
     from polymerhus.attack.hunting.pod.triage_state import DecisionSubmission
 
-    decision = DecisionSubmission(action="variant", note="n")
+    decision = DecisionSubmission(action="variant",
+                                  declined_attribute="payload-vector", note="n")
     assert decision.covered_gap_classes is None
     assert not hasattr(decision, "clean")
-    filled = DecisionSubmission(action="variant", note="n",
+    filled = DecisionSubmission(action="variant",
+                                declined_attribute="payload-vector", note="n",
                                 covered_gap_classes=["recon-action"])
     assert filled.model_dump()["covered_gap_classes"] == ["recon-action"]
 

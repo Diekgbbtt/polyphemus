@@ -10,6 +10,7 @@ from __future__ import annotations
 from langgraph.constants import END
 
 from polymerhus.attack.hunting.pod.triage_graph import (
+    DECIDE_PACKET_SENTINEL,
     build_triage_graph,
     route_supervise,
 )
@@ -25,7 +26,7 @@ _ASSESSMENT = {"symptom_confirmed": False, "runner_diverged": False,
 
 def _state(**over):
     base = {"phase": "assess", "observed_signal": None, "observed_args": None,
-            "facts": dict(_FACTS), "assessment": None, "decide_packet": "DECIDE MATERIAL",
+            "facts": dict(_FACTS), "assessment": None,
             "injected_constant": None, "trail": [], "decision": None}
     base.update(over)
     return base
@@ -47,15 +48,16 @@ def test_route_supervise_stays_put_without_a_signal():
 
 # --- the compiled drive --------------------------------------------------------
 
-def test_a_negative_assessment_advances_to_decide_with_the_packet():
+def test_a_negative_assessment_advances_to_decide_with_the_packet_sentinel():
     graph = build_triage_graph().compile()
     out = graph.invoke(_state(observed_signal="assessment",
                               observed_args=dict(_ASSESSMENT)))
     assert out["phase"] == "decide"
-    assert out["injected_constant"] == "DECIDE MATERIAL"
+    assert out["injected_constant"] == DECIDE_PACKET_SENTINEL
     assert out["assessment"] == _ASSESSMENT
     assert out["observed_signal"] is None and out["observed_args"] is None
-    assert len(out["trail"]) == 1
+    # The trail entry records the RATIFIED phase-path kind: the advance.
+    assert out["trail"][0]["kind"] == "advance"
 
 
 def test_a_confirmed_assessment_lands_done_with_the_domain_decision():
@@ -69,6 +71,8 @@ def test_a_confirmed_assessment_lands_done_with_the_domain_decision():
     assert decision["terminal_reason"] == SYMPTOM_CONFIRMED
     assert decision["clean"] is True
     assert out["injected_constant"] is None
+    # The trail records the decision kind: the ratified phase-path vocabulary.
+    assert out["trail"][0]["kind"] == "terminal"
 
 
 def test_a_terminate_decision_lands_done_with_the_assessment_clean():

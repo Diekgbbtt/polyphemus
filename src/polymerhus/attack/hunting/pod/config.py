@@ -8,10 +8,11 @@ hunter's threat payload. Three families:
     `MAX_POD_ITERS` retries on a non-zero exit and `EXEC_TIMEOUT_S` per exec.
   * The OUTER threat cap `HUNT_POD_MAX_ITERS` - the pod's own probe/variant
     budget. It bounds the actor-critic threat so the critic can never mine
-    variants forever (the load-bearing halt guarantee). It is checked at the
-    DECIDE -> PROBE edge (after the triager, before the next runner step) so a
-    loop lap always completes - no mid-loop stop - and, when hit, it terminates
-    ONLY the pod (`budget-timeout`), never the whole hunt.
+    variants forever (the load-bearing halt guarantee). It reaches the triager
+    through `variant_allowed=false` BEFORE the decision, so a variant decision
+    at the cap degrades to the honest domain terminal (lifecycle v2); the
+    harness `budget_terminal` node is a defensive backstop only, and the cap
+    never touches the whole hunt.
   * The pod graph's node and tool bounds (`PodTimeouts`): the LangGraph
     `TimeoutPolicy` applied by `build_pod_graph`. The idle timeout is the
     liveness bound; the optional run timeout is a tighter pod-owned ceiling;
@@ -64,8 +65,9 @@ class PodTimeouts:
 DEFAULT_POD_TIMEOUTS = PodTimeouts()
 
 # The outer actor-critic threat budget: the max number of probe/variant laps the
-# pod runs before it terminates itself with `budget-timeout`. Checked at the
-# DECIDE -> RUNNER boundary so every lap completes atomically (operator, 2026-08-06).
+# pod runs. It rides the triager facts (`variant_allowed=false` at the cap), so
+# the cap is honoured BEFORE the decision; the harness budget terminal is only
+# a backstop (operator, 2026-08-06; lifecycle v2 2026-11-14).
 HUNT_POD_MAX_ITERS = int(os.environ.get("HUNT_POD_MAX_ITERS", "8"))
 
 # The INNER stretch cap: the max tool calls the runner may drive within ONE probe

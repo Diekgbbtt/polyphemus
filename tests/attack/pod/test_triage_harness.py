@@ -13,7 +13,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from polymerhus.attack.hunting.pod.context import ExperimentLog
 from polymerhus.attack.hunting.pod.gates import build_triage_gate_tools
@@ -21,6 +21,7 @@ from polymerhus.attack.hunting.pod.llm import PodHarnessContext
 from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore, spec_identifier
 from polymerhus.attack.hunting.pod.prompts import load_pod_triager_contract
 from polymerhus.attack.hunting.pod.triage_state import TriageFacts
+from polymerhus.attack.hunting.pod.types import NO_SYMPTOM_EVIDENCE
 from polymerhus.app.llm.provider_failure import ProviderUnavailableError
 from polymerhus.recon.domain.types import ExecResult
 
@@ -74,9 +75,9 @@ async def _invoke_real(tools_by_name, name, args):
     return tool.invoke(args)
 
 
-def _ctx():
+def _ctx(checkpointer=None):
     address = SimpleNamespace(role_id="pod_triager", thread_id=MEM_KEY)
-    return SimpleNamespace(address=address, checkpointer=None)
+    return SimpleNamespace(address=address, checkpointer=checkpointer)
 
 
 def _hc(store):
@@ -87,13 +88,14 @@ def _hc(store):
         variant_ref="v0", model_factory=None)
 
 
-def _run_harness(script, store, *, lap=1):
+def _run_harness(script, store, *, lap=1, checkpointer=None):
     from polymerhus.attack.hunting.pod.triage import run_triage_harness
 
     facts = TriageFacts(**{**_FACTS, "lap": lap})
     return asyncio.run(run_triage_harness(
         ExperimentLog(), {}, None, facts, store=store, spec_id=SPEC_ID,
-        order=0, session_ctx=_ctx(), harness_ctx=_hc(store),
+        order=0, session_ctx=_ctx(checkpointer=checkpointer),
+        harness_ctx=_hc(store),
         turn_fn=script, invoke_fn=_invoke_real))
 
 
@@ -198,7 +200,76 @@ def test_a_provider_failure_propagates_untouched(tmp_path):
         _run_harness(boom, PodMemoryStore(tmp_path))
 
 
-def test_the_turn_tags_carry_run_thread_lap_and_phase(tmp_path):
+def test_the_closing_turns_gates_are_closed(tmp_path):
+    # A post-decision submission on a closing turn is a coded rejection, never
+    # an accepted signal: the machine is done.
+    closing_calls = []
+
+    async def scripted(role, thread, messages, **kw):
+        if "phase:close" in (kw.get("extra_tags") or []):
+            closing_calls.append(kw)
+            # The model misbehaves: it submits a decision AFTER the machine
+            # ended. The gate must reject it.
+            return _turn([{"name": "submit_decision", "id": "c9",
+                           "args": {"action": "terminate",
+                                    "verdict": "successful",
+                                    "terminal_reason": "symptom-confirmed",
+                                    "note": "late"}}], content="")
+        return _turn([_ASSESS_CALL])
+
+    from polymerhus.attack.hunting.pod.triage import run_triage_harness
+
+    facts = TriageFacts(**{**_FACTS, "lap": 1})
+    result = asyncio.run(run_triage_harness(
+        ExperimentLog(), {}, None, facts, store=PodMemoryStore(tmp_path),
+        spec_id=SPEC_ID, order=0, session_ctx=_ctx(), harness_ctx=_hc(
+            PodMemoryStore(tmp_path)),
+        turn_fn=scripted, invoke_fn=_invoke_real))
+    assert result["decision"]["terminal_reason"] != "symptom-confirmed", (
+        "a post-decision submission must never become the machine's decision")
+    assert result["rejections"], "the late submission is a coded rejection"
+
+
+def test_a_prose_turn_clears_the_stale_results(tmp_path):
+    # A no-tool-call turn already DELIVERED the previous results as its input;
+    # the closing turn must never re-send them (a duplicate ToolMessage for the
+    # same tool_call_id would sit after the correction message, off-position).
+    script = _TurnScript([_turn([_ASSESS_CALL]),
+                          _turn([], content="prose, no call"),
+                          _turn([_DECIDE_CALL])])
+    result = _run_harness(script, PodMemoryStore(tmp_path))
+    closing = script.calls[-1]
+    closing_ids = [getattr(m, "tool_call_id", None)
+                   for m in closing["messages"] if isinstance(m, ToolMessage)]
+    assert "a1" not in closing_ids, (
+        "an already-delivered tool result must not be re-sent")
+
+
+def test_the_closing_loop_never_leaves_a_dangling_call(tmp_path):
+    # Two consecutive closing turns both emitting calls: every emitted call is
+    # answered; the harness never ends on an unanswered call.
+    closing_rounds = {"n": 0}
+
+    async def scripted(role, thread, messages, **kw):
+        if "phase:close" in (kw.get("extra_tags") or []):
+            closing_rounds["n"] += 1
+            if closing_rounds["n"] <= 2:
+                return _turn([{"name": "notes", "id": f"n{closing_rounds['n']}",
+                               "args": {"command": "read"}}], content="")
+            return _turn([], content="done closing")
+        return _turn([_ASSESS_CALL])
+
+    from polymerhus.attack.hunting.pod.triage import run_triage_harness
+
+    facts = TriageFacts(**{**_FACTS, "lap": 1})
+    result = asyncio.run(run_triage_harness(
+        ExperimentLog(), {}, None, facts, store=PodMemoryStore(tmp_path),
+        spec_id=SPEC_ID, order=0, session_ctx=_ctx(), harness_ctx=_hc(
+            PodMemoryStore(tmp_path)),
+        turn_fn=scripted, invoke_fn=_invoke_real))
+    # 2 closing tool rounds, each answered: the last scripted turn is prose.
+    assert closing_rounds["n"] == 3
+    assert result["decision"]["terminal_reason"] == NO_SYMPTOM_EVIDENCE
     script = _TurnScript([_turn([_ASSESS_CALL]), _turn([_DECIDE_CALL])])
     _run_harness(script, PodMemoryStore(tmp_path))
     tags = script.calls[0]["extra_tags"]
@@ -206,8 +277,28 @@ def test_the_turn_tags_carry_run_thread_lap_and_phase(tmp_path):
     assert script.calls[0]["thread_id"] == MEM_KEY
 
 
-def test_the_verbatim_rides_only_the_first_lap(tmp_path):
+def test_the_verbatim_rides_only_the_first_decision_of_the_thread(tmp_path, monkeypatch):
+    # A later LAP on an existing thread appends material only: the thread
+    # already carries the verbatim. The thread's prior-turn count is what
+    # decides; a polluted count is the observable stand-in for the persisted
+    # thread (the count's own read is pinned in the re-dispatch tests).
+    import polymerhus.attack.hunting.pod.triage as triage_mod
+
+    monkeypatch.setattr(triage_mod, "_thread_message_count",
+                        lambda *a, **k: 5)
+    # The harness awaits the counter; a sync lambda needs an async wrapper.
+
+    async def async_count(*a, **k):
+        return 5
+
+    monkeypatch.setattr(triage_mod, "_thread_message_count", async_count)
     script = _TurnScript([_turn([_ASSESS_CALL]), _turn([_DECIDE_CALL])])
     _run_harness(script, PodMemoryStore(tmp_path), lap=2)
     assert "# ASSESS phase" not in _text(script.calls[0]["messages"][0])
     assert "## Harness facts" in _text(script.calls[0]["messages"][0])
+
+
+def test_the_verbatim_rides_a_resumed_pods_fresh_thread(tmp_path):
+    script = _TurnScript([_turn([_ASSESS_CALL]), _turn([_DECIDE_CALL])])
+    _run_harness(script, PodMemoryStore(tmp_path), lap=3)
+    assert "# ASSESS phase" in _text(script.calls[0]["messages"][0])

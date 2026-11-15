@@ -111,11 +111,16 @@ def _executed_probe_lines(observations: list[RawObservation]) -> list[str]:
             warning_token = str(next(iter(warning.values())))
         elif isinstance(warning, str) and warning:
             warning_token = warning
+        stderr = str(getattr(obs, "stderr", "") or "").replace("\n", " ")
+        error_message = str(getattr(obs, "error_message", "") or "").replace("\n", " ")
         lines.append(
             f"- {obs.variant_ref or 'v?'} status={obs.status} "
             f"rc={obs.returncode} success={probe_success_marker(obs)} "
             f"error_code={getattr(obs, 'error_code', '') or ''} "
-            f"warning={warning_token}: {what[:_PROBE_SLICE]}")
+            f"error_message={error_message[:_PROBE_SLICE]} "
+            f"fatal={getattr(obs, 'fatal', None)} "
+            f"warning={warning_token} stderr={stderr[:_PROBE_SLICE]}: "
+            f"{what[:_PROBE_SLICE]}")
     return lines
 
 
@@ -363,6 +368,22 @@ class ExperimentLog:
         """Every variant already tried - handed to the Triager so it never mines
         a duplicate (the non-duplication verbatim rides on this)."""
         return [v.ref for v in self.variant_specs]
+
+    def runner_context(self, spec: dict, feedback: str, iteration: int,
+                       budget: int) -> str:
+        """The filtered slice the Runner's session sees each lap: the current
+        spec variant, the tried-probe signatures (so it does not duplicate),
+        the Triager's feedback, and the budget state."""
+        parts = [
+            f"# Lap {iteration} of at most {budget}",
+            f"## Current spec variant\n{json.dumps(_pod_spec_view(spec), indent=2)}",
+        ]
+        if self.executed:
+            parts.append("## Probe signatures already executed (do not repeat)\n"
+                         + "\n".join(f"- {s}" for s in self.executed))
+        if feedback:
+            parts.append(f"## Triager feedback (declination to honour)\n{feedback}")
+        return "\n\n".join(parts)
 
     def runner_context(self, spec: dict, feedback: str, iteration: int,
                        budget: int) -> str:

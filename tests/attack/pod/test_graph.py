@@ -844,11 +844,19 @@ def test_a_no_probe_exhaustion_is_a_harness_terminal():
 def test_a_runner_kill_routes_to_the_triager_with_runner_terminated():
     seen = []
 
-    async def hung(spec, messages, tool_calls):
+    # Stretch 1 records an observation; stretch 2's runner turn hangs, so the
+    # kill reaches the triager with something to judge.
+    calls = {"n": 0}
+
+    async def runner(spec, messages, tool_calls):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return RunnerStep(action="tool_call", tool="exec",
+                              command="curl -k -sS https://t/")
         await asyncio.sleep(30)
 
     env = _run(arun_pod(
-        VALID_SPEC, exec_fn=_exec(_OK), runner_step_fn=hung,
+        VALID_SPEC, exec_fn=_exec(_OK), runner_step_fn=runner,
         triager_fn=lambda *a, **k: _terminate_v2(*a, seen=seen),
         trace_fn=_no_trace,
         timeouts=PodTimeouts(node_idle_s=0.01, node_run_s=None,
@@ -859,7 +867,6 @@ def test_a_runner_kill_routes_to_the_triager_with_runner_terminated():
     assert seen[-1]["runner_terminated"] == "node-timeout"
     assert seen[-1]["variant_allowed"] is False
     assert env["verdict"] == "unsuccessful"
-    assert env["evidence"]["terminal_reason"] == "no-symptom-evidence"
     assert env["evidence"]["control_plane_end_reason"] == "node-timeout"
 
 
@@ -971,6 +978,192 @@ def test_a_confirmed_symptom_still_reaches_the_domain_terminal():
     assert env["verdict"] == "successful"
     assert env["evidence"]["terminal_reason"] == "symptom-confirmed"
     assert env["evidence"]["clean"] is True
+
+
+def test_a_kill_on_a_stretch_with_no_observation_keeps_the_harness_terminal():
+    # Ratified: a kill is not a reason to skip triage - but there must be
+    # something to judge. A kill on a stretch with NO observation has nothing
+    # to evaluate, so the harness terminal stands (symmetric with the
+    # exhaustion split); a vacuously clean space-exhausted can never latch.
+    seen = []
+
+    async def hung(spec, messages, tool_calls):
+        await asyncio.sleep(30)
+
+    def spaced(spec, obs, log, facts):
+        seen.append(dict(facts))
+        return {"action": "terminate", "verdict": "unsuccessful",
+                "terminal_reason": "space-exhausted", "clean": True,
+                "note": "vacuous clean claim"}
+
+    env = _run(arun_pod(
+        VALID_SPEC, exec_fn=_exec(_OK), runner_step_fn=hung,
+        triager_fn=spaced, trace_fn=_no_trace,
+        timeouts=PodTimeouts(node_idle_s=0.01, node_run_s=None,
+                             tool_idle_s=None, tool_run_s=None)))
+    assert seen == [], "nothing to judge: the triager never ran"
+    assert env["verdict"] == "unsuccessful"
+    assert env["evidence"]["terminal_reason"] == "node-timeout"
+    assert env["evidence"]["clean"] is False
+    assert "control_plane_end_reason" not in env["evidence"]
+
+
+def test_a_provider_failure_in_the_triager_after_a_kill_propagates():
+    # #329/#312: a provider failure is infrastructure even after a kill; the
+    # surfer owns the retry, and no domain verdict is fabricated. The kill
+    # reaches the triager with something to judge (stretch 1 probed).
+    calls = {"n": 0}
+
+    async def runner(spec, messages, tool_calls):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return RunnerStep(action="tool_call", tool="exec",
+                              command="curl -k -sS https://t/")
+        await asyncio.sleep(30)
+
+    def throttled(spec, obs, log, facts):
+        raise ProviderUnavailableError("429 too many requests")
+
+    with pytest.raises(ProviderUnavailableError):
+        _run(arun_pod(
+            VALID_SPEC, exec_fn=_exec(_OK), runner_step_fn=runner,
+            triager_fn=throttled, trace_fn=_no_trace,
+            timeouts=PodTimeouts(node_idle_s=0.01, node_run_s=None,
+                                 tool_idle_s=None, tool_run_s=None)))
+
+
+def test_a_tool_timeout_routes_to_the_triager():
+    # Ratified kill list: a runner node timeout, a tool timeout, and the pod
+    # budget cap. The route keys on the FAILURE REASON, not the node name. The
+    # first tool call succeeds (an observation lands), the second hangs.
+    seen = []
+
+    exec_calls = {"n": 0}
+
+    async def hung_second(command, timeout_s):
+        exec_calls["n"] += 1
+        if exec_calls["n"] >= 2:
+            await asyncio.sleep(30)
+        return ExecResult(stdout=_OK, stderr="", returncode=0, duration_ms=1)
+
+    steps = [RunnerStep(action="tool_call", tool="exec",
+                        command="curl -k -sS https://t/"),
+             RunnerStep(action="tool_call", tool="exec",
+                        command="curl -k -sS https://t/2"),
+             RunnerStep(action="conclude", observation_note="done")]
+
+    env = _run(arun_pod(VALID_SPEC, exec_fn=hung_second,
+                        runner_step_fn=_scripted(steps),
+                        triager_fn=lambda *a, **k: _terminate_v2(*a, seen=seen),
+                        trace_fn=_no_trace,
+                        timeouts=PodTimeouts(node_idle_s=None, node_run_s=None,
+                                             tool_idle_s=0.01, tool_run_s=None)))
+    assert seen and seen[-1]["runner_terminated"] == "tool-timeout", (
+        seen, env["evidence"]["terminal_reason"], env["evidence"].get("error"))
+    assert seen[-1]["variant_allowed"] is False
+    assert env["verdict"] == "unsuccessful"
+
+
+def test_a_kill_does_not_claim_runner_exhausted():
+    # A kill is not an exhaustion: the facts must not invite a clean absence.
+    seen = []
+
+    calls = {"n": 0}
+
+    async def runner(spec, messages, tool_calls):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return RunnerStep(action="tool_call", tool="exec",
+                              command="curl -k -sS https://t/")
+        await asyncio.sleep(30)
+
+    _run(arun_pod(
+        VALID_SPEC, exec_fn=_exec(_OK), runner_step_fn=runner,
+        triager_fn=lambda *a, **k: _terminate_v2(*a, seen=seen),
+        trace_fn=_no_trace,
+        timeouts=PodTimeouts(node_idle_s=0.01, node_run_s=None,
+                             tool_idle_s=None, tool_run_s=None)))
+    assert seen and seen[-1]["runner_exhausted"] is False
+    assert seen[-1]["runner_terminated"] == "node-timeout"
+
+
+def test_a_malformed_triage_degrade_after_a_kill_keeps_the_harness_terminal():
+    # Every NO-EVALUATION triage outcome is marked degraded; after a kill the
+    # harness terminal stands. A malformed submission that the node degrades is
+    # no evaluation either.
+    async def hung(spec, messages, tool_calls):
+        await asyncio.sleep(30)
+
+    def malformed(spec, obs, log, facts):
+        return {"action": "terminate", "verdict": "maybe",
+                "terminal_reason": "not-a-reason", "clean": "yes"}
+
+    env = _run(arun_pod(
+        VALID_SPEC, exec_fn=_exec(_OK), runner_step_fn=hung,
+        triager_fn=malformed, trace_fn=_no_trace,
+        timeouts=PodTimeouts(node_idle_s=0.01, node_run_s=None,
+                             tool_idle_s=None, tool_run_s=None)))
+    assert env["evidence"]["terminal_reason"] == "node-timeout"
+    assert env["evidence"]["clean"] is False
+    assert "control_plane_end_reason" not in env["evidence"]
+
+
+def test_the_delivered_decision_is_never_overridden_by_init_validation():
+    # Monotonicity rule 1: a durable domain verdict is final. A non-URL INIT
+    # violation (which does not stop the run) must never overwrite an evaluated
+    # confirmation; the INIT rejection belongs to the init_router's own path.
+    def confirmed(spec, obs, log, facts):
+        return {"action": "terminate", "verdict": "successful",
+                "terminal_reason": "symptom-confirmed", "clean": True,
+                "note": "the marker is reflected"}
+
+    mixed = {**VALID_SPEC, "verification_symptoms": ["HTTP 200", 42]}
+    env = _run(arun_pod(mixed, exec_fn=_exec(_OK),
+                        runner_step_fn=symbolic_runner_step_fn,
+                        triager_fn=confirmed, trace_fn=_no_trace))
+    assert env["verdict"] == "successful"
+    assert env["evidence"]["terminal_reason"] == "symptom-confirmed"
+
+
+def test_the_init_rejection_still_rejects_before_any_probe():
+    env = _run(arun_pod({"target_identity": {"url": ""}, "verification_symptoms": []},
+                        exec_fn=_exec(_OK),
+                        runner_step_fn=symbolic_runner_step_fn,
+                        triager_fn=_v2_confirmed, trace_fn=_no_trace))
+    assert env["verdict"] == "unsuccessful"
+    assert env["evidence"]["terminal_reason"] == "technical-infeasibility"
+    assert env["evidence"]["init_validation"]
+
+
+def test_the_terminal_default_reason_is_the_weakest_absence():
+    # A missing terminal_reason in a delivered decision must never default to
+    # the strongest absence claim.
+    def blank_reason(spec, obs, log, facts):
+        return {"action": "terminate", "verdict": "unsuccessful",
+                "note": "no reason given"}
+
+    env = _run(arun_pod(VALID_SPEC, exec_fn=_exec(_ABSENT),
+                        runner_step_fn=symbolic_runner_step_fn,
+                        triager_fn=blank_reason, trace_fn=_no_trace))
+    assert env["evidence"]["terminal_reason"] == "no-symptom-evidence"
+
+
+def test_the_variant_not_allowed_reason_names_the_three_causes():
+    seen = []
+
+    def insist(spec, obs, log, facts):
+        seen.append(dict(facts))
+        return {"action": "variant", "declined_attribute": "payload-vector",
+                "variant_spec": {**spec, "rationale": "untested"},
+                "feedback": "f", "note": "one more"}
+
+    # No mintable procedure -> the recorded gap reason.
+    env = _run(arun_pod(VALID_SPEC, exec_fn=_exec(_ABSENT),
+                        runner_step_fn=symbolic_runner_step_fn,
+                        triager_fn=insist, trace_fn=_no_trace))
+    assert seen[-1]["variant_allowed"] is False
+    notes = " ".join(i["note"] for i in env["evidence"]["interpretations"])
+    assert "recorded gap" in notes.lower()
 
 
 # --- pod control-plane failure handling (2026-10-26) -------------------------
