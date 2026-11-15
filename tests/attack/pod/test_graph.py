@@ -1148,6 +1148,29 @@ def test_the_terminal_default_reason_is_the_weakest_absence():
     assert env["evidence"]["terminal_reason"] == "no-symptom-evidence"
 
 
+def test_a_no_derivable_basis_degrade_keeps_the_assessed_clean():
+    # Q9: a full coverage claim with a variant action yields no derivable
+    # basis; the honest negative keeps the assessed clean.
+    from polymerhus.attack.hunting.pod.variant_basis import PROCEDURE_GAP_BASES
+
+    def fully_covered(spec, obs, log, facts):
+        return {"action": "variant", "declined_attribute": "payload-vector",
+                "clean": True,
+                "covered_gap_classes": sorted(PROCEDURE_GAP_BASES),
+                "variant_spec": dict(spec), "note": "all covered"}
+
+    spec = {**VALID_SPEC, "verification_symptoms": ["reflects the marker"],
+            "skill_concretised_procedure": {
+                "recon_action": "fetch the login page",
+                "bypass_technique": "session swap"}}
+    env = _run(arun_pod(spec, exec_fn=_exec(_ABSENT),
+                        runner_step_fn=symbolic_runner_step_fn,
+                        triager_fn=fully_covered, trace_fn=_no_trace))
+    assert env["verdict"] == "unsuccessful"
+    assert env["evidence"]["terminal_reason"] == "no-symptom-evidence"
+    assert env["evidence"]["clean"] is True
+
+
 def test_a_duplicate_variant_degrade_keeps_the_assessed_clean():
     # Q9: clean is triager-owned. A duplicate refusal is a sufficiency
     # condition, not an integrity judgement; the assessed clean stands.

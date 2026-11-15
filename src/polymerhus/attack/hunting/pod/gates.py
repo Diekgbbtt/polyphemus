@@ -84,6 +84,10 @@ def _reject(tool: str, detail: str) -> str:
 
 
 def _validate_assessment(phase: str, args: dict) -> str:
+    if phase == "close":
+        return _reject(
+            ASSESSMENT_TOOL,
+            "the decision is closed; no further submission is accepted")
     if phase != "assess":
         return _reject(
             ASSESSMENT_TOOL,
@@ -95,6 +99,10 @@ def _validate_assessment(phase: str, args: dict) -> str:
 
 def _validate_decision(phase: str, facts: Mapping, assessment: Mapping | None,
                        args: dict) -> str:
+    if phase == "close":
+        return _reject(
+            DECISION_TOOL,
+            "the decision is closed; no further submission is accepted")
     if phase != "decide":
         return _reject(
             DECISION_TOOL,

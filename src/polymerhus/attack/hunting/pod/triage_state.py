@@ -130,6 +130,9 @@ class TriageFacts(TypedDict, total=False):
     variant_allowed_reason: str
     lap: int
     thread_id: str
+    # The thread's persisted message count at this decision's start: it makes
+    # every decision's packet unique on its thread (the re-dispatch contract).
+    prior_turns: int
 
 
 class TriageDecision(TypedDict, total=False):

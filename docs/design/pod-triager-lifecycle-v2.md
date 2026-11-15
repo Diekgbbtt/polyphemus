@@ -359,6 +359,7 @@ for step in range(MAX_TRIAGE_STEPS):
         ...)
     tool_calls = _last_tool_calls(turn.messages)
     if not tool_calls:
+        results = []
         new_messages = [HumanMessage(gate_correction(state["phase"]))]
         continue
     results = []
@@ -370,14 +371,26 @@ for step in range(MAX_TRIAGE_STEPS):
         if signal is not None:
             state = await triage_graph.ainvoke(
                 {**state, "observed_signal": signal, "observed_args": tc["args"]})
-        packet = state.get("injected_constant")
-        if packet:
-            result = f"{result}\n\n<phase-packet>\n{packet}\n</phase-packet>"
+            # The gate closures re-bind to the LIVE phase after an accepted
+            # signal, so a second gate call in the same turn is answered by
+            # the phase the machine now holds.
+            tools_by_name.update(build_triage_gate_tools(
+                facts, state.get("assessment"), state["phase"]))
+        if state.get("injected_constant") == DECIDE_PACKET_SENTINEL:
+            # The advance happened: compose the DECIDE material once.
+            material = compose_decide_packet(log, spec, facts, store=store,
+                                             spec_id=spec_id, order=order)
+            result = f"{result}\n\n<phase-packet>\n{decide_verbatim}\n\n{material}\n</phase-packet>"
             state["injected_constant"] = None
         results.append(ToolMessage(tool_call_id=tc["id"], content=result))
     new_messages = results
     if state["phase"] == "done":
         break
+
+# The bounded closing turns: the final gate call must be answered in the
+# thread (#280 positional adjacency), with the gates CLOSED (a phase-neutral
+# "the decision is closed" rejection). A closing-turn failure never costs a
+# reached decision; it breaks with the results as they stand.
 ```
 
 A malformed gate call returns a coded rejection, so `_gate_accepted` is false and `triage_graph.ainvoke` never runs.
@@ -433,7 +446,7 @@ It does not add a ledger dimension.
 The durable ledger is keyed by `(project_id, agent)` and records flat cumulative axes.
 
 So `extra_tags` cannot price a phase in the ledger.
-Use them for trace joins only: `thread:<mem_key>`, `lap:<n>`, `phase:<assess|decide>`, and `phase:close` for the bounded closing turn that answers the final gate call.
+Use them for trace joins only: the bare `mem_key`, `lap:<n>`, `phase:<assess|decide>`, and `phase:close` for the bounded closing turn that answers the final gate call.
 
 The ledger needs three additive counters to compute the marginal ratio.
 Add to the entry surface:

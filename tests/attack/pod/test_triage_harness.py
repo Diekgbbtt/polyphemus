@@ -13,10 +13,9 @@ import json
 from types import SimpleNamespace
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, ToolMessage
 
 from polymerhus.attack.hunting.pod.context import ExperimentLog
-from polymerhus.attack.hunting.pod.gates import build_triage_gate_tools
 from polymerhus.attack.hunting.pod.llm import PodHarnessContext
 from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore, spec_identifier
 from polymerhus.attack.hunting.pod.prompts import load_pod_triager_contract
@@ -245,11 +244,20 @@ def test_the_phase_path_uses_the_ratified_vocabulary(tmp_path):
     diverged = {"name": "submit_assessment", "id": "a1",
                 "args": {"symptom_confirmed": False, "runner_diverged": True,
                          "clean": True, "note": "n"}}
+    variant_after_decide = [
+        _turn([_ASSESS_CALL]),
+        _turn([{"name": "submit_decision", "id": "d1",
+                "args": {"action": "variant", "declined_attribute": "recon-action",
+                         "variant_spec": {"rationale": "v"}, "note": "n"}}]),
+    ]
     cases = [
         ([_turn([confirmed])], "assess"),
         ([_turn([diverged])], "assess>variant"),
         ([_turn([_ASSESS_CALL]), _turn([_DECIDE_CALL])],
          "assess>decide>terminal"),
+        (variant_after_decide, "assess>decide>variant"),
+        # A budget exhaust after the advance: no gate call ever lands.
+        ([_turn([_ASSESS_CALL])] + [_turn([], content="prose")] * 9, "assess>decide"),
     ]
     for turns, expected in cases:
         script = _TurnScript(list(turns) + [_turn([], content="close")])
@@ -259,8 +267,10 @@ def test_the_phase_path_uses_the_ratified_vocabulary(tmp_path):
 
 def test_the_thread_count_serves_every_saver_shape():
     # The prior-turn read must work for a sync saver, a coroutine-shaped
-    # get_tuple, and an async-only aget_tuple; a broken read degrades to 0.
+    # get_tuple, and a REAL async-only BaseCheckpointSaver (whose inherited
+    # get_tuple raises NotImplementedError); a broken read degrades to 0.
     from langchain_core.messages import HumanMessage
+    from langgraph.checkpoint.base import BaseCheckpointSaver
 
     from polymerhus.attack.hunting.pod.triage import _thread_message_count
 
@@ -282,7 +292,7 @@ def test_the_thread_count_serves_every_saver_shape():
 
             return _read()
 
-    class _AsyncOnlySaver:
+    class _AsyncOnlySaver(BaseCheckpointSaver):
         async def aget_tuple(self, config):
             t = _T()
             t.checkpoint = {"channel_values": {"messages": [HumanMessage(content="x")] * 2}}
@@ -299,6 +309,36 @@ def test_the_thread_count_serves_every_saver_shape():
     assert coroutine_count == 3
     assert async_count == 2
     assert broken == 0
+
+
+def test_the_closing_turn_rejects_truthfully_and_keeps_the_full_surface(tmp_path):
+    # A post-decision submission on a closing turn is a PHASE-NEUTRAL coded
+    # rejection ("the decision is closed"), and the closing executor still
+    # carries the skill binding's tools (the same constant surface, closed).
+    closing_seen = []
+
+    async def scripted(role, thread, messages, **kw):
+        if "phase:close" in (kw.get("extra_tags") or []):
+            closing_seen.append(kw)
+            return _turn([{"name": "submit_decision", "id": "c9",
+                           "args": {"action": "terminate",
+                                    "verdict": "successful",
+                                    "terminal_reason": "symptom-confirmed",
+                                    "note": "late"}}], content="")
+        return _turn([_ASSESS_CALL])
+
+    from polymerhus.attack.hunting.pod.triage import run_triage_harness
+
+    facts = TriageFacts(**{**_FACTS, "lap": 1})
+    result = asyncio.run(run_triage_harness(
+        ExperimentLog(), {}, None, facts, store=PodMemoryStore(tmp_path),
+        spec_id=SPEC_ID, order=0, session_ctx=_ctx(), harness_ctx=_hc(
+            PodMemoryStore(tmp_path)),
+        turn_fn=scripted, invoke_fn=_invoke_real))
+    assert result["decision"]["terminal_reason"] != "symptom-confirmed"
+    rejections = [r for r in result["rejections"] if "decision is closed" in r]
+    assert rejections, "the closing rejection is phase-neutral, not misdirecting"
+    assert closing_seen, "the closing turn ran"
 
 
 def test_the_closing_turns_gates_are_closed(tmp_path):
@@ -339,7 +379,7 @@ def test_a_prose_budget_end_never_closes_with_stale_results(tmp_path):
     script = _TurnScript([_turn([_ASSESS_CALL])] + [_turn([], content="prose")] * 9)
     result = _run_harness(script, PodMemoryStore(tmp_path))
     close_calls = [c for c in script.calls
-                   if "phase:close" in ((c.get("kwargs") or {}).get("extra_tags") or [])]
+                   if "phase:close" in (c.get("extra_tags") or [])]
     assert not close_calls, "no stale results to close: they were delivered"
     assert result["decision"]["clean"] is False
 
@@ -382,10 +422,6 @@ def test_the_verbatim_rides_only_the_first_decision_of_the_thread(tmp_path, monk
     # decides; a polluted count is the observable stand-in for the persisted
     # thread (the count's own read is pinned in the re-dispatch tests).
     import polymerhus.attack.hunting.pod.triage as triage_mod
-
-    monkeypatch.setattr(triage_mod, "_thread_message_count",
-                        lambda *a, **k: 5)
-    # The harness awaits the counter; a sync lambda needs an async wrapper.
 
     async def async_count(*a, **k):
         return 5

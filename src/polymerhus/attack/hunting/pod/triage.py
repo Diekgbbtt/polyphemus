@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import inspect
 import logging
-from typing import Sequence
+from typing import Any, Sequence
 
 from polymerhus.attack.hunting.pod.types import (
     NO_SYMPTOM_EVIDENCE,
@@ -46,33 +46,42 @@ def _openai_tool_dict(tool) -> dict:
 async def _thread_message_count(checkpointer, thread_id: str) -> int:
     """The thread's persisted message count, or 0 (stateless or unreadable -
     fail-open: the packet then simply repeats, which only a re-dispatch can
-    hit). Every saver shape is served: a sync `get_tuple`, a coroutine-shaped
-    `get_tuple`, and an async-only `aget_tuple`."""
+    hit). Every saver shape is served: an async-only `aget_tuple` (a
+    `BaseCheckpointSaver` subclass whose inherited `get_tuple` raises), a
+    coroutine-shaped `get_tuple`, and a dual sync saver. Each read attempt
+    falls through to the next on its own failure."""
     if checkpointer is None:
         return 0
-    try:
-        get_tuple = getattr(checkpointer, "get_tuple", None)
-        tup = None
-        if get_tuple is not None:
-            tup = get_tuple({"configurable": {"thread_id": thread_id}})
+    config = {"configurable": {"thread_id": thread_id}}
+    readers = []
+    aget = getattr(checkpointer, "aget_tuple", None)
+    if aget is not None:
+        readers.append(aget)
+    get_tuple = getattr(checkpointer, "get_tuple", None)
+    if get_tuple is not None:
+        readers.append(get_tuple)
+    for read in readers:
+        try:
+            tup = read(config)
             if inspect.isawaitable(tup):
                 tup = await tup
+        except (NotImplementedError, RuntimeError, TypeError, AttributeError):
+            continue
         if tup is None:
-            aget = getattr(checkpointer, "aget_tuple", None)
-            if aget is None:
-                return 0
-            tup = aget({"configurable": {"thread_id": thread_id}})
-            if inspect.isawaitable(tup):
-                tup = await tup
-        if tup is None:
-            return 0
+            continue
         checkpoint = getattr(tup, "checkpoint", None)
         if checkpoint is None and isinstance(tup, dict):
             checkpoint = tup
         values = (checkpoint or {}).get("channel_values") or {}
         return len(values.get("messages") or [])
-    except Exception:  # noqa: BLE001 - fail-open, never into the turn
-        return 0
+    return 0
+
+
+def _is_provider_error(exc: BaseException) -> bool:
+    """Whether one closing-turn failure is the typed provider failure (#329)."""
+    from polymerhus.app.llm.provider_failure import as_provider_error
+
+    return as_provider_error(exc) is not None
 
 
 def gate_correction(phase: str) -> str:
@@ -126,9 +135,9 @@ async def run_triage_harness(log, spec: dict, observation, facts, *, store,
         load_pod_triager_contract,
     )
     from polymerhus.attack.hunting.pod.triage_graph import (
-    DECIDE_PACKET_SENTINEL,
-    build_triage_graph,
-)
+        DECIDE_PACKET_SENTINEL,
+        build_triage_graph,
+    )
     from polymerhus.attack.hunting.pod.triage_state import detect_triage_signal
     from polymerhus.app.llm.session import arun_session_turn
 
@@ -148,27 +157,36 @@ async def run_triage_harness(log, spec: dict, observation, facts, *, store,
     contract = load_pod_triager_contract()
     graph = build_triage_graph().compile()
 
+    # The CONSTANT base surface, bound ONCE per decision (invariant 2): the
+    # read-only triager tools plus the #236 skill binding. Only the two gate
+    # closures vary by phase; they overlay the base dict per step.
+    binding = auth_capable_binding(
+        role_id, task_skills=harness_ctx.task_skills,
+        project_id=project_id or None,
+        with_readonly_auth_store=True)
+    base_tools = {**{t.name: t for t in triager_react_tools(
+        harness_ctx.memory_store, harness_ctx.spec_id, log=harness_ctx.log,
+        variant_ref=harness_ctx.variant_ref or "",
+        graph_view_fn=harness_ctx.graph_view_fn,
+        browser_tool=harness_ctx.browser_tool)},
+        **{t.name: t for t in binding.tools}}
+    request_tools = [*[_openai_tool_dict(t) for t in
+                       (triager_react_tools(
+                           harness_ctx.memory_store, harness_ctx.spec_id,
+                           log=harness_ctx.log,
+                           variant_ref=harness_ctx.variant_ref or "",
+                           graph_view_fn=harness_ctx.graph_view_fn,
+                           browser_tool=harness_ctx.browser_tool)
+                        + binding.tools)],
+                     *triage_request_tools()]
+
     def _surface(assessment, phase) -> tuple[list[dict], dict, Any]:
-        """The CONSTANT tool surface: the read-only triager tools, the #236
-        skill binding (load_skill + record_skill_lesson + the read-only auth
-        store), and the two gates, bound once per lap and identical on every
-        step. The request-side dicts are projected once; the gate schemas come
-        from the gate models, so the schema the model sees is the schema the
-        gate validates."""
-        base = triager_react_tools(
-            harness_ctx.memory_store, harness_ctx.spec_id, log=harness_ctx.log,
-            variant_ref=harness_ctx.variant_ref or "",
-            graph_view_fn=harness_ctx.graph_view_fn,
-            browser_tool=harness_ctx.browser_tool)
-        binding = auth_capable_binding(
-            role_id, task_skills=harness_ctx.task_skills,
-            project_id=project_id or None,
-            with_readonly_auth_store=True)
-        base = [*base, *binding.tools]
-        by_name = {tool.name: tool for tool in base}
-        by_name.update(build_triage_gate_tools(facts, assessment, phase))
-        return ([*[_openai_tool_dict(tool) for tool in base],
-                 *triage_request_tools()], by_name, binding)
+        """The per-step surface: the constant base plus the gates re-bound to
+        the live phase. The request-side dicts are the hoisted constants; only
+        the executor dict gains the phase's gate closures."""
+        by_name = {**base_tools,
+                   **build_triage_gate_tools(facts, assessment, phase)}
+        return (request_tools, by_name, binding)
 
     # The thread's prior message count rides the facts: every decision's
     # packet is unique on its thread, so a re-dispatched pod's lap-1 packet is
@@ -181,12 +199,6 @@ async def run_triage_harness(log, spec: dict, observation, facts, *, store,
         "observed_outcome": None, "facts": dict(facts), "assessment": None,
         "injected_constant": None, "trail": [], "decision": None,
     }
-    # The bound-skill listing's context comes from the binding (the loop's
-    # first _surface call owns the actual tool surface).
-    binding = auth_capable_binding(
-        role_id, task_skills=harness_ctx.task_skills,
-        project_id=project_id or None,
-        with_readonly_auth_store=True)
     # The ASSESS verbatim and the bound-skill LISTING ride the first decision
     # of the THREAD - the lap counter on a resumed pod is not enough (a
     # resumed pod starts at lap N on a thread that has never seen either).
@@ -276,49 +288,58 @@ async def run_triage_harness(log, spec: dict, observation, facts, *, store,
 
     # The thread contract (#280 positional adjacency): the gate's answer must
     # FOLLOW its call in the thread. The loop exits as soon as the machine is
-    # done, so the final tool results would otherwise dangle - and any resume
-    # of this thread (the next lap, a re-dispatched pod) would trip the
-    # adjacency contract. The closing turns feed the results back; the replies
-    # are discarded. The gates are CLOSED on a closing turn (the machine is
-    # done), so a post-decision submission is a coded rejection, never an
-    # accepted signal. A closing turn whose model emits more calls gets its
-    # calls answered once more (bounded); on exhaustion the leftover calls are
-    # surfaced for the operator.
-    closing_tools = {
-        **{t.name: t for t in triager_react_tools(
-            harness_ctx.memory_store, harness_ctx.spec_id,
-            log=harness_ctx.log,
-            variant_ref=harness_ctx.variant_ref or "",
-            graph_view_fn=harness_ctx.graph_view_fn,
-            browser_tool=harness_ctx.browser_tool)},
-        # The skill binding's tools ride the closing turns too: the closing
-        # surface is the SAME constant surface with the gates closed.
-        **{t.name: t for t in binding.tools},
-        **build_triage_gate_tools(facts, state.get("assessment"), "done")}
+    # done OR the budget exhausts, so the final tool results would otherwise
+    # dangle - and any resume of this thread (the next lap, a re-dispatched
+    # pod) would trip the adjacency contract. The closing turns feed the
+    # results back; the replies are discarded. The gates are CLOSED on a
+    # closing turn (whatever phase the machine holds), so a post-decision
+    # submission is a coded rejection, never an accepted signal. A closing
+    # turn whose model emits more calls gets its calls answered once more
+    # (bounded); on exhaustion the leftover calls are surfaced for the
+    # operator.
+    closing_tools = {**base_tools,
+                     **build_triage_gate_tools(facts, state.get("assessment"),
+                                               "close")}
     closing_budget = 3
     while results and closing_budget:
         closing_budget -= 1
-        closing = await turn_fn(
-            role_id, mem_key, list(results),
-            checkpointer=session_ctx.checkpointer,
-            tools=request_tools,
-            system_prompt=contract,
-            middleware=list(middleware),
-            context=binding.context,
-            observe=True,
-            extra_tags=[run_id, mem_key, f"lap:{lap}", "phase:close"],
-            usage_scope=project_id,
-            model_factory=harness_ctx.model_factory,
-        )
+        try:
+            closing = await turn_fn(
+                role_id, mem_key, list(results),
+                checkpointer=session_ctx.checkpointer,
+                tools=request_tools,
+                system_prompt=contract,
+                middleware=list(middleware),
+                context=binding.context,
+                observe=True,
+                extra_tags=[run_id, mem_key, f"lap:{lap}", "phase:close"],
+                usage_scope=project_id,
+                model_factory=harness_ctx.model_factory,
+            )
+        except Exception as exc:
+            # A closing turn is cosmetic by definition (the replies are
+            # discarded): its failure must never cost the pod a decision the
+            # machine already reached. Break with the results as they stand -
+            # the platform's resumed-turn reconciliation repairs the trail on
+            # the next turn of this thread. A provider failure with NO reached
+            # decision still propagates (#329: the surfer owns the retry).
+            if _is_provider_error(exc) and state.get("decision") is None:
+                raise
+            logger.warning(
+                "triage closing turn failed on %s (%s); the decision stands",
+                mem_key, exc)
+            break
         calls = _last_tool_calls(closing.messages)
         if not calls:
             break
-        results = [
-            ToolMessage(tool_call_id=tc.get("id") or "",
-                        content=await invoke_fn(closing_tools,
-                                                tc.get("name", ""),
-                                                tc.get("args") or {}))
-            for tc in calls]
+        for tc in calls:
+            answer = await invoke_fn(closing_tools, tc.get("name", ""),
+                                     tc.get("args") or {})
+            if not gate_accepted(answer) and tc.get("name") in (
+                    ASSESSMENT_TOOL, DECISION_TOOL):
+                rejections.append(answer)
+            results.append(ToolMessage(tool_call_id=tc.get("id") or "",
+                                       content=answer))
     if results and not closing_budget:
         logger.warning(
             "triage closing budget exhausted with unanswered tool calls on %s",

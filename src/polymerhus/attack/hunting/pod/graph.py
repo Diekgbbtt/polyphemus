@@ -259,7 +259,7 @@ def _resolve_variant_decision(decision: dict, spec: dict,
                 "clean": clean,
                 "note": (note + " [no variant basis derivable; no variant minted]").strip()}
     derived = decision.get("variant_spec") or dict(spec)
-    # S5 8.6 step 7: the derived spec keeps the base provenance, including the
+    # S5 8.6 step 6: the derived spec keeps the base provenance, including the
     # typed skill procedure. Enforced here (T10 H6) so a direct-pod spec that
     # omits it cannot strip the next stretch's diff material.
     if isinstance(spec.get("provenance"), dict):
