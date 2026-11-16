@@ -311,9 +311,9 @@ def test_the_thread_count_serves_every_saver_shape():
     assert broken == 0
 
 
-def test_a_closing_turn_failure_keeps_a_reached_decision(tmp_path):
-    # A cosmetic closing failure must never cost a decision the machine
-    # reached; the decision is returned with its phase path intact.
+def test_a_closing_turn_failure_keeps_the_degraded_terminal(tmp_path):
+    # No gate call ever lands, so the step budget ends with the marked
+    # degraded decision; a cosmetic closing failure must not disturb it.
     async def scripted(role, thread, messages, **kw):
         if "phase:close" in (kw.get("extra_tags") or []):
             raise RuntimeError("closing transport blew up")
@@ -328,7 +328,36 @@ def test_a_closing_turn_failure_keeps_a_reached_decision(tmp_path):
             PodMemoryStore(tmp_path)),
         turn_fn=scripted, invoke_fn=_invoke_real))
     assert result["decision"]["terminal_reason"] == NO_SYMPTOM_EVIDENCE
+    assert result["decision"].get("degraded") is True
     assert result["phase_path"] == "assess>decide"
+
+
+def test_a_closing_turn_provider_failure_with_a_reached_decision_keeps_it(tmp_path):
+    # #329: the closing turn is cosmetic. A provider failure there, AFTER a
+    # decision was reached, must not cost the pod its decision - the decision
+    # stands and the phase path is intact.
+    from polymerhus.app.llm.provider_failure import ProviderUnavailableError
+
+    async def scripted(role, thread, messages, **kw):
+        if "phase:close" in (kw.get("extra_tags") or []):
+            raise ProviderUnavailableError("throttled", status_code=429)
+        if not scripted.assessed:
+            scripted.assessed = True
+            return _turn([_ASSESS_CALL])
+        return _turn([_DECIDE_CALL])
+
+    scripted.assessed = False
+
+    from polymerhus.attack.hunting.pod.triage import run_triage_harness
+
+    facts = TriageFacts(**{**_FACTS, "lap": 1})
+    result = asyncio.run(run_triage_harness(
+        ExperimentLog(), {}, None, facts, store=PodMemoryStore(tmp_path),
+        spec_id=SPEC_ID, order=0, session_ctx=_ctx(), harness_ctx=_hc(
+            PodMemoryStore(tmp_path)),
+        turn_fn=scripted, invoke_fn=_invoke_real))
+    assert result["decision"]["terminal_reason"] == "space-exhausted"
+    assert result["phase_path"] == "assess>decide>terminal"
 
 
 def test_a_closing_turn_provider_failure_without_a_decision_propagates(tmp_path):
@@ -356,9 +385,10 @@ def test_a_closing_turn_provider_failure_without_a_decision_propagates(tmp_path)
 
 def test_the_closing_turn_rejects_truthfully_and_keeps_the_full_surface(tmp_path):
     # A post-decision submission on a closing turn is a PHASE-NEUTRAL coded
-    # rejection ("the decision is closed"), and the closing executor still
-    # carries the skill binding's tools (the same constant surface, closed).
+    # rejection ("the decision is closed"), and the closing request carries
+    # the SAME constant tool list the decision turns saw.
     closing_seen = []
+    decision_seen = []
 
     async def scripted(role, thread, messages, **kw):
         if "phase:close" in (kw.get("extra_tags") or []):
@@ -368,6 +398,7 @@ def test_the_closing_turn_rejects_truthfully_and_keeps_the_full_surface(tmp_path
                                     "verdict": "successful",
                                     "terminal_reason": "symptom-confirmed",
                                     "note": "late"}}], content="")
+        decision_seen.append(kw)
         return _turn([_ASSESS_CALL])
 
     from polymerhus.attack.hunting.pod.triage import run_triage_harness
@@ -382,9 +413,9 @@ def test_the_closing_turn_rejects_truthfully_and_keeps_the_full_surface(tmp_path
     rejections = [r for r in result["rejections"] if "decision is closed" in r]
     assert rejections, "the closing rejection is phase-neutral, not misdirecting"
     assert closing_seen, "the closing turn ran"
-    # The closing REQUEST carries the constant tool list (the same schemas the
-    # decision turns saw); only the gates are closed in the executor.
-    assert closing_seen[0]["tools"], "the closing request binds the surface"
+    # The one constant tool surface: the closing request's list is byte-equal
+    # to the decision turn's list (only the executor's gates are closed).
+    assert closing_seen[0]["tools"] == decision_seen[0]["tools"]
 
 
 def test_the_closing_turns_gates_are_closed(tmp_path):
@@ -430,14 +461,19 @@ def test_a_prose_budget_end_never_closes_with_stale_results(tmp_path):
     assert result["decision"]["clean"] is False
 
 
-def test_the_closing_loop_never_leaves_a_dangling_call(tmp_path):
-    # Two consecutive closing turns both emitting calls: every emitted call is
-    # answered; the harness never ends on an unanswered call.
+def test_the_closing_loop_never_re_sends_an_answered_call(tmp_path):
+    # Two consecutive closing turns both emitting calls: each round sends only
+    # the calls it has NOT answered, and the final thread is
+    # adjacency-complete (no AI tool_calls without an immediately following
+    # answer; an orphan `tool` message is rejected upstream with a 400).
     closing_rounds = {"n": 0}
+    sent_ids: list[list[str]] = []
 
     async def scripted(role, thread, messages, **kw):
         if "phase:close" in (kw.get("extra_tags") or []):
             closing_rounds["n"] += 1
+            sent_ids.append([m.tool_call_id for m in messages
+                             if isinstance(m, ToolMessage)])
             if closing_rounds["n"] <= 2:
                 return _turn([{"name": "notes", "id": f"n{closing_rounds['n']}",
                                "args": {"command": "read"}}], content="")
@@ -452,9 +488,58 @@ def test_the_closing_loop_never_leaves_a_dangling_call(tmp_path):
         spec_id=SPEC_ID, order=0, session_ctx=_ctx(), harness_ctx=_hc(
             PodMemoryStore(tmp_path)),
         turn_fn=scripted, invoke_fn=_invoke_real))
-    # 2 closing tool rounds, each answered: the last scripted turn is prose.
+    # 3 closing turns: two emit calls (each answered next round), the third is
+    # prose. The first round closes the decision's final gate call.
     assert closing_rounds["n"] == 3
     assert result["decision"]["terminal_reason"] == NO_SYMPTOM_EVIDENCE
+    assert sent_ids == [["c1"], ["n1"], ["n2"]], (
+        "a closing round must never re-send an already-answered call")
+
+
+def test_the_closing_budget_warning_is_truthful(tmp_path, caplog):
+    # Shape A: the budget exhausts after a round that emitted calls - the
+    # unanswered calls are warned about.
+    async def always_calls(role, thread, messages, **kw):
+        if "phase:close" in (kw.get("extra_tags") or []):
+            return _turn([{"name": "notes", "id": "n1",
+                           "args": {"command": "read"}}], content="")
+        return _turn([_ASSESS_CALL])
+
+    from polymerhus.attack.hunting.pod.triage import run_triage_harness
+
+    facts = TriageFacts(**{**_FACTS, "lap": 1})
+    with caplog.at_level("WARNING", logger="polymerhus.attack.hunting.pod.triage"):
+        asyncio.run(run_triage_harness(
+            ExperimentLog(), {}, None, facts, store=PodMemoryStore(tmp_path),
+            spec_id=SPEC_ID, order=0, session_ctx=_ctx(), harness_ctx=_hc(
+                PodMemoryStore(tmp_path)),
+            turn_fn=always_calls, invoke_fn=_invoke_real))
+    assert "closing budget exhausted" in caplog.text
+    caplog.clear()
+
+    # Shape B: the last permitted closing round is PROSE - every emitted call
+    # was answered, so no "unanswered" warning may be logged.
+    rounds = {"n": 0}
+
+    async def prose_last(role, thread, messages, **kw):
+        if "phase:close" in (kw.get("extra_tags") or []):
+            rounds["n"] += 1
+            if rounds["n"] <= 2:
+                return _turn([{"name": "notes", "id": f"n{rounds['n']}",
+                               "args": {"command": "read"}}], content="")
+            return _turn([], content="done closing")
+        return _turn([_ASSESS_CALL])
+
+    with caplog.at_level("WARNING", logger="polymerhus.attack.hunting.pod.triage"):
+        asyncio.run(run_triage_harness(
+            ExperimentLog(), {}, None, facts, store=PodMemoryStore(tmp_path),
+            spec_id=SPEC_ID, order=0, session_ctx=_ctx(), harness_ctx=_hc(
+                PodMemoryStore(tmp_path)),
+            turn_fn=prose_last, invoke_fn=_invoke_real))
+    assert "closing budget exhausted" not in caplog.text
+
+
+def test_the_turn_tags_carry_run_thread_lap_and_phase(tmp_path):
     script = _TurnScript([_turn([_ASSESS_CALL]), _turn([_DECIDE_CALL])])
     _run_harness(script, PodMemoryStore(tmp_path))
     tags = script.calls[0]["extra_tags"]

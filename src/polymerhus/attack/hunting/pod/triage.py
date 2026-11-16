@@ -298,12 +298,15 @@ async def run_triage_harness(log, spec: dict, observation, facts, *, store,
                                                "close")}
     closing_budget = 3
     pending = list(results)
-    last_round_emitted_calls = False
     while pending and closing_budget:
         closing_budget -= 1
+        # This round consumes the pending answers: only a NEW call the round
+        # emits remains pending, so at the end `pending` is exactly what the
+        # LAST round left unanswered.
+        inflight, pending = pending, []
         try:
             closing = await turn_fn(
-                role_id, mem_key, list(pending),
+                role_id, mem_key, list(inflight),
                 checkpointer=session_ctx.checkpointer,
                 tools=request_tools,
                 system_prompt=contract,
@@ -317,11 +320,11 @@ async def run_triage_harness(log, spec: dict, observation, facts, *, store,
         except Exception as exc:
             # A closing turn is cosmetic by definition (the replies are
             # discarded): its failure must never cost the pod a decision the
-            # machine already reached. Break with the results as they stand -
-            # the input results are persisted BEFORE the model call, so the
-            # gate answers are already in the thread and only the closing
-            # reply is lost. A provider failure with NO reached decision
-            # still propagates (#329: the surfer owns the retry).
+            # machine already reached. Break with the input results as they
+            # stand - they are persisted BEFORE the model call, so the gate
+            # answers are already in the thread and only the closing reply is
+            # lost. A provider failure with NO reached decision still
+            # propagates (#329: the surfer owns the retry).
             if _is_provider_error(exc) and state.get("decision") is None:
                 raise
             logger.warning(
@@ -331,8 +334,6 @@ async def run_triage_harness(log, spec: dict, observation, facts, *, store,
         calls = _last_tool_calls(closing.messages)
         if not calls:
             break
-        last_round_emitted_calls = True
-        pending = []
         for tc in calls:
             answer = await invoke_fn(closing_tools, tc.get("name", ""),
                                      tc.get("args") or {})
@@ -341,7 +342,7 @@ async def run_triage_harness(log, spec: dict, observation, facts, *, store,
                 rejections.append(answer)
             pending.append(ToolMessage(tool_call_id=tc.get("id") or "",
                                        content=answer))
-    if pending and closing_budget == 0 and last_round_emitted_calls:
+    if pending:
         logger.warning(
             "triage closing budget exhausted with unanswered tool calls on %s",
             mem_key)
