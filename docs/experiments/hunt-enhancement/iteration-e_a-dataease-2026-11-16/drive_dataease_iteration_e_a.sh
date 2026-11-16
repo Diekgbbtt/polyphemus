@@ -27,6 +27,7 @@ INSTANCE=eval-server-2
 TARGET=dataease-web
 PROJECT_NAME="${PROJECT_NAME:-eval-dataease-web-iter-e-a}"
 INSTANCE_DIR="$EVAL_INSTANCES_ROOT/$INSTANCE"
+export PYTHONPATH="$EVAL_REPO/eval:$INSTANCE_DIR/eval${PYTHONPATH:+:$PYTHONPATH}"
 SETUP="$EVAL_REPO/eval/setups/dataease-iteration-e-a.yaml"
 EXP_DIR="$EVAL_REPO/docs/experiments/hunt-enhancement/iteration-e_a-dataease-2026-11-16"
 OC="${OC:-/root/.opencode/bin/opencode}"
