@@ -142,6 +142,21 @@ if [ "$API_READY" -ne 1 ]; then
 fi
 echo "== agent API ready"
 
+# 3. Live capability preflight: the go/no-go gate for the new model and key.
+echo "== capability preflight $(date -u +%FT%TZ)"
+docker exec -i -e PROJECT_ID=llm-capability-preflight "$AGENT" \
+  python3 - --provider opencode-go --model glm-5.3-flash \
+  --role hunting_threat_modeller --thinking xhigh --thinking high \
+  < "$INSTANCE_DIR/eval/preflight_llm_capability.py" \
+  > "$EVAL_RUNS_ROOT/preflight.json"
+PREFLIGHT_CODE=$?
+cat "$EVAL_RUNS_ROOT/preflight.json"
+if [ "$PREFLIGHT_CODE" -ne 0 ]; then
+  echo "== capability preflight FAILED; stopping before any project change"
+  exit "$PREFLIGHT_CODE"
+fi
+echo "== capability preflight passed"
+
 # The app's project skills live in the `skills-procedures` volume at
 # /srv/skills/target-specific-procedure. The trial's host-side predicate reads
 # <skills-root>/target-specific-procedure/<project_id>/authn/SKILL.md, so the
@@ -159,7 +174,7 @@ fi
 ln -sfn "$SKILLS_VOLUME" "$SKILLS_HOST/target-specific-procedure"
 echo "== skills host $SKILLS_HOST -> $SKILLS_VOLUME"
 
-# 3. Seed the project and freeze the reusable iteration-D scope fence. The
+# 4. Seed the project and freeze the reusable iteration-D scope fence. The
 #    trial then bootstraps settings, auth, L1, and the phases.
 echo "== seed project and scope fence $(date -u +%FT%TZ)"
 PROJECT_ID="$(python3 "$EXP_DIR/seed_dataease.py" \
@@ -172,7 +187,7 @@ if [ -z "$PROJECT_ID" ]; then
 fi
 echo "== project id $PROJECT_ID"
 
-# 4. The live monitor feed.
+# 5. The live monitor feed.
 echo "== monitor start $(date -u +%FT%TZ)"
 nohup python3 "$EXP_DIR/monitor_iteration_e_a.py" \
   --api "$PH_API" \
@@ -185,7 +200,7 @@ nohup python3 "$EXP_DIR/monitor_iteration_e_a.py" \
 MONITOR_PID=$!
 echo "== monitor pid $MONITOR_PID"
 
-# 5. Trial identity and the post-execution commands.
+# 6. Trial identity and the post-execution commands.
 EVAL_SHA="$(git -C "$INSTANCE_DIR" rev-parse HEAD)"
 export EVAL_SHA
 export EVAL_STACK_FINGERPRINT="${EVAL_STACK_FINGERPRINT:-$(
@@ -203,7 +218,7 @@ echo "== stack fingerprint $EVAL_STACK_FINGERPRINT"
 export EVAL_ASSESS_COMMAND="$OC run --agent eval-assessor --dir $EVAL_REPO \"Follow {prompt}. trial_record={trial_record}; ground_truth={ground_truth}; data_root={data_root}; destination={destination}; trace_id={trace_id}. Write only {destination} and its sibling impact_review.yaml.\""
 export EVAL_DIAGNOSE_COMMAND="$OC run --agent eval-diagnoser --dir $EVAL_REPO \"Follow {prompt}. trial_record={trial_record}; verdicts={verdicts}; ground_truth={ground_truth}; data_root={data_root}; vulns={vulns}; destination={destination}; trace_id={trace_id}. Write only {destination}.\""
 
-# 6. The full pipeline: recon, analysis, hunting.
+# 7. The full pipeline: recon, analysis, hunting.
 echo "== trial $(date -u +%FT%TZ)"
 python3 -m orchestrator trial "$SETUP" "$INSTANCE" "$TARGET" \
   --repo "$EVAL_REPO" \
@@ -236,7 +251,7 @@ if [ -z "$TRIAL_DIR" ] || [ ! -f "$TRIAL_DIR/trial.yaml" ]; then
   exit "$TRIAL_CODE"
 fi
 
-# 7. Post-execution: assessment, diagnosis, close verification, store, measure.
+# 8. Post-execution: assessment, diagnosis, close verification, store, measure.
 echo "== monitor to convergence $(date -u +%FT%TZ)"
 timeout 14400 "$OC" run --agent eval-orchestrator --dir "$EVAL_REPO" \
   "Call eval_monitor with setup=$SETUP, runs_root=$EVAL_RUNS_ROOT, data_root=$EVAL_DATA_ROOT, ground_truth=$EVAL_GROUND_TRUTH, repo=$EVAL_REPO, instances_root=$EVAL_INSTANCES_ROOT, branch=$EVAL_BRANCH, state=$EVAL_ALIGNMENT_STATE, budget_s=3600. Call it repeatedly until every trial is complete, deferred, or escalated; then STOP and end your turn." \

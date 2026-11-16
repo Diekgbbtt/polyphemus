@@ -137,10 +137,11 @@ It performs the whole sequence:
 1. assert the instance `.env` models, steel deadline, risk budget, watchdog,
    and default thinking efforts;
 2. bring the stack and target up;
-3. seed the project and freeze the scope fence;
-4. run the full `orchestrator trial` (recon -> analysis -> hunting);
-5. run the eval monitor to convergence (assessment, then diagnosis);
-6. close-verify, materialise the artifact store, and measure the trial.
+3. run the live capability preflight (the go/no-go gate);
+4. seed the project and freeze the scope fence;
+5. run the full `orchestrator trial` (recon -> analysis -> hunting);
+6. run the eval monitor to convergence (assessment, then diagnosis);
+7. close-verify, materialise the artifact store, and measure the trial.
 
 The branch is checked out in the instance worktree; the stack bind-mounts that
 root, so no image rebuild is required.
@@ -148,6 +149,7 @@ The agent is recreated once to load the updated `.env`.
 
 ## Expected artifacts
 
+- `<runs-root>/preflight.json`
 - `<runs-root>/driver.log`
 - `<runs-root>/monitor.log`, `<runs-root>/monitor.jsonl`
 - `<runs-root>/dataease-web/<trial-id>/trial.yaml`
