@@ -184,6 +184,9 @@ echo "== skills host $SKILLS_HOST -> $SKILLS_VOLUME"
 echo "== seed project and scope fence $(date -u +%FT%TZ)"
 PROJECT_ID="$(python3 "$EXP_DIR/seed_dataease.py" \
   --api "$PH_API" \
+  --setup "$SETUP" \
+  --instance "$INSTANCE" \
+  --target "$TARGET" \
   --name "$PROJECT_NAME" \
   --scope-file "$EXP_DIR/scope-fence.txt")"
 if [ -z "$PROJECT_ID" ]; then
