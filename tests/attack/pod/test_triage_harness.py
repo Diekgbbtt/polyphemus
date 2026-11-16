@@ -414,7 +414,7 @@ def test_the_closing_turn_rejects_truthfully_and_keeps_the_full_surface(tmp_path
     assert rejections, "the closing rejection is phase-neutral, not misdirecting"
     assert closing_seen, "the closing turn ran"
     # The one constant tool surface: the closing request's list is byte-equal
-    # to the decision turn's list (only the executor's gates are closed).
+    # to the other turns' list (only the executor's gates are closed).
     assert closing_seen[0]["tools"] == decision_seen[0]["tools"]
 
 
@@ -537,6 +537,32 @@ def test_the_closing_budget_warning_is_truthful(tmp_path, caplog):
                 PodMemoryStore(tmp_path)),
             turn_fn=prose_last, invoke_fn=_invoke_real))
     assert "closing budget exhausted" not in caplog.text
+    caplog.clear()
+
+    # Shape C: the last permitted closing round FAILS after two emissive
+    # rounds - its input answers were persisted before the model call, so no
+    # call is left unanswered: no budget warning, only the truthful failure
+    # warning.
+    failing_rounds = {"n": 0}
+
+    async def fail_last(role, thread, messages, **kw):
+        if "phase:close" in (kw.get("extra_tags") or []):
+            failing_rounds["n"] += 1
+            if failing_rounds["n"] <= 2:
+                return _turn([{"name": "notes", "id": f"n{failing_rounds['n']}",
+                               "args": {"command": "read"}}], content="")
+            raise RuntimeError("closing transport blew up")
+        return _turn([_ASSESS_CALL])
+
+    with caplog.at_level("WARNING", logger="polymerhus.attack.hunting.pod.triage"):
+        asyncio.run(run_triage_harness(
+            ExperimentLog(), {}, None, facts, store=PodMemoryStore(tmp_path),
+            spec_id=SPEC_ID, order=0, session_ctx=_ctx(), harness_ctx=_hc(
+                PodMemoryStore(tmp_path)),
+            turn_fn=fail_last, invoke_fn=_invoke_real))
+    assert failing_rounds["n"] == 3
+    assert "closing budget exhausted" not in caplog.text
+    assert "closing turn failed" in caplog.text
 
 
 def test_the_turn_tags_carry_run_thread_lap_and_phase(tmp_path):

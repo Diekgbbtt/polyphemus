@@ -33,6 +33,12 @@ MAX_TRIAGE_STEPS = 6
 through the gate exhausts it, and the harness degrades to the honest terminal
 instead of looping."""
 
+MAX_TRIAGE_CLOSING_STEPS = 3
+"""The bounded closing-turn budget: the number of turns that answer a final
+gate call left dangling at the step budget's end. A round that emits new calls
+gets them answered once more, bounded; the budget is surfaced for the
+operator."""
+
 
 def _openai_tool_dict(tool) -> dict:
     """One request-only OpenAI tool dict for a bound BaseTool - the hunter's
@@ -296,17 +302,17 @@ async def run_triage_harness(log, spec: dict, observation, facts, *, store,
     closing_tools = {**base_tools,
                      **build_triage_gate_tools(facts, state.get("assessment"),
                                                "close")}
-    closing_budget = 3
+    closing_budget = MAX_TRIAGE_CLOSING_STEPS
     pending = list(results)
     while pending and closing_budget:
         closing_budget -= 1
         # This round consumes the pending answers: only a NEW call the round
         # emits remains pending, so at the end `pending` is exactly what the
         # LAST round left unanswered.
-        inflight, pending = pending, []
+        delivered, pending = pending, []
         try:
             closing = await turn_fn(
-                role_id, mem_key, list(inflight),
+                role_id, mem_key, list(delivered),
                 checkpointer=session_ctx.checkpointer,
                 tools=request_tools,
                 system_prompt=contract,

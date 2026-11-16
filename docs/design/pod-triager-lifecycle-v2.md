@@ -389,8 +389,11 @@ for step in range(MAX_TRIAGE_STEPS):
 
 # The bounded closing turns: the final gate call must be answered in the
 # thread (#280 positional adjacency), with the gates CLOSED (a phase-neutral
-# "the decision is closed" rejection). A closing-turn failure never costs a
-# reached decision; it breaks with the results as they stand.
+# "the decision is closed" rejection). Each round sends only the calls it has
+# NOT yet answered (a re-sent answer is an orphan `tool` message the upstream
+# rejects with a 400). A closing-turn failure never costs a reached decision:
+# the round's input answers were persisted before the model call, so the
+# thread stays adjacency-complete and only the closing reply is lost.
 ```
 
 A malformed gate call returns a coded rejection, so `_gate_accepted` is false and `triage_graph.ainvoke` never runs.
