@@ -419,6 +419,26 @@ class BrowserService:
             }
         return result
 
+    def clear(self, prefix: str) -> dict:
+        """Delete one project's ephemeral session records from the pool store."""
+        try:
+            report = self._manager.clear(prefix=prefix)
+        except ValueError as exc:
+            return error_envelope("invalid_argument", str(exc), retryable=False)
+        except (SessionStoreError, CorruptSessionRecord) as exc:
+            return error_envelope("store_error", str(exc), retryable=False)
+        except Exception as exc:  # noqa: BLE001 - never take the server down
+            return error_envelope(
+                "internal_error", f"{type(exc).__name__}: {exc}", retryable=True
+            )
+        return {
+            "success": True,
+            "prefix": report.prefix,
+            "cleared": list(report.cleared),
+            "kept_contexts": list(report.kept_contexts),
+            "skipped_busy": list(report.skipped_busy),
+        }
+
     def close_session(self, mcp_session_id: str) -> EndReport | None:
         """The MCP session close hook. It never raises into the transport."""
         try:
@@ -660,7 +680,7 @@ def create_browser_mcp(
     mcp_path: str = DEFAULT_MCP_PATH,
     name: str = "polymerhus-browser",
 ) -> FastMCP:
-    """Create the FastMCP app with exactly the three browser tools."""
+    """Create the FastMCP app with the four browser tools."""
 
     @asynccontextmanager
     async def lifespan(_server: FastMCP):
@@ -733,6 +753,21 @@ def create_browser_mcp(
                 _mcp_session_id(ctx),
                 persist_context=persist_context,
             )
+        )
+
+    @mcp.tool()
+    async def browser_clear(prefix: str, ctx: Context = None) -> dict:
+        """Delete one project's ephemeral browser-session records.
+
+        ``prefix`` is the project's literal session-name prefix
+        (``steel-<project_slug>-``). A record under that prefix is deleted so a
+        later execution cannot mount a prior target's cookies or storage. The
+        durable auth-context records (``steel-auth-*``) are never deleted: the
+        accounts still reference them. A record with a live lease is skipped
+        and reported in ``skipped_busy``. The graceful project stop calls this.
+        """
+        return await anyio.to_thread.run_sync(
+            functools.partial(service.clear, prefix)
         )
 
     # The path is consumed by the ASGI app, not by the tool registrations.

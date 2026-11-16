@@ -706,6 +706,62 @@ def test_project_execution_stop_is_a_no_op_for_an_idle_project(monkeypatch):
     }
 
 
+def test_the_stop_clear_passes_the_project_session_prefix(monkeypatch):
+    import asyncio
+
+    import polymerhus.app.llm.browser_client as client_module
+    from polymerhus.app.config import config
+
+    calls: list[tuple] = []
+
+    class FakeClient:
+        def __init__(self, url: str) -> None:
+            calls.append(("init", url))
+
+        def clear(self, *, prefix: str) -> None:
+            calls.append(("clear", prefix))
+
+        def close(self) -> None:
+            calls.append(("close",))
+
+    monkeypatch.setattr(client_module, "McpBrowserClient", FakeClient)
+    monkeypatch.setattr(
+        config, "KALI_BROWSER_MCP_URL", "http://pool.test/mcp"
+    )
+
+    import polymerhus.project_management.api as api_module
+    asyncio.run(api_module._clear_browser_pool("Proj One"))
+
+    assert ("init", "http://pool.test/mcp") in calls
+    assert ("clear", "steel-proj-one-") in calls
+    assert ("close",) in calls
+
+
+def test_the_stop_clear_degrades_when_the_pool_is_unreachable(monkeypatch):
+    import asyncio
+
+    import polymerhus.app.llm.browser_client as client_module
+    from polymerhus.app.config import config
+
+    class FailingClient:
+        def __init__(self, url: str) -> None:
+            pass
+
+        def clear(self, *, prefix: str) -> None:
+            raise RuntimeError("pool down")
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(client_module, "McpBrowserClient", FailingClient)
+    monkeypatch.setattr(
+        config, "KALI_BROWSER_MCP_URL", "http://pool.test/mcp"
+    )
+
+    import polymerhus.project_management.api as api_module
+    asyncio.run(api_module._clear_browser_pool("p1"))
+
+
 def test_project_execution_stop_clears_the_browser_pool(monkeypatch):
     # The graceful project stop clears the pool data caches: the worker profile
     # and the session/context records must not survive into the next project.

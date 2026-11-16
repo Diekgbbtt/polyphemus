@@ -622,23 +622,27 @@ async def stop_project_execution(project_id: str) -> dict:
 async def _clear_browser_pool(project_id: str) -> None:
     """Best-effort clear of the project's browser pool data caches.
 
-    The graceful project stop is the one point that must drop the worker
-    profile and the session/context records: otherwise the next project can
-    mount a stale context from an earlier target. The eval harness also clears
-    on a full stack down; this covers the app-level stop that leaves the stack
-    running. A missing or unavailable pool is a logged degrade, never a stop
-    failure.
+    The graceful project stop drops the project's ephemeral session records,
+    so a later execution cannot mount a prior target's cookies or storage. The
+    durable auth-context records stay: the accounts still reference them. The
+    eval harness also clears on a full stack down; this covers the app-level
+    stop that leaves the stack running. A missing or unavailable pool is a
+    logged degrade, never a stop failure.
     """
     try:
         from polymerhus.app.config import config  # noqa: PLC0415
         from polymerhus.app.llm.browser_client import McpBrowserClient  # noqa: PLC0415
+        from polymerhus.app.llm.browser_tools import (  # noqa: PLC0415
+            browser_session_prefix,
+        )
 
         url = (config.KALI_BROWSER_MCP_URL or "").strip()
         if not url:
             return
+        prefix = f"{browser_session_prefix(project_id)}-"
         client = McpBrowserClient(url)
         try:
-            await asyncio.to_thread(client.clear, project_id=project_id)
+            await asyncio.to_thread(client.clear, prefix=prefix)
         finally:
             client.close()
     except Exception as exc:  # noqa: BLE001 - the stop never fails on a pool clear

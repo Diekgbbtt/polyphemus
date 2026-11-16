@@ -696,3 +696,20 @@ def test_fchmod_failure_leaks_no_descriptor(store, monkeypatch):
             store.save(_record())
 
     assert len(os.listdir(fd_root)) == before
+
+
+def test_names_lists_only_the_stored_records(store):
+    store.save(_record("steel-p1-hunt"))
+    store.save(_record("steel-auth-p1-alice"))
+    (store.root / "stray.json.tmp").write_text("{}")
+    (store.root / "notes.txt").write_text("x")
+    os.symlink(
+        store.root / "steel-p1-hunt.json",
+        store.root / "steel-p2-hunt.json",
+    )
+
+    assert store.names() == ("steel-auth-p1-alice", "steel-p1-hunt")
+
+
+def test_names_is_empty_for_a_fresh_store(store):
+    assert store.names() == ()

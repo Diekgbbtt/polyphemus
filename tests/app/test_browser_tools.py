@@ -18,6 +18,7 @@ from polymerhus.app.llm.browser_tools import (
     BrowserTool,
     browser_context_ref,
     browser_session_name,
+    browser_session_prefix,
     build_browser_tool,
     stored_context_ref,
 )
@@ -167,6 +168,22 @@ def test_the_stored_context_ref_reads_the_account_reference(tmp_path):
     )
     assert stored_context_ref("p1", "replay", store=store) is None
     assert stored_context_ref("p1", "missing", store=store) is None
+
+
+def test_the_session_prefix_is_the_literal_prefix_of_every_project_name():
+    prefix = browser_session_prefix("Proj One")
+
+    assert prefix == "steel-proj-one"
+    for account in (None, "alice"):
+        name = browser_session_name("Proj One", "hunter", "hunt-1", account)
+        assert name.startswith(prefix + "-")
+
+
+def test_the_session_prefix_is_injective_over_the_slug_boundary():
+    # `steel-p1-` must never match a `steel-p10-` session.
+    assert not "steel-p10-hunt".startswith(
+        browser_session_prefix("p1") + "-"
+    )
 
 
 def test_the_session_name_binds_project_account_role_and_instance():

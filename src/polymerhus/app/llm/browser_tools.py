@@ -50,6 +50,7 @@ __all__ = [
     "BrowserArgs",
     "BrowserTool",
     "browser_context_ref",
+    "browser_session_prefix",
     "stored_context_ref",
     "browser_session_name",
     "build_browser_tool",
@@ -187,6 +188,18 @@ def stored_context_ref(
     return None
 
 
+def browser_session_prefix(project_id: str) -> str:
+    """The literal session-name prefix every browser session of one project
+    shares: `steel-<project_slug>`.
+
+    The pool clear takes this prefix so it deletes exactly one project's
+    ephemeral session records. The trailing separator is added by the caller;
+    a bare project id can never match `steel-p10-` when the prefix is
+    `steel-p1-`.
+    """
+    return f"{BROWSER_SESSION_PREFIX}-{_slug(project_id, 'project')}"
+
+
 def browser_session_name(
     project_id: str,
     role: str,
@@ -198,12 +211,12 @@ def browser_session_name(
     The name follows `steel-<project>[-<account>]-<role>-<instance>`. It is
     never an agent parameter; the binding derives it.
     """
-    parts = [_slug(project_id, "project")]
+    parts: list[str] = []
     if account:
         parts.append(_slug(account, "account"))
     parts.append(_slug(role, "agent"))
     parts.append(_slug(instance_id, "run"))
-    return _bounded(BROWSER_SESSION_PREFIX, parts)
+    return _bounded(browser_session_prefix(project_id), parts)
 
 
 class BrowserTool(BaseTool):

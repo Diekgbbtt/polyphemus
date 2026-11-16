@@ -14,6 +14,7 @@ import pytest
 
 from kali.steel_pool.cli import CliError, RestoreError, RestoreReport
 from kali.steel_pool.lease import (
+    ClearReport,
     EndReport,
     LeaseInUse,
     LeaseView,
@@ -39,6 +40,8 @@ class FakeManager:
         self.ends: list[str] = []
         self.closed: list[str] = []
         self.shutdowns = 0
+        self.clears: list[str] = []
+        self.clear_error: Exception | None = None
         self.view = LeaseView(
             name="hunt",
             steel_session_id="steel-1",
@@ -123,6 +126,17 @@ class FakeManager:
         if self.shutdown_error is not None:
             raise self.shutdown_error
         return ()
+
+    def clear(self, *, prefix: str):
+        self.clears.append(prefix)
+        if self.clear_error is not None:
+            raise self.clear_error
+        return ClearReport(
+            prefix=prefix,
+            cleared=("steel-p1-hunt",),
+            kept_contexts=("steel-auth-p1-alice",),
+            skipped_busy=(),
+        )
 
 
 class FakeApp:
@@ -524,7 +538,7 @@ class TestFastMcpSurface:
     def _run(self, coroutine):
         return _run(coroutine)
 
-    def test_tools_are_exactly_the_three(self):
+    def test_tools_are_exactly_the_four(self):
         async def go():
             service, _ = _service()
             mcp = create_browser_mcp(service)
@@ -539,7 +553,25 @@ class TestFastMcpSurface:
             "browser_start",
             "browser_exec",
             "browser_end",
+            "browser_clear",
         }
+
+    def test_browser_clear_is_callable_over_mcp(self):
+        async def go():
+            manager = FakeManager()
+            service, _ = _service(manager)
+            mcp = create_browser_mcp(service)
+            from fastmcp import Client
+
+            async with Client(mcp) as client:
+                return await client.call_tool(
+                    "browser_clear", {"prefix": "steel-p1-"}
+                )
+
+        result = self._run(go())
+
+        assert result.data["success"] is True
+        assert result.data["cleared"] == ["steel-p1-hunt"]
 
     def test_no_status_pool_or_owner_tool_exists(self):
         async def go():
@@ -926,3 +958,45 @@ class TestConfig:
         assert service._manager._registry.report is not None
         assert [event for event, _ in events][0] == "pool.discovered"
         assert events[0][1]["discovered"] == 1
+
+
+# --- the project-scoped pool clear -------------------------------------------
+
+def test_clear_returns_the_report():
+    manager = FakeManager()
+    service, _ = _service(manager)
+
+    result = service.clear("steel-p1-")
+
+    assert manager.clears == ["steel-p1-"]
+    assert result == {
+        "success": True,
+        "prefix": "steel-p1-",
+        "cleared": ["steel-p1-hunt"],
+        "kept_contexts": ["steel-auth-p1-alice"],
+        "skipped_busy": [],
+    }
+
+
+def test_clear_rejects_a_bad_prefix():
+    manager = FakeManager()
+    manager.clear_error = ValueError("the clear prefix must end in '-'")
+    service, _ = _service(manager)
+
+    result = service.clear("steel-p1")
+
+    assert result["success"] is False
+    assert result["error"]["code"] == "invalid_argument"
+
+
+def test_clear_maps_a_store_failure():
+    from kali.steel_pool.store import SessionStoreError
+
+    manager = FakeManager()
+    manager.clear_error = SessionStoreError("the store is unreadable")
+    service, _ = _service(manager)
+
+    result = service.clear("steel-p1-")
+
+    assert result["success"] is False
+    assert result["error"]["code"] == "store_error"

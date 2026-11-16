@@ -244,9 +244,14 @@ src/polymerhus/recon/crawl/steel/
 ## 4. Steel interaction contract
 
 The crawl addresses the browser MCP at `KALI_BROWSER_MCP_URL`.
-The MCP exposes three internal tools (`browser_start`, `browser_exec`, and
-`browser_end`) and the agent binds ONE `browser` tool with the `start`, `exec`,
-and `end` commands.
+The MCP exposes four internal tools (`browser_start`, `browser_exec`,
+`browser_end`, and `browser_clear`) and the agent binds ONE `browser` tool with
+the `start`, `exec`, and `end` commands.
+`browser_clear` is app-internal, never agent-visible: the graceful project stop
+calls it with the project's session-name prefix (`steel-<project_slug>-`).
+It deletes the project's ephemeral session records, keeps every durable
+auth-context record (`steel-auth-*`), and skips a record with a live lease.
+A later execution therefore never mounts a prior target's cookies or storage.
 The browser MCP runs in Kali and owns the Steel CLI, the worker lease, the
 pool store, the heartbeat, and the TTL.
 The crawl never runs the CLI and never sees the worker's HTTP origin.
@@ -1180,7 +1185,7 @@ The authz residual risk and the coarse effect signal remain accepted as recorded
 - The browser pool is part of the instance compose project.
   The baseline includes `docker-compose.pool.yml` with `deploy.replicas: 2`;
   the thin stack omits the pool file entirely.
-- The browser MCP runs in Kali and owns the three tools, the reverse proxy,
+- The browser MCP runs in Kali and owns the four tools, the reverse proxy,
   and the pool store.
 - `KALI_BROWSER_MCP_URL` is the agent's only browser address.
   The base is empty; the eval overlay sets `http://kali:8003/mcp`.
