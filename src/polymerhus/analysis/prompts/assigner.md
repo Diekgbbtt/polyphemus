@@ -1,5 +1,6 @@
 Your base prompt fixes WHAT you emit; this discipline fixes HOW you decide.
-Deliver every payload by CALLING the `L1DeltaBatch` tool with the JSON as its arguments - never by writing the JSON in your message text; the tool call is the only channel the workflow reads.
+Deliver every payload by CALLING the `AssignerDelta` tool with the JSON as its arguments - never by writing the JSON in your message text; the tool call is the only channel the workflow reads.
+Emit ONE `aggregations` entry per owning Service, listing every Endpoint that Service owns in that entry.
 Every Endpoint puts one question to you: which existing Service owns it, and would you defend that answer to the architect who wrote that Service's contract?
 
 ## The null hypothesis is that nothing owns it
@@ -67,7 +68,7 @@ A response that names a business noun or action a candidate's contract claims is
 A verification call can fail, time out, or return nothing at the moment you need it; the seam is bounded and remote, and that happens.
 A failed lookup is missing evidence, never evidence against: it must not silently become a no-owner outcome for a route whose surface already supports an owner.
 When that happens, keep loose control and emit the aggregate anyway, under three conditions - the candidate's contract genuinely claims the noun or action on the surface, no other contract competes for it, and nothing you already hold contradicts the match.
-Give the aggregate the concrete evidence you do hold, and name the concretisation risk in `evidence_refs` in plain words: state that the owner rests on the surface reading and that the confirming lookup failed or returned nothing.
+Give the aggregate the concrete evidence you do hold, and name the concretisation risk in `evidence` in plain words: state that the owner rests on the surface reading and that the confirming lookup failed or returned nothing.
 What you accept by failing open is wrong-unit concretisation - an aggregate a later phase inherits as if the owner had been verified - so never fail open for a route whose surface supports no owner at all: an unverifiable guess is still a guess.
 
 ## Worked examples
@@ -79,7 +80,7 @@ Inventory has `invoice-settlement - Takes a draft invoice to a settled payment; 
 Endpoint `POST /invoices/42/settle`.
 Surface first: nouns *invoice*, action *settle*.
 Differential: only `invoice-settlement` claims either.
--> one aggregate, service_slug `invoice-settlement`, evidence_refs `["path segment /invoices", "path segment /settle"]`.
+-> one aggregation, service `invoice-settlement`, endpoints [`POST /invoices/42/settle`], evidence `"path segment /invoices and /settle"`.
 
 **2. No owner.**
 Inventory has `invoice-settlement` and `brochure-pages - Presents marketing pages and categories.`
@@ -101,4 +102,4 @@ Inventory has `job-queue - owns the job queue and its install actions.`
 Endpoint `POST /queue/install`, method unverified in the slice.
 You pull the recorded response; the lookup fails, then a retry returns nothing.
 The surface reading stands: the noun *queue* and the action *install* are exactly what `job-queue` claims, and no other contract competes.
--> one aggregate, `job-queue`, evidence `["path segment /queue", "path segment /install", "history lookup failed; owner rests on the surface reading, method unconfirmed"]` - a loose-control commit with its risk named, never a silent no-owner.
+-> one aggregation, `job-queue`, evidence `"path segment /queue and /install; history lookup failed, owner rests on the surface reading, method unconfirmed"` - a loose-control commit with its risk named, never a silent no-owner.

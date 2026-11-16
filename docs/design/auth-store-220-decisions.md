@@ -216,6 +216,15 @@ The account record gains three optional session fields:
 The preflight mints and verifies every credential-bearing account, writes the
 absolute role/root/probe into the pool record, and sets `status` to `valid` or
 `not_valid`.
+The bootstrap does NOT write the pool record at session end.
+After authentication it persists the session through `auth_store` writes:
+`accounts.<account>.snapshot` with `{cookies, headers, params, captured_at}`
+and/or `accounts.<account>.tokens` with `{value, location, target, expiry}`.
+The account identifier is the full path the read returned; a new account is a
+create at `accounts.<account>`.
+There is no prompt-side account matching and no projection of the account
+catalog into the prompt: the agent lists the accounts on demand.
+`browser(command="end")` stops and releases without `persist_context`.
 The crawl's session list is the valid accounts, plus one anonymous fallback
 only when the auth store has zero accounts.
 No anonymous session runs when accounts exist.

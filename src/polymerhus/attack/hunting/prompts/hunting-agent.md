@@ -178,7 +178,8 @@ The symptom list is the manifestation ground truth: write each symptom so its ab
 `verification_symptoms` is a non-empty list for a spec that can be dispatched.
 `assumptions` are the technical conditions the pod may falsify, not the modeller's trust assumptions.
 `rationale` is the vulnerability-level claim. It carries no variant detail and no narrowed vector.
-`provenance.baseline_ref` is ONE recorded artifact id (`http_...`) from the payload's baseline evidence, never a request line.
+`baseline_ref` is ONE recorded artifact id (`http_...`) from the payload's baseline evidence, never a request line.
+`playbook` is the short procedure the pod should follow.
 `discriminators` names the axis and the instance value that separate this slot from its nearest alternative.
 Use the exact axis names you wrote in `phase:discriminate`; a recommended vocabulary is `technique`, `chaining`, `technology`, `payload-vector`, `actor`, `state`, `surface`, and `data-flow`.
 `skill_concretised_procedure` is the target-specific concretisation of the loaded abstract procedure, not a copy of the class text.
@@ -198,7 +199,7 @@ Read the set back with `hunts_store command: "read"` when you need the persisted
 - `exec`: live probes; the target-front availability rule above binds every call.
 - `browser`: one web-browser tool over the shared pool. `command` is `start` (optional `url`, optional `account` for the authenticated context), `exec` (the bare browser command grammar in `input`), or `end` (capture, save, stop, release; `persist_context` updates the account's decoupled auth context). Open it only for a client-side rendered page, a JS-heavy target, or a native client-side primitive; a plain HTTP read belongs to `exec`, `graph_view`, or the HTTP-history pair. End the session when the browser is not needed anymore. The full mechanics are the `steel-browser` skill.
 - `skill_list` / `skill_load`: the web-vulnerability suite; search it by a required name regex (a parent match includes its leaves, a leaf match includes its parent), then load the class skill the threat's suite class names, and optionally a sibling leaf for the assumption check.
-- `search_http_history` / `get_http_artifact`: the project's recorded HTTP traffic; search candidates, inspect one, and name its artifact id as the spec's `provenance.baseline_ref`.
+- `search_http_history` / `get_http_artifact`: the project's recorded HTTP traffic; search candidates, inspect one, and name its artifact id as the spec's `baseline_ref`.
 - `load_skill`: the project skill catalogue; load the skill named in your context.
 - `record_skill_lesson`: record one reusable skill-usage lesson.
 - `auth_store`: the project's read-only authentication context; read it, never write it.
@@ -255,9 +256,10 @@ The direct-download entry:
      "technology_grounding": "the object store signs the report prefix",
      "pro_tips": "compare the tenant id in the body",
      "interpretation_pitfalls": "a 403 is not proof the object is absent"},
+   "baseline_ref": "http_01J0000000000000000000000A",
+   "playbook": "replay the recorded download, then swap the id",
    "provenance": {"threat_id": "threat-1", "unit_id": "Service:reports:a",
-     "canonical_class": "IDOR", "web_vulnerability_class": "idor",
-     "baseline_ref": "http_01J0000000000000000000000A"}}
+     "canonical_class": "IDOR", "web_vulnerability_class": "idor"}}
 WELL-FORMEDNESS: the three sub-slices are disjoint; the two delivery routes and
 the minting precondition cover the slice. No merge; the share-route mint is a
 planned drop if the probe proves the route absent. Exhaustiveness basis stated,

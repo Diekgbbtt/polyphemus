@@ -1112,9 +1112,14 @@ The pool store is `/var/lib/steel/sessions`, one owner-only JSON file per
 stable key.
 The context reference is `steel-auth-<project_slug>-<account_slug>`.
 `accounts.<account>.browser_context.ref` holds the reference, not a file path.
-`browser(command="end", persist_context=true)` captures cookies, localStorage,
-sessionStorage, and indexedDB, saves them under the context reference, stops the
-browser, and releases the session.
+The preflight mints the reference and the crawl mounts it.
+The bootstrap does not write the pool store: `browser(command="end")` stops and
+releases the session without `persist_context`.
+The authenticated session is persisted through `auth_store` writes:
+`accounts.<account>.snapshot` (`{cookies, headers, params, captured_at}`)
+and/or `accounts.<account>.tokens` (`{value, location, target, expiry}`).
+The account identifier is the full `accounts.<name>` path the read returned;
+a new account is a create.
 `browser(command="start", account=<account>)` restores cookies and localStorage.
 The session key is ephemeral and derived from the execution unit; the agent never
 passes it.

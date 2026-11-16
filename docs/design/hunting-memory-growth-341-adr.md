@@ -57,10 +57,12 @@ Resolves #341 (the growth follow-up deferred by #340 / EV-29).
 ## Amendment 2026-11-07: the pod-export stubs have their own store
 
 The Q16 pod-export stubs no longer share `hunting/hunter/notes.yaml`.
-They live in `hunting/pod-export/notes.yaml` (`PodExportStore`).
-The split removes the shared writer and the protected-eviction coupling.
+They live in the pod module's own notes file, `hunting/test-executor-pod/notes.yaml` (`PodExportStore`).
+The split removes the shared hunter writer and the protected-eviction coupling.
+The pod-export records share the pod notes file with the pod's `freeform`/`kb_insight` records under the one project lock.
 The hunter notes file now carries the episodic phase notes only.
 The legacy `provenance.verdict_stub` protection remains for a stub already present in an old file.
+A read falls back to the retired `hunting/pod-export/notes.yaml` bucket so an existing run keeps its exports.
 The pod-export store keeps the same key `<hunt_key>:pod-export:<spec_id>` and its own bound `POD_EXPORT_NOTES_MAX_RECORDS`/`POD_EXPORT_NOTES_MAX_BYTES` (1000 / 64 MiB).
 The base compose binds `${INSTANCE_DATA_ROOT:-./data}` to `/srv/data`, so the file survives a container kill.
 The live module context is `src/polymerhus/attack/hunting/CONTEXT.md`.

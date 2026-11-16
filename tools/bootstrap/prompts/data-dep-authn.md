@@ -44,8 +44,10 @@ Prove that it answers 2xx only with an authenticated context: 401, 403, or 3xx w
 The recon gateway uses it as the only authentication oracle; a target with a declared surface and no oracle is an incomplete bootstrap.
 
 `credentials.yaml` - accounts keyed by name, one account per session:
-`{accounts: {<username>-<minting_context>: {origin, procedure?, role?, root_url?, auth_probe?, credentials? (username, password, login_url, domain?, selectors?), tokens? ({<name>: {value, location: cookie|header|storage, target?, expiry?}}), browser_context? ({ref}), snapshot? ({headers, cookies, params, captured_at}), roles?, default_role?, notes?}}}`.
-`role` names the privilege surface; `root_url` is the featured entry (default `/`); `auth_probe` is that session's oracle (default the root URL); `browser_context.ref` is the durable pool reference.
+`{accounts: {<username>-<minting_context>: {origin, procedure?, role?, root_url?, auth_probe?, credentials? (username, password, login_url, domain?, selectors?), tokens? ({<name>: {value, location: cookie|header|storage, target?, expiry?}}), snapshot? ({headers, cookies, params, captured_at}), roles?, default_role?, notes?}}}`.
+`role` names the privilege surface; `root_url` is the featured entry (default `/`); `auth_probe` is that session's oracle (default the root URL).
+Persist the authenticated session at `accounts.<account>.snapshot` and/or `accounts.<account>.tokens`; the account identifier is the full path the store read returned.
+`browser_context.ref` is preflight-minted; the bootstrap does not write it.
 Scaffold one account per role, including the least-privileged baseline; an account with no role starts at `/`.
 The authn skill prose covers the sign-in and sign-up procedure for every role.
 

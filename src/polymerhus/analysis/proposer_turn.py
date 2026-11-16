@@ -94,6 +94,71 @@ def current_batch() -> str | None:
     return _BATCH.get()
 
 
+def repair_instruction(tool_name: str) -> str:
+    """The one bounded re-ask after a structured turn returns no parseable call."""
+    return (
+        f"Your previous response did not produce a valid `{tool_name}` tool call. "
+        f"Call the `{tool_name}` tool now with ONE complete JSON object. "
+        "Do not write the JSON in your message text. "
+        "Do not use placeholder objects, and do not invent fields. "
+        "Every list entry must match the declared type exactly."
+    )
+
+
+def structured_turn(
+    invoke_fn,
+    messages,
+    *,
+    schema,
+    system_prompt,
+    tool_name: str,
+    role: str,
+    chunk_id: str,
+    expected=None,
+):
+    """One structured turn plus one bounded repair.
+
+    Returns `(result, generation_failed)`. A first `None` is the exhausted-
+    generation signal; the repair is a single corrective re-ask on the same
+    session, never an unbounded retry. `expected` is the type (or tuple of
+    types) this turn owns: a result of the WRONG variant is a miss, exactly
+    like `None`, so a union response format cannot silently discard a whole
+    turn's payload. A second miss is a NAMED generation failure.
+
+    On the STATEFUL seam the first turn is already in the checkpoint; the
+    repair appends only the corrective message, so the chunk and inventory are
+    never re-sent. On a stateless seam the repair replays the original
+    messages, because that seam carries no checkpoint.
+    """
+    from langchain_core.messages import HumanMessage
+
+    def _accepted(result) -> bool:
+        if result is None:
+            return False
+        if expected is None:
+            return True
+        return isinstance(result, expected)
+
+    result = invoke_fn(messages, schema=schema, system_prompt=system_prompt)
+    if _accepted(result):
+        return result, False
+    corrective = HumanMessage(content=repair_instruction(tool_name))
+    repair = (
+        [corrective]
+        if getattr(invoke_fn, "stateful", False)
+        else list(messages) + [corrective]
+    )
+    result = invoke_fn(repair, schema=schema, system_prompt=system_prompt)
+    if not _accepted(result):
+        logger.warning(
+            "%s: structured generation failed after one repair (chunk=%s)",
+            role,
+            chunk_id,
+        )
+        return None, True
+    return result, False
+
+
 def _role_prompt(role_id: str) -> str:
     """The role's OWN stable prompt, resolved on call (no import-time I/O).
 
@@ -133,9 +198,13 @@ def _role_default_schema(role_id: str) -> Any:
     """The role's default structured-output schema, or None for a role that takes
     prose turns. Part of the role's output contract, not a per-call decision."""
     if role_id == "assigner":
-        from polymerhus.analysis.analyser_types import L1DeltaBatch
+        from polymerhus.analysis.analyser_types import AssignerDelta
 
-        return L1DeltaBatch
+        return AssignerDelta
+    if role_id == "mechanism_typist":
+        from polymerhus.analysis.analyser_types import TypistDelta
+
+        return TypistDelta
     return None
 
 
@@ -143,11 +212,16 @@ def _role_structured_schema(role_id: str) -> Any:
     """The schema a role's STRUCTURED turns use, or None for a role with no structured
     contract. Distinct from `_role_default_schema`, which is None for the
     reflection-driven proposers: their prose turns are deliberate, but they still
-    share this one structured tool so the request shape never toggles."""
-    if role_id in ("assigner", "mechanism_typist"):
-        from polymerhus.analysis.analyser_types import L1DeltaBatch
+    share the next structured tool so the reflection/extraction request shape
+    never toggles."""
+    if role_id == "assigner":
+        from polymerhus.analysis.analyser_types import AssignerDelta
 
-        return L1DeltaBatch
+        return AssignerDelta
+    if role_id == "mechanism_typist":
+        from polymerhus.analysis.analyser_types import TypistDelta
+
+        return TypistDelta
     return None
 
 
@@ -272,20 +346,27 @@ def _prose_tools(role_id: str, *, tools_bound: bool = False) -> tuple:
         fmt = structured_response_format(role_id, schema, tools_bound=tools_bound)
         if not isinstance(fmt, ToolStrategy):
             return ()
-        spec = fmt.schema_specs[0]
-        return (StructuredTool(
-            name=spec.name,
-            description=spec.description,
-            args_schema=spec.json_schema,
-            # Directive, not merely descriptive: live sessions retried this
-            # inert call 1-3 times per chunk before inferring the gate. Name the
-            # turn and the required next action so the model stops immediately.
-            func=lambda **_: (
-                "Reflection turn: the structured payload is NOT accepted here. "
-                "Do not call this tool again. Finish the reflection with prose; "
-                "the extraction turn follows and accepts the structured payload."
-            ),
-        ),)
+        # A union schema flattens into ONE tool per variant. Bind every variant
+        # on the prose turn, or the prose turn would carry a smaller tool set
+        # than the structured turn and the provider prefix would toggle.
+        return tuple(
+            StructuredTool(
+                name=spec.name,
+                description=spec.description,
+                args_schema=spec.json_schema,
+                # Directive, not merely descriptive: live sessions retried this
+                # inert call 1-3 times per chunk before inferring the gate. Name
+                # the turn and the required next action so the model stops
+                # immediately.
+                func=lambda **_: (
+                    "Reflection turn: the structured payload is NOT accepted "
+                    "here. Do not call this tool again. Finish the reflection "
+                    "with prose; the extraction turn follows and accepts the "
+                    "structured payload."
+                ),
+            )
+            for spec in fmt.schema_specs
+        )
     except Exception:  # noqa: BLE001 - fail-open: an unbuildable tool binds nothing
         return ()
 
@@ -404,6 +485,7 @@ def session_invoke_fn(role_id: str, run_id: str, checkpointer, project_id: str |
                     except Exception:  # noqa: BLE001 - the TTL is the backstop
                         pass
 
+    invoke.stateful = True  # the repair appends to this session's checkpoint
     return invoke
 
 

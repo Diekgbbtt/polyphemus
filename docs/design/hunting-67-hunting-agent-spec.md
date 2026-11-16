@@ -504,9 +504,15 @@ The D4 surface is reduced:
   They are not the modeller's trust assumptions.
 - `rationale`: the vulnerability-level rationale.
   It carries no failure-mode detail and no narrowed vector.
+- `baseline_ref`: the optional recorded-baseline artifact id.
+  It is a top-level spec field, never provenance.
+- `playbook`: the short procedure the pod should follow.
+  It is a top-level spec field, never provenance.
 - `parent_spec_ref`: the variant lineage, when the spec is derived.
-- `provenance`: the dispatch context.
-  It carries `run_id` (bound by the tool, never authored), `threat_id`, `unit_id`, `canonical_class`, `web_vulnerability_class`, `baseline_ref` (optional), `source_recon_refs`, `assumption_ref`, `playbook`, and the bounded `skill_procedure` for the pod's triager.
+- `provenance`: the SYMBOLIC dispatch context.
+  It carries `run_id` (bound by the tool, never authored), `threat_id`, `unit_id`, `canonical_class`, and `web_vulnerability_class`.
+  `source_recon_refs` and `assumption_ref` are removed: they were model-authored narrative, not symbolic provenance.
+  The bounded `skill_procedure` is retired; the concretised procedure is the top-level `skill_concretised_procedure`.
 - `skills`: the optional flat pod-runner skill list.
   Each name is a skill the runner may carry.
   It is never a path and never a meta-skill.
@@ -617,7 +623,7 @@ The hunter's tool surface is:
 - `search_http_history` / `get_http_artifact`: the project's recorded HTTP traffic.
   - Search returns sanitized candidate rows.
   - Get inspects one artifact and its capture state.
-  - The record's artifact id becomes the spec's `provenance.baseline_ref`.
+  - The record's artifact id becomes the spec's top-level `baseline_ref`.
   - Replay is the pod's act, never the hunter's.
 - `load_skill`: the project skill catalogue.
 - `record_skill_lesson`: the skill-usage lesson recorder.
@@ -690,7 +696,8 @@ The request tool definitions are the full surface.
 - The `run_id` is bound and never authored.
 - The `spec_id` is derived and never authored.
 - The `skill_procedure` is the typed seven-field excerpt above.
-- The `baseline_ref` rides the provenance when the hunter has a recorded baseline.
+- The `baseline_ref` is a top-level spec field when the hunter has a recorded baseline.
+- The `playbook` is a top-level spec field.
 - The prompt's spec body is generated from the typed models.
 - The first human context is pinned through compaction.
 - The auth store is bound read-only.

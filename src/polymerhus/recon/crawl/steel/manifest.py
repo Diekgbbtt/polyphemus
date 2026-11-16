@@ -223,7 +223,10 @@ def build_manifest_from_output(
 
     endpoints: dict[str, EndpointRecord] = {}
     for flow in flows:
-        path, baseurl = split_url(flow.url)
+        split = split_url(flow.url)
+        if split is None:
+            continue
+        path, baseurl = split
         key = endpoint_key(flow.method, path, baseurl)
         vendor_script = (
             is_vendor_script_path(path) and not _has_target_signal(flow)

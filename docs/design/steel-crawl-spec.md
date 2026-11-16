@@ -290,14 +290,24 @@ It marks the shared player `addressable=false`.
 - The gateway mounts the account's auth context with
   `browser(command="start", account=<account>)`.
   It validates the oracle in that session, signs in or mints on failure, and
-  calls `browser(command="end", persist_context=true)`.
-  A successful end captures and saves the state under the context reference.
-  The gateway then writes
-  `accounts.<account>.browser_context.ref = <context-ref>`.
+  calls `browser(command="end")` without `persist_context`.
+  It then persists the session through `auth_store`:
+  `accounts.<account>.snapshot` and/or `accounts.<account>.tokens`.
+  The account identifier is the full path the read returned; a new account is a
+  create at `accounts.<account>`.
+- The preflight mints the pool context (`browser_context.ref`) for every account
+  staged in the auth store before the trial, and the crawl mounts that reference.
+  The preflight runs before the trial.
+  A gateway-minted account created during the trial has no pool context yet: its
+  auth-store `snapshot`/`tokens` are the request-replayable record, and the NEXT
+  preflight mints its browser context.
+  The crawl only mounts a preflight-seeded context; it never invents one.
 - The crawl mounts the same context reference and calls
   `browser(command="end")` in its finalize close.
 - The `start` command restores cookies and localStorage from the pool store;
   all four captured fields are evidence on the end record.
+  The auth-store snapshot/tokens are the request-replayable record for every
+  consumer that does not mount a browser.
 - One MCP session is one lease.
   A mount by the same execution unit answers `session_in_use`.
   A missing lease answers `no_session`, which maps to `SessionMissing`.
@@ -478,6 +488,12 @@ The fresh snapshot is stamped with the new `DocumentGeneration`.
 The executor acts on a ref that belongs to the live document.
 If the cached element's fingerprint is absent from the fresh projection, the
 action fails with `stale_element` and the candidate is consumed.
+A per-element action failure that is neither `stale_element` nor
+`session_missing` is also consumed: the frontier records the failure in its
+action ledger, restores the page, and continues with the next candidate.
+The traversal ends only when no candidate remains.
+This is the DOM fail-safe: one broken element never ends a session that can
+still traverse.
 The root needs no initial restore: the page factory just loaded it, so its
 snapshot and refs are already the live document's.
 

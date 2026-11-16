@@ -47,9 +47,8 @@ With no usable account on record, mint one through the authn skill's sign-up pro
 
 ### 3. Validate with the authenticated-context oracle
 
-The in-process `auth_store` read is REDACTED: it returns names, statuses, shapes, and locations, never a token, cookie, password, or header value.
-A `<redacted>` value is the contract working, not a failed read.
-Never read, copy, or paste a secret value into a command, a write, or the rationale.
+The in-process `auth_store` read returns the REAL stored material: names, statuses, shapes, locations, and values - tokens, cookies, passwords, and header values exactly as recorded.
+Read a stored value when a replay or a probe needs it, and replay it exactly as recorded; never invent or guess a value.
 
 The authoritative fact is the selected account's authenticated-context oracle: `account.auth_probe`.
 When the account probe is absent or empty, use the account's `root_url`; a non-4xx, non-3xx response there passes.
@@ -109,8 +108,18 @@ Branch directives shape the rest of the run, never the oracle:
   The oracle still decides whether the session itself is authenticated; an unresolved request fact never forces a fail-open.
 
 `browser(command="start", ...)` restores cookies and localStorage; sessionStorage and indexedDB are captured as evidence, not restored.
-Call `browser(command="end", persist_context=true)` on every authenticated path after the first mount.
-It captures, saves, stops, and releases; `persist_context` writes the captured state back to the account's decoupled auth context, and the result carries `captured`, `saved`, `stopped`, `released`, and `context_saved`.
+Call `browser(command="end")` without `persist_context` when the browser is no longer needed.
+The session persistence is an `auth_store` write, not a browser-context write.
+
+Persist the authenticated session through `auth_store`, on the account identifier the read returned (or the new account you minted):
+
+- `accounts.<account>.snapshot` with `{cookies, headers, params, captured_at}` for a session the request tools will replay.
+- `accounts.<account>.tokens` with one entry per token: `{value, location: cookie | header | storage, target?, expiry?}`.
+
+A new account is a create at `accounts.<account>`.
+For an existing account write the deeper field path (`accounts.<account>.snapshot` or `accounts.<account>.tokens`); the account root is create-only.
+The tool contract defines the exact field shapes; read it before the first write.
+Do not paste a secret into a prompt, a note, or the rationale.
 
 Assert the outcome in the store BEFORE entering sign-in with an `auth_store` write of `accounts.<account>.status`: `valid` on a 2xx oracle, `not_valid` on 401, 403, or 3xx.
 The assertion is the loop's boundary act and the write LANDS: an operator-stamped account merges the write like any other, keeping its `origin: operator` stamp as provenance.
@@ -121,31 +130,29 @@ The verdict restates the validity; it never replaces the write.
 On `not_valid` or no usable account, run the `authn` skill's procedure.
 
 - Sign-in: use the documented sign-in flow.
-  When it needs an existing secret, do not read or paste it; use the skill's server-side or browser path if one exists.
+  When it needs an existing secret, read it from the store and apply it exactly as recorded.
 - Mint: when the selected account cannot be recovered, create a NEW account through the skill's sign-up procedure.
   Use synthetic identity data (a fake email address and fake personal details), never real personal data.
   Write the new account record with its `credentials`, optional `tokens`, and `status: valid` through an `auth_store` write.
-  Writes are accepted; reads stay redacted.
-  The gateway is allowed to mint a new valid credential; it is never allowed to read an existing one.
+  Writes merge; reads return the real values.
+  Mint a new credential only when no stored credential passes the oracle; read and reuse a stored one first.
 - Re-run the oracle after sign-in or mint.
   A passing oracle is the only success boundary.
 
 A missing or unauthenticated session does not fail open.
 It enters sign-in or mint with the account asserted `not_valid`, never a silent anonymous turn and never a newly minted unauthenticated session.
 The browser path mounts the account's auth context; it never starts a twin.
-`browser(command="end", persist_context=true)` captures and saves the state under the account's context reference.
-After a successful end, write `accounts.<account>.browser_context.ref = <context-ref>`.
-The crawl mounts the same context reference, so the next turn and the crawl share one durable browser state.
+The `snapshot`/`tokens` write is the durable state the next turn and the crawl replay.
+Do not call `browser(command="end", persist_context=true)`.
 
 If the skill provides no sign-in and no sign-up path, or the required data dependency (an invite code, a seed identity, a recovery channel) is absent, stop with `outcome: failed` and name the missing dependency.
 A failed authentication stops the run: collection must not proceed unauthenticated.
 
 There is NO attempt cap and no duplicate-command rejection: adjust one variable per attempt and keep debugging while progress is real.
 The span ends in exactly two ways: a passing oracle plus one `auth_store` write of `accounts.<account>.status` (or the minted account record), or your declaration that the tweaking space is exhausted - the terminal failed verdict.
-Token and credential capture belongs to the gateway only when it minted the account; it never reads an existing secret.
-The context reference is not a secret: record it as `accounts.<account>.browser_context.ref` after a successful end.
-A reference is `steel-auth-<project_slug>-<account_slug>`.
-A slug is lowercase; every run of characters outside `[a-z0-9_-]` becomes one `-`, consecutive hyphens collapse, and leading or trailing `-`/`_` are trimmed.
+Token and credential capture belongs to the gateway; it reads existing secrets exactly as recorded and writes refreshed ones back to the store.
+The account identifier is not a secret: use the exact `accounts.<account>` path the read returned.
+Secret material stays in the store; never paste it into the verdict, a note, or the rationale.
 
 ### 5. Outer loop, then the verdict
 

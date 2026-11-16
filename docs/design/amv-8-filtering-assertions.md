@@ -1,5 +1,20 @@
 # Assertions - work-item "AMV-8 end filtering system (crawl/parse noise gate)"
 
+## Amendment 2026-11-10: confident static image base paths
+
+Images and media stay recall-biased by default.
+They can be user-controlled and can carry executable artifacts such as SVG, so the filter drops an image or media endpoint only under a confidently static base path:
+
+- `/static/`, `/assets/`, `/_next/static/`;
+- verified CDN image paths such as `/cdn-cgi/image/`;
+- vendor/build roots (`/vendor/`, `/dist/`, `/build/`, `/node_modules/`, `/bower_components/`);
+- template/theme/skin image paths that the Steel crawl observes as rendered theme assets.
+
+An image under `/uploads/`, `/downloads/`, `/media/`, or any unknown base path stays.
+A `data:` URI is never a graph endpoint.
+The shared classifier is `noise_filter.is_static_base_path`; the analysis stream gate reuses it.
+This supersedes the earlier blanket extension statements where they conflict.
+
 **Source:** `docs/design/after-mvp-work-items.md` AMV-8; the six tracer-bullet slices agreed 2026-07-23.
 **Seams under assertion:**
 - `classify_endpoint(path, has_params)` - the pure path classifier (unit seam, extended by every slice).

@@ -34,6 +34,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from polymerhus.recon.crawl.steel.auth import (
+    PROBE_SOURCE,
     AuthOracle,
     AuthVerdict,
     session_fetch_fn,
@@ -642,10 +643,12 @@ def run_live_crawl(ctx: LiveRunContext) -> LiveRunResult:
             )
             holder["verdict"] = verdict
             return verdict
+        probe_url, probe_source = crawl_session_probe_with_source(ctx, loaded)
         oracle = AuthOracle(
             fetch_fn=session_fetch_fn(session),
             page_url=root.final_url or root.url,
-            probe_url=crawl_session_probe(ctx, loaded),
+            probe_url=probe_url,
+            probe_source=probe_source or PROBE_SOURCE,
             login_url=ctx.login_url,
         )
         verdict = oracle.check()
@@ -848,12 +851,36 @@ def crawl_session_probe(ctx: LiveRunContext, loaded: Any = None) -> str | None:
     loaded `auth_probe` when present, else its configured probe, else its
     root URL (2xx without a 3xx is the user's success rule).
     """
+    return crawl_session_probe_with_source(ctx, loaded)[0]
+
+
+def crawl_session_probe_with_source(
+    ctx: LiveRunContext, loaded: Any = None
+) -> tuple[str | None, str]:
+    """The probe URL and the label of the source that actually supplied it.
+
+    The loaded session's own probe is the most specific source; the account's
+    configured probe is next; the root URL is the declared default. An
+    anonymous session has no probe. The label is what the manifest and the
+    auth verdict carry, so a probe resolved from the session is never labelled
+    as an overview probe.
+    """
     if ctx.anonymous:
-        return None
+        return None, "anonymous"
     probe = getattr(loaded, "auth_probe", None)
     if isinstance(probe, str) and probe:
-        return probe
-    return ctx.auth_probe or crawl_session_root(ctx, loaded)
+        return probe, "session.auth_probe"
+    configured = getattr(ctx, "auth_probe", None)
+    if isinstance(configured, str) and configured:
+        return configured, "account.auth_probe"
+    root = getattr(loaded, "root_url", None)
+    if isinstance(root, str) and root:
+        return root, "session.root_url"
+    if ctx.root_url:
+        return ctx.root_url, "session.root_url"
+    if ctx.target_url:
+        return ctx.target_url, "target.root_url"
+    return None, ""
 
 
 def _scope_predicate(scope: Sequence[str]) -> Callable[[str], bool]:

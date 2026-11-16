@@ -605,8 +605,9 @@ This is amended by the per-account session model in the D223-19 amendment.
 Why the previous readings fail:
 
 - Replaying stored request state required raw values. The model-facing store
-  read is redacted (#364), so the instruction could not be executed. The
-  redaction is correct; the instruction was not.
+  read was redacted (#364), so the instruction could not be executed. The
+  2026-11-13 ablation (#364 amendment) resolved this the other way: the read
+  now returns the real values, and the replay instruction is executable.
 - "Authenticated landing" is not a status. A login page can render at 200 and
   a stale session can follow a 302 to a 200 page. Both look alive to a
   navigation envelope.
@@ -627,9 +628,12 @@ Supersedes D223-2 and the asymptotic fail-open half of D223-10/D223-17.
   - use synthetic identity data (a fake email address and fake personal
     details), never real personal data;
   - write the new account record with its `credentials` and `status: valid`;
-    writes are accepted and reads stay redacted;
+    writes merge and reads return the real values (the 2026-11-13 #364
+    amendment ablated the read redaction);
   - re-run the oracle; a 2xx with no followed redirect is the only success.
-- The gateway never reads an existing secret. If the selected account's
+- The gateway reads an existing secret exactly as recorded and replays it;
+  minting is for when no stored credential passes the oracle. If the selected
+  account's
   session is dead and the skill provides no mint path, the run stops loudly
   with the missing data dependency.
 - The external bootstrapper remains the owner of the sign-up/sign-in data

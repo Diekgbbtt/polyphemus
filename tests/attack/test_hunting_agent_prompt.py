@@ -17,7 +17,6 @@ import re
 from pathlib import Path
 
 from polymerhus.attack.hunting.hunting_agent import _load_hunting_agent_skill
-
 PASSES = (
     "GROUNDING", "SLICE", "COLLECT", "DISCRIMINATE",
     "GENERATE", "WELL-FORMEDNESS", "VERIFY-CLAIMS", "COMPLETE",
@@ -459,3 +458,12 @@ def test_the_prompt_stays_within_a_reasonable_size():
     generated table now expands the discriminator and the nine-field
     concretisation so the hunter never has to infer either shape."""
     assert len(_prompt().splitlines()) < 460
+
+
+def test_the_contract_shows_baseline_and_playbook_at_the_top_level():
+    from polymerhus.attack.hunting.hunter_tools import render_spec_contract
+
+    text = render_spec_contract()
+    assert "| `baseline_ref` |" in text
+    assert "| `playbook` |" in text
+    assert "provenance.baseline_ref" not in text

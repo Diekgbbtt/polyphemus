@@ -277,6 +277,7 @@ _Avoid_: proof, references
 The per-threat assessment of whether the sharper trust boundaries starve the hunter's discrimination space.
 It has two attributes: the bound `web_vulnerability_class` is a suite parent with variants (broad) or a leaf (narrow), and the linked spec set is substantial (at least three specs) and well-formed (the primary discrimination axes do not overlap).
 The deterministic substrate is `eval/measure_utm.py`; the rubric is `eval/prompts/measure.md`.
+The substrate counts distinct threat artifacts, attributes a spec by `(unit_id, threat_id)`, and reads the current corpus shape (`l1-profile.md`) when `unit-spec.yaml` is absent.
 It reports, it does not gate the run.
 _Avoid_: breadth score, bias score
 

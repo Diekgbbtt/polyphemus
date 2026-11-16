@@ -156,18 +156,15 @@ SPEC_PROVENANCE_FIELDS: tuple[str, ...] = (
     "unit_id",
     "canonical_class",
     "web_vulnerability_class",
-    "baseline_ref",
-    "source_recon_refs",
-    "assumption_ref",
-    "playbook",
 )
-"""The provenance fields the hunter writes into every spec (S3 8.6/8.9).
+"""The SYMBOLIC provenance fields the hunter writes into every spec (S3 8.6/8.9).
 
-`threat_id`, `unit_id`, the two classes and the threat's provenance ride the
-dispatch payload; `baseline_ref` is optional; `source_recon_refs`,
-`assumption_ref` and `playbook` record the grounding the hunter used. The
-copied `skill_procedure` is retired: the concretised procedure is a top-level
-spec field.""" 
+Every field is bound by the symbolic layer or copied from the dispatch payload;
+the hunter never authors a narrative provenance. `baseline_ref` and `playbook`
+are top-level spec fields. `source_recon_refs` and `assumption_ref` are removed:
+they were model-authored narrative, not symbolic provenance. The copied
+`skill_procedure` stays retired: the concretised procedure is a top-level spec
+field.""" 
 
 
 class TargetIdentity(BaseModel):
@@ -195,10 +192,11 @@ class TargetIdentity(BaseModel):
 
 
 class SpecProvenance(BaseModel):
-    """The typed provenance mapping every hunter spec carries (S3 8.6/8.9).
+    """The symbolic dispatch provenance every hunter spec carries (S3 8.6/8.9).
 
     The field set is the `SPEC_PROVENANCE_FIELDS` contract, so the tool schema
-    and the pod/triager read cannot drift.
+    and the pod/triager read cannot drift. The recorded-baseline pointer and the
+    playbook are top-level spec fields, never provenance.
     """
 
     run_id: str = Field(
@@ -212,16 +210,6 @@ class SpecProvenance(BaseModel):
     web_vulnerability_class: str = Field(
         default="",
         description="The suite directory name; empty for a suite_gap.")
-    baseline_ref: str = Field(
-        default="",
-        description="The optional recorded-baseline artifact id.")
-    source_recon_refs: list[str] = Field(
-        default_factory=list,
-        description="The recon observations/probes this spec is grounded on.")
-    assumption_ref: str = Field(
-        default="", description="The assumption this spec tests, when one applies.")
-    playbook: str = Field(
-        default="", description="The short procedure the pod should follow.")
 
     model_config = ConfigDict(extra="forbid")
 

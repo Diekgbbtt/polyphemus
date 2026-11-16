@@ -244,6 +244,32 @@ def test_dispatches_entered_accumulates_across_passes_not_just_the_terminal_one(
     assert stats.passes == 2                     # chunk + terminal marker
 
 
+def test_generation_failures_accumulate_into_the_persisted_feed_stats():
+    """The named analysis generation failure is durable: the feed's stats are
+    what `set_analysis_run_status` persists, so the operator sees it without a
+    container-log grep."""
+    async def graded(chunk):
+        if chunk.terminal:
+            return _census(terminal=True, dispatches_entered=0)
+        return _census(
+            generation_failures=1,
+            generation_failure_details=(
+                "assigner:generation_failed chunk=katana:0 admitted=52",
+            ),
+        )
+
+    async def scenario():
+        feed = QueuedAnalysisFeed("p1", "r1", pass_fn=graded).start()
+        await feed.push(_chunk("katana"))
+        return await _drain(feed)
+
+    stats = _run(scenario())
+    assert stats.generation_failures == 1
+    assert stats.generation_failure_details == (
+        "assigner:generation_failed chunk=katana:0 admitted=52",
+    )
+
+
 def test_a_slow_pass_drains_naturally_with_no_deadline(monkeypatch):
     """#75 D8: the internal drain deadline/grace is GONE. A pass slower than the
     old 600s deadline is NOT cancelled - the consumer drains naturally because

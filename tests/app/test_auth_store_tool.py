@@ -10,7 +10,6 @@ via the tool; no production seam binding is touched here.
 from polymerhus.app.auth.store import AuthStore
 from polymerhus.app.auth.tool import (
     AUTH_STORE_CONTRACT,
-    REDACTED,
     build_auth_store_tool,
 )
 
@@ -181,10 +180,12 @@ def test_read_scalar_leaf_returns_the_scalar(tmp_path):
                    "value": "operator ground truth"}
 
 
-def test_read_redacts_every_secret_value_in_the_read_write_binding(tmp_path):
-    """The model-facing view never carries a secret, including on the
-    read/write binding used by the gateway. The store keeps the material for
-    the internal replay seam."""
+def test_read_returns_the_real_secret_values_in_the_read_write_binding(tmp_path):
+    """The redaction ablation (2026-11-13): the model-facing read carries the
+    REAL session material, including on the read/write binding used by the
+    gateway. The iteration-E trial showed the marker costs the authenticated
+    modelling its quality depends on (siyucms-004/006 diagnoses), so the read
+    view and the store now agree on every value."""
     store = AuthStore(tmp_path)
     store.replace_operator_state(PROJECT, accounts={"root": {
         "credentials": {"username": "u", "password": "p",
@@ -200,11 +201,11 @@ def test_read_redacts_every_secret_value_in_the_read_write_binding(tmp_path):
 
     value = tool.invoke({"command": "read", "path": "accounts.root"})["value"]
 
-    assert value["credentials"]["password"] == REDACTED
-    assert value["tokens"]["session"]["value"] == REDACTED
-    assert value["snapshot"]["cookies"][0]["value"] == REDACTED
-    assert value["snapshot"]["headers"]["Authorization"] == REDACTED
-    assert value["snapshot"]["params"]["token"] == REDACTED
+    assert value["credentials"]["password"] == "p"
+    assert value["tokens"]["session"]["value"] == "tok-1"
+    assert value["snapshot"]["cookies"][0]["value"] == "cookie-secret"
+    assert value["snapshot"]["headers"]["Authorization"] == "Bearer header-secret"
+    assert value["snapshot"]["params"]["token"] == "param-secret"
     assert store.read(PROJECT, "accounts.root.credentials.password") == "p"
     assert store.read(PROJECT, "accounts.root.tokens.session")["value"] == "tok-1"
 
@@ -297,9 +298,9 @@ def test_write_single_field_merges_and_round_trips(tmp_path):
                    "value": {"value": "tok-1", "location": "header"}}
     assert tool.invoke({"command": "read",
                         "path": "accounts.alice.tokens.session"})["value"] == {
-        "value": REDACTED, "location": "header"}
-    # The model-facing view is redacted; the store itself keeps the material
-    # for the gateway's internal replay seam.
+        "value": "tok-1", "location": "header"}
+    # The model-facing read and the store agree on the value: the replayer
+    # reads the real material through the tool itself.
     assert store.read(PROJECT, "accounts.alice.tokens.session")["value"] == "tok-1"
     assert tool.invoke({"command": "read",
                         "path": "accounts.alice.notes"})["value"] == "agent-minted note"
@@ -368,7 +369,7 @@ def test_write_to_an_operator_stamped_account_lands(tmp_path):
     record = tool.invoke({"command": "read", "path": "accounts.root"})["value"]
     assert isinstance(record.pop("updated_at"), str)
     assert record["origin"] == "operator"
-    assert record["tokens"]["session"]["value"] == REDACTED
+    assert record["tokens"]["session"]["value"] == "tok-1"
     assert store.read(PROJECT, "accounts.root.tokens.session")["value"] == "tok-1"
 
 

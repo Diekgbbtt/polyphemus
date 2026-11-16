@@ -210,6 +210,30 @@ def test_project_request_auth_empty_account_projects_empty():
     assert project_request_auth(None, None) == {}
 
 
+def test_project_request_auth_dedupes_a_cookie_by_name():
+    account = {
+        "snapshot": {"cookies": [{"name": "PHPSESSID", "value": "snapshot"}]},
+        "tokens": {
+            "PHPSESSID": {"value": "token", "location": "cookie"},
+        },
+    }
+    material = project_request_auth(account, {})
+    assert material["cookies"] == [{"name": "PHPSESSID", "value": "token"}]
+
+
+def test_project_request_auth_dedupes_repeated_snapshot_cookies():
+    account = {
+        "snapshot": {
+            "cookies": [
+                {"name": "sid", "value": "one"},
+                {"name": "sid", "value": "two"},
+            ]
+        }
+    }
+    material = project_request_auth(account, {})
+    assert material["cookies"] == [{"name": "sid", "value": "one"}]
+
+
 def _session_accounts(tmp_path):
     store = AuthStore(tmp_path)
     store.replace_operator_state(

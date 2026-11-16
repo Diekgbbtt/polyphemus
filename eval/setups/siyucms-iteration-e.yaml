@@ -8,7 +8,8 @@
 #   pipeline_sync            batched
 #   pod_batch_size           2
 #   promotion_risk_threshold 2.5  (inclusive, CVSS 4.0 points)
-#   risk_threshold           156.25 (the code default, CVSS 4.0 points)
+#   risk_threshold           220   (the iteration-E rerun budget; the prior
+#                                    trial stopped at 158.0 against 156.25)
 #   token_budget             7000000
 #
 # The recon subset keeps the single-host contract and adds `steel_crawl`.
@@ -67,4 +68,4 @@ instances:
           pipeline_sync: batched
           pod_batch_size: 2
           promotion_risk_threshold: 2.5
-          risk_threshold: 156.25
+          risk_threshold: 220

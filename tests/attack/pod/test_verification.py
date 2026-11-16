@@ -47,6 +47,7 @@ def test_the_reduced_d4_round_trips():
     model = D4Spec.model_validate(VALID_SPEC)
     assert model.model_dump() == {
         **VALID_SPEC, "parent_spec_ref": None, "skills": [],
+        "baseline_ref": "", "playbook": "",
         "discriminators": [], "skill_concretised_procedure": None,
     }
 

@@ -1,5 +1,14 @@
 # Plan: streamed-pipeline corrections after arm H
 
+## Amendment 2026-11-10: chunk cap and shared role vision
+
+The per-chunk packing threshold is `CHUNK_MAX_ASSETS = 120`.
+The cap is evaluated after the stream filter, the `(type, identity)` collapse, and the coherent endpoint micro-family grouping.
+It counts every streamed asset type, not Endpoints alone.
+A single family above 120 is split by the pathological safety valve.
+The assigner and the mechanism typist receive the identical `Chunk` object and `chunk_id`; each role narrows it with its own `ROLE_ADMITS` view.
+This supersedes the "soft target" sizing line in Step 1.
+
 Status: active (2026-10-15).
 Branch: `fix/streamed-pipeline-corrections`, cut from `dev` at `6ec2e55`.
 Origin: operator-directed, four corrections, executed sequentially in this order.

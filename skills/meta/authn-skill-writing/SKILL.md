@@ -60,7 +60,7 @@ The skill bundle is a separate write path from the seed face: write facts to the
 Enumerate every distinct role the target exposes: super-administrator or admin, operator or editor, member or user, support, and the least-privileged baseline.
 Mint and verify one account/session per role, in descending privilege order, highest privilege first.
 Stop only when the credential material or the application's sign-up path is exhausted; do not stop after one privileged account when the target exposes more roles.
-Record `role`, `root_url`, `auth_probe`, and `browser_context.ref` on each account.
+Record `role`, `root_url`, `auth_probe`, and the authenticated `snapshot`/`tokens` on each account.
 An account with no explicit role starts at `/`; it is the baseline session.
 The overview carries one `technical_conditions` entry per role; the skill prose carries the sign-in and sign-up procedure for each role.
 Prefer the highest-privilege role because its surface is the superset for authorization testing; the baseline role supplies the anonymous or least-privileged comparison.
@@ -127,18 +127,20 @@ A missing browser capability answers `browser_unavailable`; continue on the requ
 Log in when the mounted session does not pass the oracle.
 Verify with the account's oracle: a browser request to `account.auth_probe` (or `account.root_url` when the probe is empty) answers 2xx only for an authenticated context; 401, 403, or 3xx is not authenticated; anything else is indeterminate and is not a pass.
 An unverified session never passes a verdict.
-Call `browser(command="end", persist_context=true)` on every authenticated path after the first mount.
-It captures cookies, localStorage, sessionStorage, and indexedDB, saves them under the account's context reference, stops the browser, and releases the session.
-Its result carries `captured`, `saved`, `stopped`, `released`, and `context_saved`; `saved: false` means the next start cannot restore the session state.
-After a successful end, record `accounts.<account>.browser_context.ref = <context-ref>`.
+Call `browser(command="end")` without `persist_context` when the browser is no longer needed.
+It stops the browser and releases the session; the bootstrap does not write the pool store.
+Persist the authenticated session through `auth_store` writes: `accounts.<account>.snapshot` with `{cookies, headers, params, captured_at}` and/or `accounts.<account>.tokens` with `{value, location, target, expiry}`.
+The account identifier is the full `accounts.<name>` path the read returned; a new account is a create.
+For an existing account write the deeper field path (`accounts.<account>.snapshot` or `.tokens`); the account root is create-only.
+The preflight mints `browser_context.ref`; the bootstrap does not write it.
 The mechanics are the `steel-browser` skill; this skill owns only the login PROCEDURE.
 
 A follower's rules differ from this bootstrap's.
 A generated procedure that a gateway or pod runs must mount the same account's auth context and never start a twin.
 A missing session is asserted `not_valid` and stops the run; it is not a reason to mint a blank session.
 A follower may mint a NEW account through the sign-up procedure with synthetic identity data when the mounted context cannot authenticate and the target supports sign-up.
-It writes the new credentials and proves the oracle; it never reads an existing secret.
-A model-facing follower sees a REDACTED `auth_store` view: it cites token names and locations, uses the recorded HTTP history replay or the browser session, and never reads or pastes a secret value.
+It writes the new credentials and proves the oracle; before minting it reads and reuses any stored credential that still passes the oracle.
+A model-facing follower reads the real `auth_store` values: it cites token names and locations and reaches the values through the recorded HTTP history replay or the browser session. When a replay needs the material directly, a model-facing follower reads the real stored values and replays them exactly as recorded.
 Authentication failure never fails open; collection does not run unauthenticated.
 
 ### Browser fast path (read this before the first browser step)
@@ -184,7 +186,8 @@ Gate: each flow states its endpoint or form plus its required headers and anti-f
 
 Request path: reproduce the request shape exactly, then verify success before capturing anything.
 Browser path: mount the account's auth context with `browser(command="start", account=<account>)`; verify it with the oracle per the fallback discipline above. Log in only when the oracle does not pass, and pace that login per the mechanics skill's cadence and escalation rules.
-Call `browser(command="end", persist_context=true)` after verification and record `accounts.<account>.browser_context.ref = <context-ref>`.
+Call `browser(command="end")` after verification; it stops and releases without writing the pool store.
+Persist the verified session through `auth_store`: write `accounts.<account>.snapshot` (cookies/params/captured_at) and/or `accounts.<account>.tokens` (value/location/target/expiry) on the full account path the store read returned.
 Verify the oracle with the canonical browser request: `browser(command="exec", input="eval <fetch-script>")`, or the equivalent fetch from `<mechanics-skill-references>/auth-oracle.sh`.
 The request must run in the mounted page context so it carries the session cookies.
 Do not settle with `navigate --wait-until networkidle`: a login page or SPA with continuous activity (polling, websockets, analytics beacons) never reaches network idle, so the navigate times out and wastes its whole timeout; use `--wait-until load` (or `domcontentloaded`) and a `wait` condition instead when a step needs a page.
@@ -196,7 +199,8 @@ An unverified flow never yields a verdict and never advances to P4.
 ## P4 - Record the facts (WHAT)
 
 Write the verified facts into the store through the seed face from the contract section above.
-Record per account only what P3 verified: `role`, `root_url`, `auth_probe`, `credentials`, `tokens`, the `browser_context` reference after a successful `browser(command="end", persist_context=true)`, `snapshot`, `roles` and `default_role`, `notes`.
+Record per account only what P3 verified: `role`, `root_url`, `auth_probe`, `credentials`, `tokens`, `snapshot`, `roles` and `default_role`, `notes`.
+The preflight mints `browser_context.ref`; the bootstrap does not write it.
 Record overview only what P0 through P2 established: `login_endpoint`, `required_headers`, `mechanism`, `defences`, `fingerprinting`, `technical_conditions`, `anti-bot`, `http-client-replayability`, `notes`.
 Set `anti-bot` to the named defence or null; set `http-client-replayability` to `true` or `false` only once the replay was actually run, otherwise leave it unset so it reads UNKNOWN.
 Set each account's `auth_probe` to that session's verified oracle path; set its `root_url` to the featured root.
@@ -209,7 +213,7 @@ Gate: no procedure prose landed in the store and no secret value landed in the s
 Write the authn skill as replayable ordered steps, with sign-up and sign-in as separate named procedures.
 Every sign-up procedure carries this line verbatim, so every target mints new accounts the same way: "New accounts are minted with synthetic identity data - a fake email address and fake personal details - never real personal data; the exact values used are recorded in the account's `credentials`."
 Cite for EVERY step the tool it uses AND why it uses it (request-based because no blocking defence was observed, steel because a named WAF, anti-bot, or fingerprinting signal forced it).
-When `http-client-replayability` is `true`, the procedure cites the recorded HTTP history replay (`search_http_history`, `replay_http_request`) or the pipeline's server-side request material, plus the static/dynamic element names and locations. It never instructs a model-facing follower to read or paste a value; the `auth_store` view is redacted.
+When `http-client-replayability` is `true`, the procedure cites the recorded HTTP history replay (`search_http_history`, `replay_http_request`) or the pipeline's server-side request material, plus the static/dynamic element names and locations. It may instruct a model-facing follower to read a stored value and replay it exactly as recorded; the `auth_store` view carries the real values.
 When it is `false`, the procedure carries the browser steps instead, and says plainly that a plain-client replay cannot reach the authenticated state. Those steps mount the account's auth context and never start a twin.
 Every procedure, request or browser, carries the same verification step: run the session's oracle at `account.auth_probe` (or `account.root_url` when the probe is empty) and pass only on 2xx with no followed redirect. A 401, 403, or 3xx is a failure; anything else is indeterminate and stops the run.
 The browser procedure's failure branch names the typed outcomes: `session_in_use` means the execution unit already holds the session and it must be reused, never twinned; `no_session` means no live lease exists and `start` must run first; `restore_failed` means the stored context could not be mounted; `pool_exhausted` means retry after a lease ends; `browser_unavailable` means the pool is unreachable. A follower asserts `not_valid` and stops when the context is gone. When the target supports sign-up, the follower may mint a new account with synthetic identity data, write its credentials, and prove the oracle; it never fails open.
@@ -241,8 +245,8 @@ Gate: the two planes are mutually consistent and non-overlapping, with no orphan
 | `procedure` label | Named procedure | Sole formal edge, bidirectional |
 | Account NAME | Procedure account citation | Known name means duplicate, never fork |
 | `credentials` | Sign-in or sign-up step | Secrets stay in store, skill cites account |
-| `tokens.<t>` value plus location | Token carrying or reading step | Location dictates where token travels; a model-facing follower is redacted and the value is applied server-side |
-| `browser_context: {ref}` | Browser session step | Store holds the decoupled context reference after a successful `browser(command="end", persist_context=true)` |
+| `tokens.<t>` value plus location | Token carrying or reading step | Location dictates where token travels; a model-facing follower reads the value and carries it itself |
+| `snapshot` / `tokens` | Session persistence step | The bootstrap writes `accounts.<account>.snapshot` and/or `.tokens`; `browser_context.ref` is preflight-minted |
 | `role`, `root_url`, `auth_probe` | Role/root and verification step | Each account is one session; the session starts at its root and proves its own oracle |
 | `snapshot` | Request replay step | Replay the account snapshot exactly |
 | `overview.anti-bot` | Defence-naming step (P1) | Store holds the vendor name, skill names it for the mode decision |

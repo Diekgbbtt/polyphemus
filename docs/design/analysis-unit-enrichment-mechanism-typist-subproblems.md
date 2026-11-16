@@ -427,3 +427,28 @@ Every term above is anchored in `src/polymerhus/analysis/CONTEXT.md`.
 - The unit's aggregated-endpoint query for a System unit spans `EVIDENCED_BY` and the `AGGREGATES` of riding Services. The exact bound on that fan-out is a step-1 implementation detail in `analysis/tools.py`.
 - The `candidates` seed for a System unit depends on the typist running after the Services that ride it are already linked. The pipeline order must guarantee at least one pass over the Services first; otherwise the System unit's linking candidates are incomplete.
 - Whether the broad surface query returns enough for the model without a paginated cursor is deferred to the step-1 tool design.
+
+## 10. Model-facing contracts (2026-11-10)
+
+The typist's two structured turns no longer share `L1DeltaBatch`.
+The extraction turn emits `SystemExtraction`:
+
+```text
+SystemExtraction { systems: [SystemDefinition { kind, discriminator, attributes, evidence }] }
+```
+
+`attributes` is `{description, pages, rendering_model}`.
+`evidence` is a typed witness union: Endpoint, Header, Technology, or Certificate.
+
+The linking turn emits `SystemLinking`:
+
+```text
+SystemLinking { links: [SystemLink { service, kind, discriminator, relation, role?, realm?, order? }] }
+```
+
+The internal curator still consumes `L1DeltaBatch`; the mappings are `system_extraction_to_batch` and `system_linking_to_batch`.
+
+Each structured turn gets ONE repair re-ask.
+A second failure is a named `mechanism_typist:generation_failed` entry on the pass census, never a silent empty batch.
+The chunk is still consumed exactly once.
+

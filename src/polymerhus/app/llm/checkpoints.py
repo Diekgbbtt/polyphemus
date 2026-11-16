@@ -65,8 +65,21 @@ _POOL_MAX = 24
 # response at a time; `tests/test_llm_checkpoints_serde_allowlist.py` pins the
 # round-trip of the whole family through the ONE serde.
 _ALLOWED_MSGPACK_MODULES: tuple[tuple[str, str], ...] = (
-    # analysis: the proposers' structured batch (assigner + mechanism typist)
+    # analysis: the proposers' structured batches and their component types
     ("polymerhus.analysis.analyser_types", "L1DeltaBatch"),
+    ("polymerhus.analysis.analyser_types", "AssignerDelta"),
+    ("polymerhus.analysis.analyser_types", "Aggregation"),
+    ("polymerhus.analysis.analyser_types", "EndpointRef"),
+    ("polymerhus.analysis.analyser_types", "SystemExtraction"),
+    ("polymerhus.analysis.analyser_types", "SystemDefinition"),
+    ("polymerhus.analysis.analyser_types", "SystemAttributes"),
+    ("polymerhus.analysis.analyser_types", "SystemLinking"),
+    ("polymerhus.analysis.analyser_types", "SystemLink"),
+    ("polymerhus.analysis.analyser_types", "EndpointWitness"),
+    ("polymerhus.analysis.analyser_types", "HeaderWitness"),
+    ("polymerhus.analysis.analyser_types", "TechnologyWitness"),
+    ("polymerhus.analysis.analyser_types", "CertificateWitness"),
+    ("polymerhus.analysis.analyser_types", "BaseURLWitness"),
     # recon: the auth gateway verdict and the pod observation batch
     ("polymerhus.recon.control.authn_loop", "GatewayVerdict"),
     ("polymerhus.recon.domain.pod", "_ObservationBatch"),

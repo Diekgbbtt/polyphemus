@@ -120,6 +120,8 @@ class DeclaredCollector:
         if form is None:
             return
         endpoint = declared_endpoint(form, source_page_id=self._page_id)
+        if endpoint is None:
+            return
         if any(known.endpoint_id == endpoint.endpoint_id for known in self.endpoints):
             return
         fields = declared_fields(form, endpoint)

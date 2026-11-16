@@ -366,7 +366,9 @@ def test_assigner_turn_sends_overview_then_chained_items():
 
     def invoke(messages, *, schema=None, system_prompt=None, **_):
         captured["messages"] = messages
-        return None
+        from polymerhus.analysis.analyser_types import AssignerDelta
+
+        return AssignerDelta(aggregations=[])
 
     chunk = Chunk(chunk_id="katana:0", source_job="katana", assets=(_endpoint("/cart"),))
     assign(
@@ -397,7 +399,9 @@ def test_assigner_turn_is_single_message_without_an_overview():
 
     def invoke(messages, *, schema=None, system_prompt=None, **_):
         captured["messages"] = messages
-        return None
+        from polymerhus.analysis.analyser_types import AssignerDelta
+
+        return AssignerDelta(aggregations=[])
 
     chunk = Chunk(chunk_id="katana:0", source_job="katana", assets=(_endpoint("/cart"),))
     assign(chunk, invoke_fn=invoke, inventory={"services": ["checkout"]})

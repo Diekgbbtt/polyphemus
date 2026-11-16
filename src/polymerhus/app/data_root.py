@@ -10,7 +10,7 @@ the layout is defined once and no module scaffolds its own directories:
     ├── hunting/
     │   ├── hunter/             # HunterMemoryStore
     │   ├── threat_modeller/    # ThreatModelStore (produced|consumed|abandoned)
-    │   └── test-executor-pod/  # PodMemoryStore
+    │   └── test-executor-pod/  # PodMemoryStore (D6, notes, and the terminal export)
     └── ...                     # later module dirs, same one-dir-per-module rule
 
 ``ensure_data_root()`` runs at system bootstrap (``app.main`` startup) and

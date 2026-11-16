@@ -6,6 +6,11 @@ Branch: `fix/395-runtime-stress-hardening`, based on `019da8ad`.
 Scope: the live Steel tool stack, the pod exec path, the gateway actor, and the auth-store model view.
 No remote repository was pushed.
 
+Amended 2026-11-13: the auth-store read redaction described below is superseded.
+The `Structural fix` section and its verification describe redaction that was ablated.
+The model-facing read now carries the real stored values.
+See `docs/design/analysis-auth-store-view-364-adr.md` (`Amendment 2026-11-13 - the value redaction is ablated`).
+
 ## 1. Method
 
 Each iteration followed the same loop:

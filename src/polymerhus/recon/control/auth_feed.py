@@ -177,6 +177,30 @@ def _parse_required_headers(overview: dict | None) -> dict:
     return headers
 
 
+def _dedupe_cookies(cookies: list[dict], *, replace: bool = True) -> list[dict]:
+    """One cookie per name, first-seen order.
+
+    With `replace=True` a later entry replaces the value; with `replace=False`
+    the first entry wins. The snapshot uses first-wins (a repeated capture is
+    the same cookie), and the token list then overrides the snapshot by name:
+    the token entry is the deliberate auth fact.
+    """
+    merged: dict[str, dict] = {}
+    for cookie in cookies:
+        if not isinstance(cookie, dict):
+            continue
+        name = cookie.get("name")
+        value = cookie.get("value")
+        if not isinstance(name, str) or not name:
+            continue
+        if not isinstance(value, str):
+            continue
+        if name in merged and not replace:
+            continue
+        merged[name] = {"name": name, "value": value}
+    return list(merged.values())
+
+
 def project_request_auth(account: dict | None,
                          overview: dict | None = None) -> dict:
     """Project an account record onto the flat request material.
@@ -187,19 +211,19 @@ def project_request_auth(account: dict | None,
     replayed), plus cookie-located tokens as the `cookies` list.
     Storage-located tokens are browser-bound and never replay over plain
     HTTP, so they are skipped. An absent/empty overview projects no headers,
-    never a crash."""
+    never a crash. Cookies are deduped by name: the token entry wins a
+    collision, and duplicate snapshot names keep the first value."""
     if not isinstance(account, dict):
         return {}
     material: dict = {}
     material.update(_parse_required_headers(overview))
+    snapshot_cookies: list[dict] = []
+    token_cookies: list[dict] = []
     snapshot = account.get("snapshot") or {}
     if isinstance(snapshot, dict):
         cookies = snapshot.get("cookies") or []
         if isinstance(cookies, list):
-            material["cookies"] = [
-                c for c in cookies
-                if isinstance(c, dict) and isinstance(c.get("name"), str)
-                and isinstance(c.get("value"), str)]
+            snapshot_cookies.extend(cookies)
     tokens = account.get("tokens") or {}
     if isinstance(tokens, dict):
         for name, entry in tokens.items():
@@ -212,12 +236,12 @@ def project_request_auth(account: dict | None,
             if location == "header" and isinstance(name, str) and name:
                 material[name] = value
             elif location == "cookie" and isinstance(name, str) and name:
-                material.setdefault("cookies", []).append(
-                    {"name": name, "value": value})
-    if not material or (set(material) == {"cookies"} and not material["cookies"]):
-        return {}
-    if "cookies" in material and not material["cookies"]:
-        del material["cookies"]
+                token_cookies.append({"name": name, "value": value})
+    cookies = _dedupe_cookies(snapshot_cookies, replace=False)
+    if token_cookies:
+        cookies = _dedupe_cookies(cookies + token_cookies, replace=True)
+    if cookies:
+        material["cookies"] = cookies
     return material
 
 

@@ -602,19 +602,24 @@ def test_there_is_no_depth_or_page_cap():
     assert result.stop_reason == "frontier_empty"
 
 
-def test_a_typed_action_error_stops_with_its_code_and_message():
+def test_a_typed_action_error_consumes_the_element_and_continues():
     graph = FakeGraph()
-    root = graph.open_root(elements=(button("e-boom", "Boom"),))
+    root = graph.open_root(
+        elements=(button("e-boom", "Boom"), link("e-a", "A", "/a"))
+    )
+    graph.add(FakePage(url="https://example.test/a"))
+    graph.nav(ROOT, "e-a", "/a")
     graph.failures[(ROOT, "e-boom")] = CommandFailed("the browser did not answer")
 
     result = graph.frontier().run(root)
 
-    assert result.stop_reason == "error"
-    assert result.error == "command_failed: the browser did not answer"
-    assert graph.executed == [(ROOT, "e-boom")]
+    assert result.stop_reason == "frontier_empty"
+    assert result.error is None
     assert len(result.failed) == 1
     assert result.failed[0].element.element_id == "e-boom"
     assert "command_failed" in result.failed[0].error
+    assert graph.state.unconsumed(root, [result.failed[0].element]) == []
+    assert graph.executed == [(ROOT, "e-boom"), (ROOT, "e-a")]
 
 
 def test_a_session_loss_during_an_action_is_recorded_as_a_failed_action():

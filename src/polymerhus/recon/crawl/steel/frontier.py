@@ -312,6 +312,11 @@ class Frontier:
                 )
                 return finish("session_missing", _error_text(error))
             except Exception as error:  # noqa: BLE001 - a typed action failure
+                # One element can fail for a page-level reason that is not the
+                # session and not a stale ref. Record the true outcome, consume
+                # the element so the frontier never retries it, restore the page,
+                # and continue with the next candidate. The traversal ends only
+                # when no candidate remains.
                 failed.append(
                     FailedVisit(
                         page=current,
@@ -319,7 +324,9 @@ class Frontier:
                         error=_error_text(error),
                     )
                 )
-                return finish("error", _error_text(error))
+                self._state.consume(current, chosen.fingerprint)
+                needs_restore = True
+                continue
             self._state.consume(current, chosen.fingerprint)
             action_visits.append(
                 ActionVisit(page=current, element=chosen, result=result)

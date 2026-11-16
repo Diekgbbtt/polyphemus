@@ -308,7 +308,9 @@ def test_analyse_chunked_threads_no_surface_reader_into_the_assigner_body(monkey
         typist_invoke_fn=lambda *a, **k: None,
         observe=False,
     ))
-    assert captured == {}, "no surface reader reaches the assigner body"
+    assert set(captured) == {"failure_fn"}, (
+        "no surface reader reaches the assigner body"
+    )
 
 
 def test_analyse_chunked_threads_the_auth_store_into_both_role_seams(monkeypatch):

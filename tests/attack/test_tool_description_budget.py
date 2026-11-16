@@ -38,7 +38,10 @@ def test_the_hunter_tool_descriptions_stay_within_the_budget():
     # view and the 12000-character read bound, and the HTTP search contract
     # gained the side-bound header families and the core-key rule. Both are new
     # contract content, not duplication.
-    assert total <= 8850, total
+    # 9300 (was 8850): the spec write contract now carries the top-level
+    # `baseline_ref` and `playbook` fields (the 2026-11-10 provenance split), so
+    # the fixed tax grows by the two new contract rows (measured 9215).
+    assert total <= 9300, total
 
 
 def test_every_hunter_tool_has_a_description():
@@ -59,7 +62,7 @@ def test_the_critical_contract_clauses_survive_the_slimming():
         "skill_load": ("suite_gap",),
         "search_http_history": ("invalid_filter", "next_cursor", "artifact_id"),
         "get_http_artifact": ("capture_state", "baseline_ref", "not_found"),
-        "auth_store": ("READ-ONLY", "<redacted>", "auth_readonly"),
+        "auth_store": ("READ-ONLY", "REAL", "auth_readonly"),
         "load_skill": ("listing", "meta-usage-skill"),
         "record_skill_lesson": ("specification", "extension", "defect"),
     }

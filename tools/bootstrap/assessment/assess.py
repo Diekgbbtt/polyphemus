@@ -406,6 +406,19 @@ def _session_role(account: dict) -> str | None:
     return role if isinstance(role, str) and role else None
 
 
+def _session_persisted(account: dict) -> bool:
+    """True when the account carries a replayable session fact.
+
+    The bootstrap persists the session through the auth store, not through the
+    browser pool: a snapshot with cookies, or at least one token entry.
+    """
+    snapshot = account.get("snapshot")
+    if isinstance(snapshot, dict) and snapshot.get("cookies"):
+        return True
+    tokens = account.get("tokens")
+    return isinstance(tokens, dict) and bool(tokens)
+
+
 def _has_high_privilege_session(roles: list[str | None]) -> bool:
     for role in roles:
         if not role:
@@ -448,6 +461,9 @@ def assess_auth(project_dir: Path) -> dict[str, dict]:
         if isinstance(record.get("browser_context"), dict)
         and record["browser_context"].get("ref")
     )
+    n_persisted_sessions = sum(
+        1 for record in account_rows if _session_persisted(record)
+    )
     high_privilege = _has_high_privilege_session(roles)
     probe = overview.get("auth_probe") if isinstance(overview, dict) else None
     probe_present = isinstance(probe, dict) and bool(probe.get("url"))
@@ -460,6 +476,7 @@ def assess_auth(project_dir: Path) -> dict[str, dict]:
         "n_account_probes": n_account_probes,
         "n_roots": n_roots,
         "n_contexts": n_contexts,
+        "n_persisted_sessions": n_persisted_sessions,
         "high_privilege_session": high_privilege,
         "auth_probe_present": probe_present,
         "overview_probe_present": probe_present,
@@ -476,10 +493,10 @@ def assess_auth(project_dir: Path) -> dict[str, dict]:
             and skill.is_file()
             and len(named_roles) >= 2
             and high_privilege
-            and n_contexts == n_accounts
+            and n_persisted_sessions == n_accounts
         ):
             scale = 4
-        elif n_accounts >= 1 and skill.is_file() and n_contexts >= 1:
+        elif n_accounts >= 1 and skill.is_file() and n_persisted_sessions >= 1:
             scale = 3
         elif not n_accounts:
             scale = 2  # valid empty = unauthenticated target
