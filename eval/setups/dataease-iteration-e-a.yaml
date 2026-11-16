@@ -1,0 +1,75 @@
+# Iteration E_a - dataease on glm-5.3-flash, full pipeline.
+#
+# One fresh target, one fresh project, full recon -> analysis -> hunting.
+#
+# The changes under test:
+#   - the auth-store secrets-redaction retirement: the read-only binding
+#     returns the real session material, never a redaction marker;
+#   - the pod terminal-record single ownership and the graceful-degradation
+#     consistency rules (the finalizer owns <spec_id>/<run_id>.yaml);
+#   - the lifecycle v2 pod triager: one immutable system prompt, one constant
+#     request-only tool surface, the skill listing in the first human packet,
+#     and the phase verbatims added progressively to the human messages.
+#
+# The frozen hunting policy:
+#   pipeline_sync            batched
+#   pod_batch_size           2
+#   promotion_risk_threshold 2.5  (inclusive, CVSS 4.0 points)
+#   risk_threshold           360  (the iteration E_a budget)
+#   token_budget             7000000
+#
+# The recon subset keeps the single-host contract and includes `steel_crawl`.
+# The steel crawl deadline is raised to 7200s in the instance `.env`
+# (`STEEL_CRAWL_MAX_DURATION_S=7200`) so a slow asset-collection pass is not
+# cut off before it reaches the authenticated surface.
+#
+# The instance `.env` for this arm:
+#   API_KEY_OPENCODE_GO=<the credited key>
+#   LLM_*                    opencode-go:glm-5.3-flash (every role)
+#   HUNT_RISK_THRESHOLD      360
+#   STEEL_CRAWL_MAX_DURATION_S 7200
+#   HUNT_POD_SESSION_TIMEOUT_S 5400
+#   SKILL_EVOLUTION_ENABLED  0
+#
+# Thinking efforts are the committed role defaults; the C.a `max` patch is
+# not applied to this arm.
+#
+# The threat-model scope fence is the reusable iteration-D verbatim, applied
+# by `seed_dataease.py` to `settings.hunting.threat_model_scope` before the
+# trial bootstraps. The setup's partial hunting PUT deep-merges, so the scope
+# survives the trial's policy freeze.
+
+schema_version: 1
+
+artifact_store: /srv/eval-artifacts
+
+datasets:
+  - webexploitbench
+
+work_items:
+  - name: auth-bootstrap
+    status: complete
+    required: false
+  - name: l1-surface
+    status: complete
+  - name: hunting-artifacts
+    status: complete
+
+instances:
+  - instance_id: eval-server-2
+    env_file: eval-server-2/.env
+    targets:
+      - target_key: webexploitbench/dataease
+        target_id: dataease-web
+        target_run_id: itere-a-dataease-web
+        start_phase: recon
+        token_budget: 7000000
+        target_config:
+          operator_kb: /root/eval-dd/data/dataease/operator_kb.md
+          data_dir: /root/eval-dd/data/dataease
+          recon_jobs: [httpx, httpx_reprofile, katana, jsluice, arjun, steel_crawl]
+        hunting:
+          pipeline_sync: batched
+          pod_batch_size: 2
+          promotion_risk_threshold: 2.5
+          risk_threshold: 360
