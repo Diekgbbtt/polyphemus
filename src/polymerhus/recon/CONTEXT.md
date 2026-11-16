@@ -11,6 +11,19 @@ stretch and the recon triager bind the one `browser` tool. The deterministic
 is removed, and the legacy six-tool agentic crawler is removed; see
 `docs/design/legacy-crawler-eol.md`.
 
+**2026-11-16 browser-context ownership:** a stored `browser_context.ref` is the
+account's browser-loadable discriminator.
+An account without the reference is request-replay only.
+The crawl projection returns the stored reference or `None`; it never computes
+the key.
+The recon authn gateway (and an external bootstrapper) is the only minter.
+The gateway's browser `end(persist_context=true)` writes the reference through
+its deterministic recorder; a non-minting agent tool refuses that persist with
+`context_mint_not_allowed`.
+The crawl filters request-replay-only accounts out of its session fan-out.
+A named context that restores no state fails `browser_context_missing`, never
+an anonymous oracle under an authenticated label.
+
 Vocabulary derived from `docs/design/domain-model.md` (esp. §2.1-2.2, §5, §7); see also `docs/design/recon-pipeline-design.md`.
 
 ## The surface and its atoms
@@ -284,7 +297,7 @@ The project-authored skill (no canonical catalogue copy) that the meta skill `me
 _Avoid_: a canonical `authn` skill (a project's copy is its original).
 
 **Auth feed** (#223 T4 #243, D223-19):
-How authenticated jobs receive their material: the gateway verdict binds only the selected account's IDENTIFIER into the pipeline state (`extra["auth_account"]` on `use_auth` jobs, never the material); each phase's tool configuration resolves that account from the auth store at assembly and projects only the subset its tools need - the flat request material (`overview.required_headers` plus header-located tokens, snapshot cookies plus cookie-located tokens) through the existing `extra["auth_context"]` transport, serialised per tool into the `{auth_flags}` command slot at fill time; the decoupled auth-context reference (`extra["browser_context_ref"]`, mounted by the browser MCP from the pool store) and the browser gate metadata (`extra["browser_auth"]`: the account `auth_probe`/root and `login_url`) for the deterministic crawl; nothing for non-auth jobs. The browser MCP restores cookies and localStorage from the pool store. The crawl gets every valid account (`extra["auth_sessions"]`) and runs one lifecycle per account, each gated on that account's own oracle; the `not_valid` accounts are skipped. The anonymous fallback exists only for a zero-account store; no anonymous session runs when accounts exist. The browser MCP restores cookies and localStorage from the pool store. A failed session is a reduced-coverage observation, never a silent anonymous continuation. Role/default-role selection resolves over the account record. The settings-blob auth path, the interactive crawl auth, and mid-run steering are removed with their footprints (D223-4 / D223-12).
+How authenticated jobs receive their material: the gateway verdict binds only the selected account's IDENTIFIER into the pipeline state (`extra["auth_account"]` on `use_auth` jobs, never the material); each phase's tool configuration resolves that account from the auth store at assembly and projects only the subset its tools need - the flat request material (`overview.required_headers` plus header-located tokens, snapshot cookies plus cookie-located tokens) through the existing `extra["auth_context"]` transport, serialised per tool into the `{auth_flags}` command slot at fill time; the decoupled auth-context reference (`extra["browser_context_ref"]`, mounted by the browser MCP from the pool store) and the browser gate metadata (`extra["browser_auth"]`: the account `auth_probe`/root and `login_url`) for the deterministic crawl; nothing for non-auth jobs. The browser MCP restores cookies, localStorage, sessionStorage, and indexedDB from the pool store. The crawl gets every valid browser-loadable account (`extra["auth_sessions"]`, meaning a stored `browser_context.ref`) and runs one lifecycle per account, each gated on that account's own oracle; `not_valid` and request-replay-only accounts are skipped. The anonymous fallback exists only for a zero browser-loadable account set; no anonymous session runs when a browser-loadable account exists. A named context that restores no state fails `browser_context_missing`. A failed session is a reduced-coverage observation, never a silent anonymous continuation. The graceful project stop clears the pool data caches, so a later project cannot inherit a prior target's cookies or storage. Role/default-role selection resolves over the account record. The settings-blob auth path, the interactive crawl auth, and mid-run steering are removed with their footprints (D223-4 / D223-12).
 The browser path does not treat session state as auth evidence; it replicates auth material and verifies the result (#395, D20).
 _Avoid_: threading material through the pipeline state (the identifier rides; the projection resolves per phase).
 

@@ -615,7 +615,37 @@ async def stop_project_execution(project_id: str) -> dict:
         except Exception as exc:  # noqa: BLE001
             errors.append(f"hunting {hunting_run_id}: {exc}")
 
+    await _clear_browser_pool(project_id)
     return {"project_id": project_id, "stopped": stopped, "errors": errors}
+
+
+async def _clear_browser_pool(project_id: str) -> None:
+    """Best-effort clear of the project's browser pool data caches.
+
+    The graceful project stop is the one point that must drop the worker
+    profile and the session/context records: otherwise the next project can
+    mount a stale context from an earlier target. The eval harness also clears
+    on a full stack down; this covers the app-level stop that leaves the stack
+    running. A missing or unavailable pool is a logged degrade, never a stop
+    failure.
+    """
+    try:
+        from polymerhus.app.config import config  # noqa: PLC0415
+        from polymerhus.app.llm.browser_client import McpBrowserClient  # noqa: PLC0415
+
+        url = (config.KALI_BROWSER_MCP_URL or "").strip()
+        if not url:
+            return
+        client = McpBrowserClient(url)
+        try:
+            await asyncio.to_thread(client.clear, project_id=project_id)
+        finally:
+            client.close()
+    except Exception as exc:  # noqa: BLE001 - the stop never fails on a pool clear
+        logger.warning(
+            "project stop: browser pool clear degraded for %s (%s)",
+            project_id, exc,
+        )
 
 
 @router.post("/projects/{project_id}/analysis")

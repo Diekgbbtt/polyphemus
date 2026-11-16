@@ -216,6 +216,19 @@ class McpBrowserClient:
             raise_for_mcp_error(data.get("error"))
         return data
 
+    def clear(self, *, project_id: str | None = None) -> Mapping[str, Any]:
+        """Clear the pool's session/context records and worker profiles.
+
+        The graceful project stop calls this so a later project cannot inherit
+        a prior target's cookies or storage. The pool owns the state; the app
+        only asks for the clear. A malformed or unavailable pool raises the
+        typed client errors, and the caller degrades best-effort.
+        """
+        arguments: dict[str, Any] = {}
+        if project_id:
+            arguments["project_id"] = project_id
+        return self._call("browser_clear", arguments)
+
     def close(self) -> None:
         """Exit the MCP session and stop the private loop. Idempotent."""
         with self._lock:

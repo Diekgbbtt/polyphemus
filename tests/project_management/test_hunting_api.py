@@ -706,6 +706,27 @@ def test_project_execution_stop_is_a_no_op_for_an_idle_project(monkeypatch):
     }
 
 
+def test_project_execution_stop_clears_the_browser_pool(monkeypatch):
+    # The graceful project stop clears the pool data caches: the worker profile
+    # and the session/context records must not survive into the next project.
+    monkeypatch.setattr(pg, "list_running_analysis_runs", lambda: [])
+    monkeypatch.setattr(pg, "list_running_runs", lambda: [])
+    monkeypatch.setattr(pg, "list_running_hunting_runs", lambda: [])
+    _patch_control_plane(monkeypatch, _FakeRuntime())
+    cleared: list[str] = []
+
+    async def _fake_clear(project_id: str) -> None:
+        cleared.append(project_id)
+
+    import polymerhus.project_management.api as api_module
+    monkeypatch.setattr(api_module, "_clear_browser_pool", _fake_clear)
+
+    resp = client.post("/projects/p1/execution/stop")
+
+    assert resp.status_code == 200
+    assert cleared == ["p1"]
+
+
 # --- GET /projects/{pid}/hunting/{rid} -----------------------------------------
 
 def test_status_returns_the_status_row(monkeypatch):

@@ -528,3 +528,90 @@ def test_a6_gateway_verdict_uses_the_negotiated_strategy(monkeypatch, tmp_path):
     assert seen["response_format"] is sentinel
     # The gateway's turning tokens are scoped to its project in the usage ledger.
     assert seen["usage_scope"] == "p1"
+
+
+# --- the browser-context ownership seam --------------------------------------
+
+def _gateway_store(tmp_path):
+    store = AuthStore(tmp_path)
+    store.replace_operator_state(
+        "p1",
+        accounts={
+            "browser": {
+                "credentials": {"username": "b", "password": "p",
+                                "login_url": "/login"},
+                "browser_context": {"ref": "steel-auth-p1-browser"},
+            },
+            "replay": {
+                "credentials": {"username": "r", "password": "p",
+                                "login_url": "/login"},
+            },
+        },
+    )
+    return store
+
+
+def test_the_gateway_brief_filters_a_request_replay_only_account(tmp_path):
+    from polymerhus.recon.control.orchestrator_agent import _gateway_human
+
+    store = _gateway_store(tmp_path)
+    brief = _gateway_human(
+        project_id="p1", directive="request", candidate="replay", store=store
+    )
+    text = brief.content
+
+    assert "request-replay only" in text
+    assert "Do NOT mount" in text or "do NOT mount" in text
+    assert "HTTP history replay" in text
+    assert "Browser context reference (mint)" not in text
+
+
+def test_the_gateway_brief_mounts_a_browser_context_account(tmp_path):
+    from polymerhus.recon.control.orchestrator_agent import _gateway_human
+
+    store = _gateway_store(tmp_path)
+    brief = _gateway_human(
+        project_id="p1", directive="request", candidate="browser", store=store
+    )
+    text = brief.content
+
+    assert "steel-auth-p1-browser" in text
+    assert "oracle" in text
+    assert "The selected account is request-replay only" not in text
+    assert "The selected account carries the browser context" in text
+
+
+def test_the_gateway_record_writes_the_context_reference(tmp_path):
+    from polymerhus.recon.control.orchestrator_agent import (
+        gateway_record_browser_context,
+    )
+
+    store = _gateway_store(tmp_path)
+    record = gateway_record_browser_context("p1", store=store)
+    record(
+        {"command": "end", "persist_context": True},
+        {"success": True, "context_saved": True, "account": "replay",
+         "context_ref": "steel-auth-p1-replay"},
+    )
+
+    accounts = store.read("p1", "accounts")
+    assert accounts["replay"]["browser_context"] == {
+        "ref": "steel-auth-p1-replay"
+    }
+
+
+def test_the_gateway_record_ignores_a_non_persist_end(tmp_path):
+    from polymerhus.recon.control.orchestrator_agent import (
+        gateway_record_browser_context,
+    )
+
+    store = _gateway_store(tmp_path)
+    record = gateway_record_browser_context("p1", store=store)
+    record(
+        {"command": "end", "persist_context": False},
+        {"success": True, "context_saved": False, "account": "replay",
+         "context_ref": "steel-auth-p1-replay"},
+    )
+
+    accounts = store.read("p1", "accounts")
+    assert "browser_context" not in accounts["replay"]

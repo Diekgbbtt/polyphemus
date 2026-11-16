@@ -123,8 +123,16 @@ def run_crawl_sessions(
     with its failure text; the other futures still run to completion. Results
     are returned in the input session order, never completion order, so the
     pod's evidence and coverage observations are deterministic.
+
+    A session without a `browser_context_ref` is request-replay only and is
+    never dispatched: the account has no browser state to mount, so a worker
+    would crawl anonymously under an authenticated account label. An anonymous
+    session (the no-auth fallback) stays valid.
     """
-    ordered = list(sessions)
+    ordered = [
+        session for session in sessions
+        if session.anonymous or bool(session.browser_context_ref)
+    ]
     if not ordered:
         return []
     workers = max(1, min(int(max_workers), len(ordered)))

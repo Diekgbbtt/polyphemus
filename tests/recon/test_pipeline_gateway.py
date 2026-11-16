@@ -255,6 +255,7 @@ def test_crawl_gets_one_session_per_scaffolded_account(tmp_path):
             "role": "admin",
             "root_url": "/admin",
             "auth_probe": "/admin",
+            "browser_context": {"ref": "steel-auth-p1-alice"},
             "credentials": {
                 "username": "u",
                 "password": "p",
@@ -264,6 +265,7 @@ def test_crawl_gets_one_session_per_scaffolded_account(tmp_path):
         "bob": {
             "role": "member",
             "root_url": "/member",
+            "browser_context": {"ref": "steel-auth-p1-bob"},
             "credentials": {
                 "username": "m",
                 "password": "p",
@@ -306,6 +308,7 @@ def test_anonymous_verdict_does_not_hide_existing_accounts_from_the_crawl(
             "role": "admin",
             "root_url": "/admin",
             "auth_probe": "/admin",
+            "browser_context": {"ref": "steel-auth-p1-alice"},
             "credentials": {
                 "username": "u",
                 "password": "p",
