@@ -49,7 +49,7 @@ def test_provider_throttle_is_not_recorded_as_technical_infeasibility():
 def test_provider_throttle_in_the_triager_seam_also_propagates():
     from polymerhus.attack.hunting.pod.agents import symbolic_runner_step_fn
 
-    def throttled_triager(spec, obs, messages, log):
+    def throttled_triager(spec, obs, log, facts):
         raise _rate_limit()
 
     with pytest.raises(ProviderUnavailableError):

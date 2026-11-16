@@ -218,7 +218,7 @@ All slices landed on `feat/staged-triage-decision-tree`.
 - The stage tool surfaces: `tests/attack/pod/test_react_seams.py`.
 - The stage prompts: `tests/attack/pod/test_prompts.py`.
 - The off-spec guard: `tests/attack/pod/test_variant_mint.py`.
-- The production staged lane: the integration pod contracts and the e2e walkthrough, with the stage-aware fake model in `tests/support/staged_triager_fake.py`.
+- The production staged lane: the integration pod contracts and the e2e walkthrough, with the stage-aware fake model in `tests/support/staged_triager_fake.py` (superseded: the v2 gate phases use `tests/support/pod_triager_fake.py`).
 
 Verification:
 

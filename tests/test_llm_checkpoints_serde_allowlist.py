@@ -22,7 +22,6 @@ ENVELOPES = (
     ("polymerhus.analysis.analyser_types", "L1DeltaBatch"),
     ("polymerhus.recon.control.authn_loop", "GatewayVerdict"),
     ("polymerhus.recon.domain.pod", "_ObservationBatch"),
-    ("polymerhus.attack.hunting.pod.agents", "TriagerDecision"),
 )
 
 

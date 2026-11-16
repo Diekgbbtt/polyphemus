@@ -553,7 +553,7 @@ def test_triager_seam_observes_pod_triager_session_inside_a_hunt():
     spec = {**VALID_SPEC, "verification_symptoms": ["reflects the marker"]}
     seen = []
 
-    def triager(s, obs, messages, log):
+    def triager(s, obs, log, facts):
         seen.append(pod_session())
         return {"action": "terminate", "verdict": "unsuccessful",
                 "terminal_reason": "space-exhausted", "clean": True}

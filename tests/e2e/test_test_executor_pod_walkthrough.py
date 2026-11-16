@@ -3,7 +3,8 @@
 E1 is a REAL pod run via `arun_pod` with the PRODUCTION lane: the compiled
 production graph (no `tool_exec` node - D84-29), the production ReAct Runner
 seam (ONE `create_agent` turn per stretch with `tools=[exec, note,
-query_lightrag, graph_view]`), the symbolic fast path, and the terminals. It
+query_lightrag, graph_view]`), the lifecycle v2 two-phase triage harness (the
+ASSESS gate call, then the DECIDE gate call), and the terminals. It
 exercises the ReAct runner, the KB tool binding (D84-16/26, always-bound
 `query_lightrag` as of #197 - fail-open to a degraded bundle in this hermetic
 env, O13), and the `exec` tool against a HERMETIC, deterministic substrate: the
@@ -36,9 +37,9 @@ Assertion catalogue (bounded, spec 6.2 E1 + H1/H2):
       appears across the probe space: `{unsuccessful, space-exhausted}` (clean
       trail), ONE consolidated `experiment_summary` note written to the pod
       experiment-memory store as the runner's FINAL tool call (H2/C14), and the
-      Triager's production note-reading turn lands the terminal (D84-23). A
-      DEGRADED KB read instead lands `{unsuccessful, no-symptom-evidence,
-      clean=false}` (#304) - unavailable evidence is never absence.
+      Triager's DECIDE gate call lands the terminal (lifecycle v2). A DEGRADED
+      KB read instead lands `{unsuccessful, no-symptom-evidence}` with the
+      assessed clean intact (#304) - unavailable evidence is never absence.
 
 The full-pipeline chain walkthroughs (E2-E4, orchestrator -> hunter -> pod) are
 OUT OF SCOPE (2026-08-22): the operator narrowed this workstream to the
@@ -62,11 +63,12 @@ from polymerhus.attack.hunting.pod.pod_memory import (
     spec_identifier,
 )
 from polymerhus.recon.domain.types import ExecResult
-from tests.support.staged_triager_fake import (
-    StagedTriagerFake,
-    divergence_reply,
-    terminal_reply,
-    triage_reply,
+from tests.support.pod_triager_fake import (
+    CLOSING,
+    assess,
+    confirmed_turns,
+    space_exhausted_turns,
+    terminate,
 )
 
 # The E1 spec fixture (spec 6.2 E1 input, mirroring the contract tier's
@@ -101,10 +103,17 @@ class _FakeModel(BaseChatModel):
     idx: dict = {}
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        import uuid
+
         i = self.idx.get("i", 0)
         self.idx["i"] = i + 1
-        return ChatResult(generations=[ChatGeneration(
-            message=self.replies[min(i, len(self.replies) - 1)])])
+        msg = self.replies[min(i, len(self.replies) - 1)]
+        # A provider stamps a unique id on every response; langgraph's
+        # `add_messages` derives an id from the content when it is absent, so
+        # an identical id-less reply on a RESUMED thread would replace the
+        # prior one in place instead of appending.
+        msg = msg.model_copy(deep=True, update={"id": f"fake-{i}-{uuid.uuid4().hex}"})
+        return ChatResult(generations=[ChatGeneration(message=msg)])
 
     @property
     def _llm_type(self):
@@ -196,36 +205,23 @@ _REACT_KB_ONLY_CONCLUDE = [
     AIMessage(content="the degraded KB yields no new probe; concluding the stretch"),
 ]
 
-# The Triager's production turn (D84-23): a `ToolStrategy(TriagerDecision)`
-# structured call terminating the run with `{unsuccessful, space-exhausted}`.
-_TRIAGER_ABSENT = [
-    AIMessage(content="", tool_calls=[{"name": "TriagerDecision", "id": "c9", "args": {
-        "classification": "symptom-absent", "action": "terminate",
-        "verdict": "unsuccessful", "terminal_reason": "space-exhausted", "clean": True,
-        "note": "third-party miner: the default probe returned 404 and no symptom "
-                "is established across the probe space"}}]),
-]
+def _triage_factory(runner_script, triage_turns):
+    """The role-keyed factory for a full production pod run.
 
+    The runner resets its script per stretch (the whole ReAct loop rides ONE
+    model instance), while the triager walks a SHARED cursor across the triage
+    harness's turns: the pod builds a fresh model per turn, and one decision is
+    an ASSESS turn, a DECIDE turn, and the closing turn on the same thread."""
+    runner = _factory({POD_RUNNER_ROLE: runner_script})
+    triage = {"i": 0}
 
-def _staged_factory(runner_script, *, terminal_reason="space-exhausted",
-                    clean=True,
-                    note="the terminal stage: no populated procedure attribute"):
-    """A role-keyed factory whose `pod_triager` model answers each staged schema.
-
-    The staged triager runs up to four structured turns on the SAME role; the
-    schema tool name discriminates them. The runner keeps its role script."""
     def make(role_id):
         if role_id == POD_TRIAGER_ROLE:
-            return StagedTriagerFake(by_schema={
-                "TriageDecision": triage_reply(
-                    note="the default probe returned 404; the symptom is not confirmed"),
-                "DivergenceDecision": divergence_reply(
-                    note="the executed probe followed the typed procedure"),
-                "TerminalDecision": terminal_reply(
-                    terminal_reason=terminal_reason, clean=clean, note=note),
-                "TriagerDecision": _TRIAGER_ABSENT,
-            })
-        return _FakeModel(replies=list(runner_script), idx={})
+            i = triage["i"]
+            triage["i"] = i + 1
+            return _FakeModel(replies=list(triage_turns), idx={"i": i})
+        return runner(role_id)
+
     return make
 
 
@@ -235,21 +231,6 @@ def _exec(stdout=_OK, returncode=0, calls=None):
             calls.append(command)
         return ExecResult(stdout=stdout, stderr="", returncode=returncode, duration_ms=1)
     return fake
-
-
-def _negotiation_for_pod_triager(monkeypatch):
-    """Thread the #99 negotiation seam for a hermetic pod-triager schema turn
-    (#147): the no-tools `stateful_turn(schema=TriagerDecision)` resolves the
-    role's env model key + capability profile. Point it at a tool-calling-only
-    profile so the fake's TriagerDecision tool_calls become the structured
-    output (ToolStrategy) instead of an unmet json_schema probe."""
-    monkeypatch.setenv("LLM_POD_TRIAGER", "openrouter:some/model")
-    import polymerhus.app.llm.session as S
-
-    monkeypatch.setattr(
-        S, "resolve_capability",
-        lambda provider, model: type("_P", (), {
-            "supports_structured_output": False, "supports_tool_calling": True})())
 
 
 def _no_trace(_run_id):
@@ -276,7 +257,8 @@ def test_trivial_real_run(tmp_path):
     env = _run(arun_pod(
         VALID_SPEC, exec_fn=_exec(_OK, calls=exec_calls),
         trace_fn=_no_trace, memory_store=store, spec_id=SPEC_ID,
-        model_factory=_factory({POD_RUNNER_ROLE: _REACT_KB_EXEC_CONCLUDE})))
+        model_factory=_triage_factory(_REACT_KB_EXEC_CONCLUDE,
+                                      confirmed_turns())))
 
     # E1 terminal: exactly one verdict + the experiment log.
     assert env["verdict"] == "successful"
@@ -314,20 +296,22 @@ def test_degraded_kb_run_does_not_claim_clean_exhaustion(tmp_path, monkeypatch):
     `{unsuccessful, no-symptom-evidence, clean=false}` - the P3 note is still
     written as the runner's FINAL tool call, and the triager's production
     note-reading turn still runs."""
-    _negotiation_for_pod_triager(monkeypatch)
     exec_calls = []
     store = PodMemoryStore(tmp_path)
     env = _run(arun_pod(
         VALID_SPEC, exec_fn=_exec(_ABSENT, calls=exec_calls),
         trace_fn=_no_trace, memory_store=store, spec_id=SPEC_ID,
-        model_factory=_staged_factory(
+        model_factory=_triage_factory(
             _REACT_KB_EXEC_NOTE_CONCLUDE,
-            note="the degraded KB is not absence evidence; no populated procedure "
-                 "attribute to bend")))
+            space_exhausted_turns(
+                note="the degraded KB is not absence evidence; no populated "
+                     "procedure attribute to bend"))))
 
     assert env["verdict"] == "unsuccessful"
     assert env["evidence"]["terminal_reason"] == "no-symptom-evidence"
-    assert env["evidence"]["clean"] is False
+    # Lifecycle v2: degraded KB is a SUFFICIENCY condition, not an integrity
+    # condition - the triager's clean judgement stands.
+    assert env["evidence"]["clean"] is True
     assert len(exec_calls) == 1
     assert len(env["evidence"]["raw_observations"]) == 1
     assert env["evidence"]["raw_observations"][0]["status"] == 404
@@ -371,13 +355,15 @@ def test_clean_space_exhausted_run_writes_the_p3_note(tmp_path, monkeypatch):
     knowledge base (no KB read), writes the ONE consolidated `experiment_summary`
     P3 note as its FINAL tool call, and the Triager's production note-reading
     turn terminates `{unsuccessful, space-exhausted}` with a clean trail."""
-    _negotiation_for_pod_triager(monkeypatch)
     exec_calls = []
     store = PodMemoryStore(tmp_path)
     env = _run(arun_pod(
         VALID_SPEC, exec_fn=_exec(_ABSENT, calls=exec_calls),
         trace_fn=_no_trace, memory_store=store, spec_id=SPEC_ID,
-        model_factory=_staged_factory(_REACT_EXEC_NOTE_CONCLUDE)))
+        model_factory=_triage_factory(
+            _REACT_EXEC_NOTE_CONCLUDE,
+            space_exhausted_turns(
+                note="no populated procedure attribute to bend"))))
 
     assert env["verdict"] == "unsuccessful"
     assert env["evidence"]["terminal_reason"] == "space-exhausted"

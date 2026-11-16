@@ -123,17 +123,17 @@ def test_module_context_routes_resolution_to_that_modules_index():
 def test_fallback_checkpointer_uses_the_one_serde(monkeypatch):
     """The unset-context fallback must carry the app serde, not the stock
     langgraph serializer. Under strict msgpack the stock serializer blocks a
-    persisted `TriagerDecision`; the fallback is a construction point exactly
-    like the module index and the pooled PG saver."""
-    from polymerhus.attack.hunting.pod.agents import TriagerDecision
+    persisted allow-listed envelope; the fallback is a construction point
+    exactly like the module index and the pooled PG saver."""
+    from polymerhus.recon.control.authn_loop import GatewayVerdict
 
     monkeypatch.setenv("LANGGRAPH_STRICT_MSGPACK", "true")
     monkeypatch.setattr(C, "_fallback", None)
     fallback = C.get_session_checkpointer()
 
-    loaded = fallback.serde.loads_typed(fallback.serde.dumps_typed(TriagerDecision()))
+    loaded = fallback.serde.loads_typed(fallback.serde.dumps_typed(GatewayVerdict()))
 
-    assert isinstance(loaded, TriagerDecision)
+    assert isinstance(loaded, GatewayVerdict)
     assert getattr(fallback.serde, "_allowed_msgpack_modules", None) == set(
         C._ALLOWED_MSGPACK_MODULES
     )

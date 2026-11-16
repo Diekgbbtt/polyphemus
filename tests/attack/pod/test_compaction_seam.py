@@ -155,7 +155,7 @@ def test_injected_triager_middleware_reaches_the_triager_seam():
     fake = object()
     seen = []
 
-    def triager(spec, obs, messages, log):
+    def triager(spec, obs, log, facts):
         seen.append(pod_middleware())
         return {"action": "terminate", "verdict": "unsuccessful",
                 "terminal_reason": "space-exhausted", "clean": True}
@@ -179,7 +179,7 @@ def test_per_role_middleware_stays_per_role():
         runner_seen.append(pod_middleware())
         return symbolic_runner_step_fn(spec, messages, tool_calls)
 
-    def triager(spec, obs, messages, log):
+    def triager(spec, obs, log, facts):
         triager_seen.append(pod_middleware())
         return {"action": "terminate", "verdict": "unsuccessful",
                 "terminal_reason": "space-exhausted", "clean": True}

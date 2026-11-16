@@ -712,12 +712,17 @@ def test_C39_the_real_store_body_reaches_the_real_init_gate_and_authors_a_probe(
         seen.setdefault("calls", []).append(command)
         return ExecResult(stdout=_OK, stderr="", returncode=0, duration_ms=1)
 
+    def confirming_triager(spec, obs, log, facts):
+        return {"action": "terminate", "verdict": "successful",
+                "terminal_reason": "symptom-confirmed", "clean": True,
+                "note": "the observation confirms the symptom"}
+
     async def pod_builder(spec, *, run_id, project_id, memory_store, spec_id,
                           **kw):
         seen["spec"] = dict(spec)
         return await arun_pod(
             spec, exec_fn=fake_exec, runner_step_fn=symbolic_runner_step_fn,
-            triager_fn=None, trace_fn=lambda _run_id: [])
+            triager_fn=confirming_triager, trace_fn=lambda _run_id: [])
 
     def hunter_builder(**_kwargs):  # never a hunter dispatch in this seed
         raise AssertionError("no hunter dispatch expected")
