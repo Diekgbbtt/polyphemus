@@ -8,8 +8,8 @@ ASSESS gate call, then the DECIDE gate call), and the terminals. It
 exercises the ReAct runner, the KB tool binding (D84-16/26, always-bound
 `query_lightrag` as of #197 - fail-open to a degraded bundle in this hermetic
 env, O13), and the `exec` tool against a HERMETIC, deterministic substrate: the
-live LLM is a scripted `BaseChatModel` fake injected through the `model_factory`
-seam (the established fake-model / ToolStrategy pattern -
+live LLM is the scripted `StampedFakeModel` injected through the `model_factory`
+seam (`tests/support/pod_triager_fake.py`; the same fake-model pattern as
 `tests/attack/pod/test_react_seams.py`), the terminal is a fake `exec_fn`
 returning a fixed synthetic curl trailer (`__POD_HTTP_STATUS__` /
 `__POD_HTTP_TIME__` markers). No live network target, no live LLM, no docker,

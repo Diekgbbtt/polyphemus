@@ -70,10 +70,10 @@ class _FakeModel(BaseChatModel):
         self.idx["i"] = i + 1
         msg = self.replies[min(i, len(self.replies) - 1)]
         # A provider stamps a unique id on every response; a scripted fake
-        # must too. langgraph's `add_messages` derives the id from the content
-        # when it is absent, so a byte-identical reply on a RESUMED thread
-        # would replace the prior one in place instead of appending - the
-        # re-dispatch path would never see the fresh gate call.
+        # must too. `add_messages` stores the message object it is given and
+        # mutates its id, so re-emitting the same script object on a RESUMED
+        # thread would replace the earlier copy in place instead of appending
+        # - the re-dispatch path would never see the fresh gate call.
         msg = msg.model_copy(deep=True, update={"id": f"fake-{i}-{uuid.uuid4().hex}"})
         return ChatResult(generations=[ChatGeneration(message=msg)])
 

@@ -19,7 +19,7 @@ import pytest
 from polymerhus.attack.hunting.pod import arun_pod
 from polymerhus.app.llm.provider_failure import ProviderUnavailableError
 
-from tests.attack.pod.test_graph import SPEC_ID, VALID_SPEC, _exec, _no_trace
+from tests.attack.pod.test_graph import VALID_SPEC, _exec, _no_trace
 
 
 def _rate_limit() -> openai.RateLimitError:
@@ -40,6 +40,7 @@ def test_provider_throttle_is_not_recorded_as_technical_infeasibility():
 
     with pytest.raises(ProviderUnavailableError) as exc:
         asyncio.run(arun_pod(
+            # The runner raises before the triage node, so no triager binds.
             VALID_SPEC, exec_fn=_exec(""), runner_step_fn=throttled_runner,
             triager_fn=None, trace_fn=_no_trace))
     assert exc.value.status_code == 429
@@ -68,6 +69,8 @@ def test_a_genuine_internal_error_still_degrades_fail_open():
         raise RuntimeError("a genuine internal defect")
 
     env = asyncio.run(arun_pod(
+        # The runner raises before the triage node; the error handler owns the
+        # degrade.
         VALID_SPEC, exec_fn=_exec(""), runner_step_fn=broken_runner,
         triager_fn=None, trace_fn=_no_trace))
     assert env["verdict"] == "unsuccessful"

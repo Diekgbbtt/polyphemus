@@ -114,8 +114,9 @@ def test_init_rejects_invalid_spec():
     calls = []
     env = _run(arun_pod({"target_identity": {"url": ""}, "verification_symptoms": []},
                         exec_fn=_exec(_OK, calls=calls),
-                        runner_step_fn=symbolic_runner_step_fn, triager_fn=None,
-                        trace_fn=_no_trace))
+                        runner_step_fn=symbolic_runner_step_fn,
+                        # The INIT gate rejects before any triager can run.
+                        triager_fn=None, trace_fn=_no_trace))
     assert env["verdict"] == "unsuccessful"
     # Both mandatory violations land in ONE rejection (S5 8.4).
     assert any("target_identity" in v for v in env["evidence"]["init_validation"])
