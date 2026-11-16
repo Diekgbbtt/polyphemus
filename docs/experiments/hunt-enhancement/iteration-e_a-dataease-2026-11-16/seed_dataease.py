@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
+import sys
 import urllib.request
 
 
@@ -51,13 +52,13 @@ def find_project(base: str, name: str) -> str | None:
 def ensure_project(base: str, name: str) -> str:
     existing = find_project(base, name)
     if existing:
-        print(f"project {name} exists: {existing}", flush=True)
+        print(f"project {name} exists: {existing}", file=sys.stderr, flush=True)
         return existing
     body = api_call(base, "POST", "/projects", {"name": name})
     project_id = str(body.get("project_id") or body.get("id") or "")
     if not project_id:
         raise SystemExit(f"project create returned no id: {body!r}")
-    print(f"project {name} created: {project_id}", flush=True)
+    print(f"project {name} created: {project_id}", file=sys.stderr, flush=True)
     return project_id
 
 
@@ -67,7 +68,7 @@ def put_scope(base: str, project_id: str, scope: str) -> None:
     stored = api_call(base, "GET", f"/projects/{project_id}/hunting/config")
     if not isinstance(stored, dict) or stored.get("threat_model_scope") != scope:
         raise SystemExit(f"scope did not persist: {stored!r}")
-    print("scope fence frozen", flush=True)
+    print("scope fence frozen", file=sys.stderr, flush=True)
 
 
 def main() -> int:
