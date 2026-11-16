@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import inspect
 import logging
-from typing import Any, Sequence
+from typing import Sequence
 
 from polymerhus.attack.hunting.pod.types import (
     NO_SYMPTOM_EVIDENCE,
@@ -65,7 +65,8 @@ async def _thread_message_count(checkpointer, thread_id: str) -> int:
             tup = read(config)
             if inspect.isawaitable(tup):
                 tup = await tup
-        except (NotImplementedError, RuntimeError, TypeError, AttributeError):
+        except Exception:  # noqa: BLE001 - fail-open: an unreadable saver costs no decision
+            logger.debug("thread-count read failed on %s", type(checkpointer).__name__)
             continue
         if tup is None:
             continue
@@ -164,36 +165,29 @@ async def run_triage_harness(log, spec: dict, observation, facts, *, store,
         role_id, task_skills=harness_ctx.task_skills,
         project_id=project_id or None,
         with_readonly_auth_store=True)
-    base_tools = {**{t.name: t for t in triager_react_tools(
+    base_list = [*triager_react_tools(
         harness_ctx.memory_store, harness_ctx.spec_id, log=harness_ctx.log,
         variant_ref=harness_ctx.variant_ref or "",
         graph_view_fn=harness_ctx.graph_view_fn,
-        browser_tool=harness_ctx.browser_tool)},
-        **{t.name: t for t in binding.tools}}
-    request_tools = [*[_openai_tool_dict(t) for t in
-                       (triager_react_tools(
-                           harness_ctx.memory_store, harness_ctx.spec_id,
-                           log=harness_ctx.log,
-                           variant_ref=harness_ctx.variant_ref or "",
-                           graph_view_fn=harness_ctx.graph_view_fn,
-                           browser_tool=harness_ctx.browser_tool)
-                        + binding.tools)],
+        browser_tool=harness_ctx.browser_tool), *binding.tools]
+    base_tools = {t.name: t for t in base_list}
+    request_tools = [*[_openai_tool_dict(t) for t in base_list],
                      *triage_request_tools()]
 
-    def _surface(assessment, phase) -> tuple[list[dict], dict, Any]:
+    def _surface(assessment, phase) -> tuple[list[dict], dict]:
         """The per-step surface: the constant base plus the gates re-bound to
         the live phase. The request-side dicts are the hoisted constants; only
         the executor dict gains the phase's gate closures."""
         by_name = {**base_tools,
                    **build_triage_gate_tools(facts, assessment, phase)}
-        return (request_tools, by_name, binding)
+        return (request_tools, by_name)
 
     # The thread's prior message count rides the facts: every decision's
     # packet is unique on its thread, so a re-dispatched pod's lap-1 packet is
     # never byte-identical to the one already there (an identical stamped id
     # would replace in place instead of appending).
-    facts["prior_turns"] = await _thread_message_count(session_ctx.checkpointer,
-                                                       mem_key)
+    facts = {**facts, "prior_turns": await _thread_message_count(
+        session_ctx.checkpointer, mem_key)}
     state: dict = {
         "phase": "assess", "observed_signal": None, "observed_args": None,
         "observed_outcome": None, "facts": dict(facts), "assessment": None,
@@ -226,7 +220,7 @@ async def run_triage_harness(log, spec: dict, observation, facts, *, store,
 
     for _step in range(max_steps):
         steps = _step + 1
-        request_tools, tools_by_name, binding = _surface(
+        request_tools, tools_by_name = _surface(
             state.get("assessment"), state["phase"])
         turn = await turn_fn(
             role_id, mem_key, new_messages,
@@ -291,21 +285,25 @@ async def run_triage_harness(log, spec: dict, observation, facts, *, store,
     # done OR the budget exhausts, so the final tool results would otherwise
     # dangle - and any resume of this thread (the next lap, a re-dispatched
     # pod) would trip the adjacency contract. The closing turns feed the
-    # results back; the replies are discarded. The gates are CLOSED on a
-    # closing turn (whatever phase the machine holds), so a post-decision
-    # submission is a coded rejection, never an accepted signal. A closing
-    # turn whose model emits more calls gets its calls answered once more
-    # (bounded); on exhaustion the leftover calls are surfaced for the
-    # operator.
+    # PENDING results back - each round sends only the calls it has NOT yet
+    # answered, never a consumed answer (an orphan `tool` message is rejected
+    # by the upstream with a 400 this repo does not classify as a provider
+    # failure). The replies are discarded. The gates are CLOSED on a closing
+    # turn (whatever phase the machine holds), so a post-decision submission
+    # is a coded rejection, never an accepted signal. A closing turn whose
+    # model emits more calls gets its calls answered once more (bounded); the
+    # budget is surfaced for the operator.
     closing_tools = {**base_tools,
                      **build_triage_gate_tools(facts, state.get("assessment"),
                                                "close")}
     closing_budget = 3
-    while results and closing_budget:
+    pending = list(results)
+    last_round_emitted_calls = False
+    while pending and closing_budget:
         closing_budget -= 1
         try:
             closing = await turn_fn(
-                role_id, mem_key, list(results),
+                role_id, mem_key, list(pending),
                 checkpointer=session_ctx.checkpointer,
                 tools=request_tools,
                 system_prompt=contract,
@@ -320,9 +318,10 @@ async def run_triage_harness(log, spec: dict, observation, facts, *, store,
             # A closing turn is cosmetic by definition (the replies are
             # discarded): its failure must never cost the pod a decision the
             # machine already reached. Break with the results as they stand -
-            # the platform's resumed-turn reconciliation repairs the trail on
-            # the next turn of this thread. A provider failure with NO reached
-            # decision still propagates (#329: the surfer owns the retry).
+            # the input results are persisted BEFORE the model call, so the
+            # gate answers are already in the thread and only the closing
+            # reply is lost. A provider failure with NO reached decision
+            # still propagates (#329: the surfer owns the retry).
             if _is_provider_error(exc) and state.get("decision") is None:
                 raise
             logger.warning(
@@ -332,15 +331,17 @@ async def run_triage_harness(log, spec: dict, observation, facts, *, store,
         calls = _last_tool_calls(closing.messages)
         if not calls:
             break
+        last_round_emitted_calls = True
+        pending = []
         for tc in calls:
             answer = await invoke_fn(closing_tools, tc.get("name", ""),
                                      tc.get("args") or {})
             if not gate_accepted(answer) and tc.get("name") in (
                     ASSESSMENT_TOOL, DECISION_TOOL):
                 rejections.append(answer)
-            results.append(ToolMessage(tool_call_id=tc.get("id") or "",
+            pending.append(ToolMessage(tool_call_id=tc.get("id") or "",
                                        content=answer))
-    if results and not closing_budget:
+    if pending and closing_budget == 0 and last_round_emitted_calls:
         logger.warning(
             "triage closing budget exhausted with unanswered tool calls on %s",
             mem_key)

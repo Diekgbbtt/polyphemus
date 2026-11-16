@@ -311,6 +311,49 @@ def test_the_thread_count_serves_every_saver_shape():
     assert broken == 0
 
 
+def test_a_closing_turn_failure_keeps_a_reached_decision(tmp_path):
+    # A cosmetic closing failure must never cost a decision the machine
+    # reached; the decision is returned with its phase path intact.
+    async def scripted(role, thread, messages, **kw):
+        if "phase:close" in (kw.get("extra_tags") or []):
+            raise RuntimeError("closing transport blew up")
+        return _turn([_ASSESS_CALL])
+
+    from polymerhus.attack.hunting.pod.triage import run_triage_harness
+
+    facts = TriageFacts(**{**_FACTS, "lap": 1})
+    result = asyncio.run(run_triage_harness(
+        ExperimentLog(), {}, None, facts, store=PodMemoryStore(tmp_path),
+        spec_id=SPEC_ID, order=0, session_ctx=_ctx(), harness_ctx=_hc(
+            PodMemoryStore(tmp_path)),
+        turn_fn=scripted, invoke_fn=_invoke_real))
+    assert result["decision"]["terminal_reason"] == NO_SYMPTOM_EVIDENCE
+    assert result["phase_path"] == "assess>decide"
+
+
+def test_a_closing_turn_provider_failure_without_a_decision_propagates(tmp_path):
+    # #329: a provider failure with NO reached decision still propagates; the
+    # surfer owns the retry. The gate is rejected on every step (a prose turn
+    # would clear the pending results), so the step budget ends with
+    # unanswered results and no decision - the closing turn then fails.
+    from polymerhus.app.llm.provider_failure import ProviderUnavailableError
+
+    async def scripted(role, thread, messages, **kw):
+        if "phase:close" in (kw.get("extra_tags") or []):
+            raise ProviderUnavailableError("throttled", status_code=429)
+        return _turn([_MALFORMED_CALL])
+
+    from polymerhus.attack.hunting.pod.triage import run_triage_harness
+
+    facts = TriageFacts(**{**_FACTS, "lap": 1})
+    with pytest.raises(ProviderUnavailableError):
+        asyncio.run(run_triage_harness(
+            ExperimentLog(), {}, None, facts, store=PodMemoryStore(tmp_path),
+            spec_id=SPEC_ID, order=0, session_ctx=_ctx(), harness_ctx=_hc(
+                PodMemoryStore(tmp_path)),
+            turn_fn=scripted, invoke_fn=_invoke_real))
+
+
 def test_the_closing_turn_rejects_truthfully_and_keeps_the_full_surface(tmp_path):
     # A post-decision submission on a closing turn is a PHASE-NEUTRAL coded
     # rejection ("the decision is closed"), and the closing executor still
@@ -339,6 +382,9 @@ def test_the_closing_turn_rejects_truthfully_and_keeps_the_full_surface(tmp_path
     rejections = [r for r in result["rejections"] if "decision is closed" in r]
     assert rejections, "the closing rejection is phase-neutral, not misdirecting"
     assert closing_seen, "the closing turn ran"
+    # The closing REQUEST carries the constant tool list (the same schemas the
+    # decision turns saw); only the gates are closed in the executor.
+    assert closing_seen[0]["tools"], "the closing request binds the surface"
 
 
 def test_the_closing_turns_gates_are_closed(tmp_path):
