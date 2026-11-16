@@ -47,13 +47,15 @@ The Steel session is the bound.
 | A12 | The preflight records each account's context reference; the gateway may refresh the selected one. | The crawl mounts each account's reference. |
 | A13 | The crawl budget is 1800 seconds per session lifecycle; time is the only bound. | No action cap exists. |
 | A14 | An incomplete stop carries `manifest.run.partial`. | A partial manifest routes to reduced coverage. |
-| A15 | One pod runs one lifecycle per valid account, bounded by `STEEL_CRAWL_MAX_WORKERS`. | The pod joins every thread before finalizing. |
+| A15 | One pod runs one lifecycle per valid browser-loadable account (a stored `browser_context.ref`), bounded by `STEEL_CRAWL_MAX_WORKERS`. | The pod joins every thread before finalizing; a request-replay-only account is never dispatched. |
 | A16 | A failed session never discards the other manifests. | The successful manifests are parsed; the failed session adds a reduced-coverage observation. |
 | A17 | Duplicate assets across sessions are deduplicated downstream. | The curator deduplicates by asset identity. |
-| A18 | No anonymous session runs when accounts exist. | The anonymous fallback is only for a zero-account auth store. |
+| A18 | No anonymous session runs when a browser-loadable account exists. | The anonymous fallback is only for a zero-browser-loadable account set; a request-replay-only account is not a crawl session. |
 
 The session model and the fan-out are recorded in `docs/design/crawl-session-fanout-adr.md`.
 The auth-store account is the session: `role`, `root_url`, `auth_probe`, and `browser_context.ref`.
+`browser_context.ref` presence is the browser-loadable discriminator.
+An account without the reference is request-replay only and is excluded from the crawl's session list.
 The preflight writes the absolute root and probe into the pool record; the crawl reads the loaded record.
 The pod parses one manifest per session; duplicates are deduplicated by the curator.
 
@@ -62,6 +64,9 @@ The oracle is never a navigation envelope.
 The fetch exposes `redirected` and the true status.
 The auth-context reference is `steel-auth-<project_slug>-<account_slug>`.
 The reference is deterministic across runs; the run id never enters it.
+The reference is MINTED by the recon authn gateway or an external bootstrapper, which then writes it into the account.
+The projection reads the stored reference or returns `None`; it never computes the key.
+Every other agent's browser tool is read-only for the context and refuses `persist_context=true` with `context_mint_not_allowed`.
 The browser session key is ephemeral and derived from the execution unit; the
 agent never passes it.
 
@@ -239,9 +244,14 @@ src/polymerhus/recon/crawl/steel/
 ## 4. Steel interaction contract
 
 The crawl addresses the browser MCP at `KALI_BROWSER_MCP_URL`.
-The MCP exposes three internal tools (`browser_start`, `browser_exec`, and
-`browser_end`) and the agent binds ONE `browser` tool with the `start`, `exec`,
-and `end` commands.
+The MCP exposes four internal tools (`browser_start`, `browser_exec`,
+`browser_end`, and `browser_clear`) and the agent binds ONE `browser` tool with
+the `start`, `exec`, and `end` commands.
+`browser_clear` is app-internal, never agent-visible: the graceful project stop
+calls it with the project's session-name prefix (`steel-<project_slug>-`).
+It deletes the project's ephemeral session records, keeps every durable
+auth-context record (`steel-auth-*`), and skips a record with a live lease.
+A later execution therefore never mounts a prior target's cookies or storage.
 The browser MCP runs in Kali and owns the Steel CLI, the worker lease, the
 pool store, the heartbeat, and the TTL.
 The crawl never runs the CLI and never sees the worker's HTTP origin.
@@ -287,27 +297,31 @@ It marks the shared player `addressable=false`.
 
 ### 4.3 Lifecycle
 
-- The gateway mounts the account's auth context with
+- The gateway mounts a browser-loadable account's auth context with
   `browser(command="start", account=<account>)`.
   It validates the oracle in that session, signs in or mints on failure, and
-  calls `browser(command="end")` without `persist_context`.
-  It then persists the session through `auth_store`:
-  `accounts.<account>.snapshot` and/or `accounts.<account>.tokens`.
-  The account identifier is the full path the read returned; a new account is a
-  create at `accounts.<account>`.
-- The preflight mints the pool context (`browser_context.ref`) for every account
-  staged in the auth store before the trial, and the crawl mounts that reference.
-  The preflight runs before the trial.
-  A gateway-minted account created during the trial has no pool context yet: its
-  auth-store `snapshot`/`tokens` are the request-replayable record, and the NEXT
-  preflight mints its browser context.
-  The crawl only mounts a preflight-seeded context; it never invents one.
-- The crawl mounts the same context reference and calls
-  `browser(command="end")` in its finalize close.
-- The `start` command restores cookies and localStorage from the pool store;
-  all four captured fields are evidence on the end record.
-  The auth-store snapshot/tokens are the request-replayable record for every
+  calls `browser(command="end", persist_context=true)`.
+  A successful end captures and saves the state under the context reference.
+  The gateway's deterministic recorder writes
+  `accounts.<account>.browser_context.ref = <context-ref>`; the model does not
+  write the reference by hand.
+- A request-replay-only account has no browser context and validates through
+  the recorded HTTP-history replay.
+  The gateway does not mount the browser for it.
+  Its `accounts.<account>.tokens` are the request-replayable record for every
   consumer that does not mount a browser.
+- The preflight mints the pool context (`browser_context.ref`) for every
+  browser-loadable account staged in the auth store before the trial, and the
+  crawl mounts that stored reference.
+  The preflight runs before the trial.
+  The crawl only mounts a stored context; it never invents one.
+- The crawl mounts the account's stored context reference and calls
+  `browser(command="end")` in its finalize close.
+- The `start` command restores cookies, localStorage, sessionStorage, and
+  indexedDB from the pool store; all four captured fields are evidence on the
+  end record.
+- A named context that restores no state stops the crawl as
+  `browser_context_missing`, never as `auth_precondition_failed`.
 - One MCP session is one lease.
   A mount by the same execution unit answers `session_in_use`.
   A missing lease answers `no_session`, which maps to `SessionMissing`.
@@ -1184,7 +1198,7 @@ The authz residual risk and the coarse effect signal remain accepted as recorded
 - The browser pool is part of the instance compose project.
   The baseline includes `docker-compose.pool.yml` with `deploy.replicas: 2`;
   the thin stack omits the pool file entirely.
-- The browser MCP runs in Kali and owns the three tools, the reverse proxy,
+- The browser MCP runs in Kali and owns the four tools, the reverse proxy,
   and the pool store.
 - `KALI_BROWSER_MCP_URL` is the agent's only browser address.
   The base is empty; the eval overlay sets `http://kali:8003/mcp`.
@@ -1196,6 +1210,8 @@ The authz residual risk and the coarse effect signal remain accepted as recorded
   `accounts.<account>.browser_context.ref` holds it.
 - The agent surface is one `browser` tool with the `start`, `exec`, and `end`
   commands. The session key is never an agent parameter.
+  Only the recon gateway and an external bootstrapper may persist a context;
+  every other binding refuses that persist with `context_mint_not_allowed`.
 - The legacy six-tool agentic crawler is removed; see
   `docs/design/legacy-crawler-eol.md`.
 - Keep the HTTP-history addon and the read tools compatible.

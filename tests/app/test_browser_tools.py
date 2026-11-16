@@ -18,7 +18,9 @@ from polymerhus.app.llm.browser_tools import (
     BrowserTool,
     browser_context_ref,
     browser_session_name,
+    browser_session_prefix,
     build_browser_tool,
+    stored_context_ref,
 )
 
 
@@ -67,7 +69,8 @@ class FakeClient:
         self.closed = True
 
 
-def _tool(client=None, *, account=None, record_fn=None):
+def _tool(client=None, *, account=None, record_fn=None,
+          allow_context_mint=False):
     return BrowserTool(
         client=client,
         session_name_factory=lambda account_name: browser_session_name(
@@ -79,6 +82,7 @@ def _tool(client=None, *, account=None, record_fn=None):
             else None
         ),
         record_fn=record_fn,
+        allow_context_mint=allow_context_mint,
     )
 
 
@@ -110,6 +114,76 @@ def test_the_context_ref_is_stable_and_independent_of_the_session_name():
     assert first == second
     assert first.startswith("steel-auth-proj-1-alice")
     assert browser_session_name("proj-1", "hunter", "hunt-1", "alice") != first
+
+
+def test_a_non_minting_tool_refuses_to_persist_a_context():
+    client = FakeClient()
+    tool = _tool(client)
+
+    start = json.loads(tool.invoke({"command": "start", "account": "alice"}))
+    end = json.loads(tool.invoke({"command": "end", "persist_context": True}))
+
+    assert start["success"] is True
+    assert end["success"] is False
+    assert end["error"]["code"] == "context_mint_not_allowed"
+    assert ("end", True) not in client.calls
+
+
+def test_a_minting_tool_persists_and_returns_the_bound_account():
+    client = FakeClient()
+    tool = _tool(client, allow_context_mint=True)
+
+    start = json.loads(tool.invoke({"command": "start", "account": "alice"}))
+    end = json.loads(tool.invoke({"command": "end", "persist_context": True}))
+
+    assert start["success"] is True
+    assert end["success"] is True
+    assert end["context_saved"] is True
+    assert end["account"] == "alice"
+    assert end["context_ref"] == "steel-auth-proj-1-alice"
+    assert ("end", True) in client.calls
+
+
+def test_the_stored_context_ref_reads_the_account_reference(tmp_path):
+    from polymerhus.app.auth.store import AuthStore
+
+    store = AuthStore(tmp_path)
+    store.replace_operator_state(
+        "p1",
+        accounts={
+            "alice": {
+                "credentials": {"username": "u", "password": "p",
+                                "login_url": "/login"},
+                "browser_context": {"ref": "steel-auth-p1-alice"},
+            },
+            "replay": {
+                "credentials": {"username": "r", "password": "p",
+                                "login_url": "/login"},
+            },
+        },
+    )
+
+    assert stored_context_ref("p1", "alice", store=store) == (
+        "steel-auth-p1-alice"
+    )
+    assert stored_context_ref("p1", "replay", store=store) is None
+    assert stored_context_ref("p1", "missing", store=store) is None
+
+
+def test_the_session_prefix_is_the_literal_prefix_of_every_project_name():
+    prefix = browser_session_prefix("Proj One")
+
+    assert prefix == "steel-proj-one"
+    for account in (None, "alice"):
+        name = browser_session_name("Proj One", "hunter", "hunt-1", account)
+        assert name.startswith(prefix + "-")
+
+
+def test_the_session_prefix_is_injective_over_the_slug_boundary():
+    # `steel-p1-` must never match a `steel-p10-` session.
+    assert not "steel-p10-hunt".startswith(
+        browser_session_prefix("p1") + "-"
+    )
 
 
 def test_the_session_name_binds_project_account_role_and_instance():
@@ -196,7 +270,7 @@ def test_exec_passes_the_bare_command_grammar():
 
 def test_end_is_idempotent_and_reports_the_context_save():
     client = FakeClient()
-    tool = _tool(client)
+    tool = _tool(client, allow_context_mint=True)
     tool._run("start")
 
     result = json.loads(tool._run("end", persist_context=True))

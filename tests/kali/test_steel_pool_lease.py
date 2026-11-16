@@ -905,3 +905,65 @@ def test_end_without_a_context_ref_never_persists_a_context(tmp_path):
 
     assert report.context_saved is False
     assert report.context_ref is None
+
+# --- the project-scoped pool clear -------------------------------------------
+
+def _context_record(name: str) -> BrowserSessionRecord:
+    return BrowserSessionRecord(
+        name=name,
+        cookies=[{"name": "sid", "value": "v", "domain": "app.test"}],
+    )
+
+
+def test_clear_deletes_the_projects_session_records_and_keeps_contexts(harness):
+    for name in ("steel-p1-hunt", "steel-p1-admin-run", "steel-p2-hunt",
+                 "steel-auth-p1-alice"):
+        harness.store.save(_context_record(name))
+
+    report = harness.manager.clear(prefix="steel-p1-")
+
+    assert report.cleared == ("steel-p1-admin-run", "steel-p1-hunt")
+    assert report.kept_contexts == ("steel-auth-p1-alice",)
+    assert report.skipped_busy == ()
+    assert harness.store.load("steel-p2-hunt") is not None
+    assert harness.store.load("steel-auth-p1-alice") is not None
+    assert harness.store.load("steel-p1-hunt") is None
+
+
+def test_clear_skips_a_record_with_a_live_lease(harness):
+    harness.store.save(_context_record("steel-p1-hunt"))
+    harness.manager.start("mcp-1", "steel-p1-hunt")
+
+    report = harness.manager.clear(prefix="steel-p1-")
+
+    assert report.cleared == ()
+    assert report.skipped_busy == ("steel-p1-hunt",)
+    assert harness.store.load("steel-p1-hunt") is not None
+
+
+def test_clear_only_touches_the_named_prefix(harness):
+    for name in ("steel-p1-hunt", "steel-p10-hunt", "steel-p2-hunt"):
+        harness.store.save(_context_record(name))
+
+    report = harness.manager.clear(prefix="steel-p1-")
+
+    assert report.cleared == ("steel-p1-hunt",)
+    assert harness.store.load("steel-p10-hunt") is not None
+
+
+@pytest.mark.parametrize("prefix", ["", "steel-p1", "../p1-", "steel p1-"])
+def test_clear_rejects_a_prefix_that_is_not_a_session_prefix(harness, prefix):
+    with pytest.raises(ValueError):
+        harness.manager.clear(prefix=prefix)
+
+
+def test_clear_emits_the_report(harness):
+    harness.store.save(_context_record("steel-p1-hunt"))
+
+    harness.manager.clear(prefix="steel-p1-")
+
+    assert ("pool.cleared", {
+        "prefix": "steel-p1-",
+        "cleared": 1,
+        "skipped": 0,
+    }) in harness.events

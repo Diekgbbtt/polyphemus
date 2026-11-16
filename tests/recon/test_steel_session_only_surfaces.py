@@ -46,8 +46,15 @@ def test_gateway_branch_manner_teaches_mounted_sessions_and_no_profile() -> None
         assert "--update-profile" not in manner, directive
         assert "fingerprint replay" not in lower, directive
     assert "web browser" in _BRANCH_MANNER["browser_only"].lower()
-    assert "auth_store" in _BRANCH_MANNER["browser_only"].lower()
-    assert "snapshot" in _BRANCH_MANNER["browser_only"].lower()
+    # The authenticated state is the pool context, not an auth-store snapshot.
+    # A browser branch mints and persists through `persist_context`.
+    for directive in ("browser_only", "request_browser_first"):
+        assert "persist_context" in _BRANCH_MANNER[directive]
+        assert "snapshot" not in _BRANCH_MANNER[directive].lower()
+    # A request-replay-only account is never mounted and never minted.
+    request = _BRANCH_MANNER["request"].lower()
+    assert "request-replay only" in request
+    assert "do not mount" in request
 
 
 def test_gateway_prompt_names_the_oracle_and_fails_closed() -> None:

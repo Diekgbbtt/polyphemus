@@ -216,6 +216,21 @@ class McpBrowserClient:
             raise_for_mcp_error(data.get("error"))
         return data
 
+    def clear(self, *, prefix: str) -> Mapping[str, Any]:
+        """Delete one project's ephemeral browser-session records.
+
+        `prefix` is the project's literal session-name prefix
+        (`steel-<project_slug>-`, from `browser_session_prefix`). The graceful
+        project stop calls this so a later execution cannot inherit a prior
+        target's cookies or storage. The durable auth-context records
+        (`steel-auth-*`) are never deleted. A malformed or unavailable pool
+        raises the typed client errors, and the caller degrades best-effort.
+        """
+        if not prefix or not prefix.endswith("-"):
+            raise ValueError(
+                "the clear prefix must be a session-name prefix ending in '-'")
+        return self._call("browser_clear", {"prefix": prefix})
+
     def close(self) -> None:
         """Exit the MCP session and stop the private loop. Idempotent."""
         with self._lock:

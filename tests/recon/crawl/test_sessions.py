@@ -83,6 +83,35 @@ def test_one_failed_session_does_not_discard_the_other_manifests():
     assert results[1].error is None
 
 
+def test_run_crawl_sessions_excludes_request_replay_only_accounts():
+    # A request-replay-only account has no browser context. The control plane
+    # must never dispatch a worker for it; an anonymous session is still a
+    # valid crawl (the no-auth fallback).
+    replay = CrawlSession(
+        account="replay",
+        role=None,
+        root_url="http://app.test/",
+        auth_probe="http://app.test/me",
+        login_url=None,
+        browser_context_ref=None,
+    )
+    browser = _session("admin", "admin")
+    anonymous = anonymous_session("http://app.test/")
+    seen: list[str | None] = []
+
+    def run_one(session: CrawlSession):
+        seen.append(session.account)
+        return {"account": session.account}
+
+    results = run_crawl_sessions(
+        [replay, browser, anonymous], run_one=run_one, max_workers=2
+    )
+
+    assert "replay" not in seen
+    assert set(seen) == {"admin", None}
+    assert [result.session.account for result in results] == ["admin", None]
+
+
 def test_run_crawl_sessions_with_no_sessions_is_empty():
     assert run_crawl_sessions([], run_one=lambda session: {}, max_workers=2) == []
 

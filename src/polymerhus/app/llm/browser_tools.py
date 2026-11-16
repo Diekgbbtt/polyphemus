@@ -50,6 +50,8 @@ __all__ = [
     "BrowserArgs",
     "BrowserTool",
     "browser_context_ref",
+    "browser_session_prefix",
+    "stored_context_ref",
     "browser_session_name",
     "build_browser_tool",
 ]
@@ -140,13 +142,62 @@ def _bounded(prefix: str, parts: list[str]) -> str:
 def browser_context_ref(project_id: str, account: str) -> str:
     """The durable, decoupled auth-context key for one account.
 
-    The context is independent of any browser session name. The auth store
-    references it; the pool store holds the object.
+    This is the MINTING key. Only the recon authn gateway and an external
+    bootstrapper may use it to create a new context and write the reference
+    into the account. Every other agent reads the stored reference through
+    `stored_context_ref`; the tool never mints.
     """
     return _bounded(
         BROWSER_CONTEXT_PREFIX,
         [_slug(project_id, "project"), _slug(account, "account")],
     )
+
+
+def stored_context_ref(
+    project_id: str,
+    account_name: str | None,
+    *,
+    store=None,
+) -> str | None:
+    """The account's stored browser-context reference, or None.
+
+    Presence is the browser-loadable discriminator: an account with a stored
+    `browser_context.ref` can mount a browser session; an account without one
+    is request-replay only. The helper NEVER computes a key. A missing store,
+    a malformed account, or an unreadable bucket degrades to None and is
+    logged at debug, so a read-only tool path never fails open into a mint.
+    """
+    if not account_name or not project_id:
+        return None
+    try:
+        if store is None:
+            from polymerhus.app.auth.store import AuthStore  # noqa: PLC0415
+
+            store = AuthStore()
+        accounts = store.read(project_id, "accounts")
+        account = accounts.get(account_name) if isinstance(accounts, dict) else None
+        stored = account.get("browser_context") if isinstance(account, dict) else None
+        ref = stored.get("ref") if isinstance(stored, dict) else None
+        if isinstance(ref, str) and ref.startswith(BROWSER_CONTEXT_PREFIX):
+            return ref
+    except Exception:  # noqa: BLE001 - a read-only resolver degrades to None
+        logger.debug(
+            "browser context ref unavailable for %s/%s",
+            project_id, account_name, exc_info=True,
+        )
+    return None
+
+
+def browser_session_prefix(project_id: str) -> str:
+    """The literal session-name prefix every browser session of one project
+    shares: `steel-<project_slug>`.
+
+    The pool clear takes this prefix so it deletes exactly one project's
+    ephemeral session records. The trailing separator is added by the caller;
+    a bare project id can never match `steel-p10-` when the prefix is
+    `steel-p1-`.
+    """
+    return f"{BROWSER_SESSION_PREFIX}-{_slug(project_id, 'project')}"
 
 
 def browser_session_name(
@@ -160,12 +211,12 @@ def browser_session_name(
     The name follows `steel-<project>[-<account>]-<role>-<instance>`. It is
     never an agent parameter; the binding derives it.
     """
-    parts = [_slug(project_id, "project")]
+    parts: list[str] = []
     if account:
         parts.append(_slug(account, "account"))
     parts.append(_slug(role, "agent"))
     parts.append(_slug(instance_id, "run"))
-    return _bounded(BROWSER_SESSION_PREFIX, parts)
+    return _bounded(browser_session_prefix(project_id), parts)
 
 
 class BrowserTool(BaseTool):
@@ -180,6 +231,9 @@ class BrowserTool(BaseTool):
     _context_ref_resolver: Callable[[str | None], str | None] = PrivateAttr()
     _bound_account: str | None = PrivateAttr(default=None)
     _unavailable_reason: str | None = PrivateAttr(default=None)
+    _allow_context_mint: bool = PrivateAttr(default=False)
+    _started_account: str | None = PrivateAttr(default=None)
+    _context_ref: str | None = PrivateAttr(default=None)
     _record_fn: Callable[[Mapping[str, Any], Mapping[str, Any]], None] | None = (
         PrivateAttr(default=None)
     )
@@ -194,6 +248,7 @@ class BrowserTool(BaseTool):
         context_ref_resolver: Callable[[str | None], str | None],
         record_fn: Callable[[Mapping[str, Any], Mapping[str, Any]], None] | None = None,
         unavailable_reason: str | None = None,
+        allow_context_mint: bool = False,
     ) -> None:
         super().__init__()
         self._client = client
@@ -201,6 +256,7 @@ class BrowserTool(BaseTool):
         self._context_ref_resolver = context_ref_resolver
         self._record_fn = record_fn
         self._unavailable_reason = unavailable_reason
+        self._allow_context_mint = bool(allow_context_mint)
 
     def _run(
         self,
@@ -267,6 +323,8 @@ class BrowserTool(BaseTool):
                 retryable=True,
             )
         self._started = True
+        self._started_account = account
+        self._context_ref = start.context_ref or context_ref
         return {
             "success": True,
             "session": {
@@ -322,6 +380,13 @@ class BrowserTool(BaseTool):
             )
 
     def _end(self, *, persist_context: bool) -> dict:
+        if persist_context and not self._allow_context_mint:
+            return self._error(
+                "context_mint_not_allowed",
+                "only the recon authn gateway or an external bootstrapper may "
+                "mint a browser context; this agent mounts a stored context",
+                retryable=False,
+            )
         if self._client is None:
             return {
                 "success": True,
@@ -354,6 +419,8 @@ class BrowserTool(BaseTool):
                 retryable=True,
             )
         self._started = False
+        result.setdefault("account", self._started_account)
+        result.setdefault("context_ref", self._context_ref)
         return result
 
     def _record(
@@ -402,6 +469,8 @@ def build_browser_tool(
     instance_id: str,
     mcp_url: str | None = None,
     record_fn: Callable[[Mapping[str, Any], Mapping[str, Any]], None] | None = None,
+    context_ref_resolver: Callable[[str | None], str | None] | None = None,
+    allow_context_mint: bool = False,
 ) -> BrowserTool:
     """Build the one browser tool for one execution unit.
 
@@ -429,12 +498,13 @@ def build_browser_tool(
     def context_ref(account_name: str | None) -> str | None:
         if not account_name:
             return None
-        return browser_context_ref(project_id, account_name)
+        return stored_context_ref(project_id, account_name)
 
     return BrowserTool(
         client=client,
         session_name_factory=session_name,
-        context_ref_resolver=context_ref,
+        context_ref_resolver=context_ref_resolver or context_ref,
         record_fn=record_fn,
         unavailable_reason=unavailable_reason,
+        allow_context_mint=allow_context_mint,
     )

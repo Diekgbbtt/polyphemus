@@ -405,6 +405,35 @@ class SessionStore:
     def path_for(self, name: str) -> Path:
         return self.root / f"{validate_name(name)}.json"
 
+    def names(self) -> tuple[str, ...]:
+        """Every stored record name, sorted.
+
+        Only a regular ``*.json`` file is a record. A symlink is never
+        followed and never listed, and the temp sibling of an in-flight atomic
+        write is skipped by its suffix. An unreadable root fails loud: a clear
+        must never mistake an I/O fault for an empty store.
+        """
+        try:
+            entries = list(self.root.iterdir())
+        except OSError as exc:
+            raise SessionStoreError(
+                f"could not list the browser-session store {self.root}"
+            ) from exc
+        found: list[str] = []
+        for path in entries:
+            if path.suffix != ".json":
+                continue
+            try:
+                info = path.lstat()
+            except OSError:
+                continue
+            if not stat.S_ISREG(info.st_mode):
+                continue
+            name = path.stem
+            if _NAME_RE.fullmatch(name):
+                found.append(name)
+        return tuple(sorted(found))
+
     def load(self, name: str) -> BrowserSessionRecord | None:
         path = self.path_for(name)
         text = self._read_text(path, name)

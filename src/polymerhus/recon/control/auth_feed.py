@@ -294,28 +294,35 @@ def project_browser_context(
     project_id: str | None = None,
     account_name: str | None = None,
 ) -> str | None:
-    """The account's decoupled auth-context reference, or None.
+    """The account's stored decoupled auth-context reference, or None.
 
     The reference points to the browser-state object in the pool store. The
-    auth store never holds the object. A stored reference wins; without one,
-    the deterministic context key for the project and account is the contract.
-    The retired `steel.state` key is not read.
+    auth store never holds the object.
+
+    Presence is the account shape's browser-loadable discriminator: an account
+    with a stored `browser_context.ref` can mount a browser session; an account
+    without one is request-replay only and must not be projected into the
+    browser crawl. The projection NEVER computes the deterministic key - that
+    key is minted by the recon authn gateway or an external bootstrapper, which
+    then writes the reference back into the account.
     """
     if not isinstance(account, dict):
         return None
     stored = account.get("browser_context")
     ref = stored.get("ref") if isinstance(stored, dict) else None
+    if not isinstance(ref, str) or not ref.startswith("steel-auth-"):
+        return None
     if project_id and account_name:
         from polymerhus.app.llm.browser_tools import (  # noqa: PLC0415
             browser_context_ref,
         )
 
-        # The deterministic key is the contract. A stale value may name
-        # another project's context; the project and account are the truth.
-        return browser_context_ref(project_id, account_name)
-    if isinstance(ref, str) and ref.startswith("steel-auth-"):
-        return ref
-    return None
+        # The stored reference is the authority, but it must name THIS
+        # project's and account's context. The key is computed only for the
+        # comparison; a stale cross-project reference is not followed.
+        if ref != browser_context_ref(project_id, account_name):
+            return None
+    return ref
 
 
 def project_sessions(
@@ -333,7 +340,9 @@ def project_sessions(
 
     `origin` resolves the committed root-relative paths against the target's
     canonical origin. The pool record carries the resulting absolute values.
-    A malformed account is skipped; an empty account map is the anonymous
+    Only browser-loadable accounts become crawl sessions: an account with no
+    stored `browser_context.ref` is request-replay only and is skipped. A
+    malformed account is skipped; an empty account map is the anonymous
     fallback, which the crawl pod owns.
     """
     if not isinstance(accounts, Mapping):
@@ -367,6 +376,10 @@ def project_sessions(
             and credentials.get("login_url")
             else None
         )
+        browser_context_ref = project_browser_context(
+            account, project_id=project_id, account_name=account_name)
+        if browser_context_ref is None:
+            continue
         procedure = account.get("procedure")
         sessions.append(
             {
@@ -375,11 +388,7 @@ def project_sessions(
                 "root_url": root_url,
                 "auth_probe": auth_probe,
                 "login_url": login_url,
-                "browser_context_ref": project_browser_context(
-                    account,
-                    project_id=project_id,
-                    account_name=account_name,
-                ),
+                "browser_context_ref": browser_context_ref,
                 "procedure": (
                     procedure
                     if isinstance(procedure, str) and procedure

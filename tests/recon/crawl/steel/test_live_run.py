@@ -351,3 +351,39 @@ def test_the_pod_derives_the_ephemeral_session_name(monkeypatch):
     assert captured[0].session_name == (
         "steel-proj-1-crawl-baseline-run-1-anonymous"
     )
+
+
+def test_a_context_ref_with_no_restored_state_is_a_missing_context():
+    from polymerhus.recon.crawl.steel.live import browser_context_missing
+
+    ctx = LiveRunContext(
+        project_id="proj-1",
+        run_id="run-1",
+        session_name="steel-proj-1",
+        target_url="https://app.test/",
+        scope=["app.test"],
+        data_root="/tmp",
+        browser_context_ref="steel-auth-proj-1-alice",
+    )
+    assert browser_context_missing(
+        ctx, SimpleNamespace(restored={})
+    ) is True
+    assert browser_context_missing(
+        ctx, SimpleNamespace(restored={"cookies": 1, "storage_keys": 1})
+    ) is False
+    assert browser_context_missing(
+        LiveRunContext(
+            project_id="proj-1", run_id="run-1", session_name="steel-proj-1",
+            target_url="https://app.test/", scope=["app.test"],
+            data_root="/tmp", anonymous=True,
+        ),
+        SimpleNamespace(restored={}),
+    ) is False
+    assert browser_context_missing(
+        LiveRunContext(
+            project_id="proj-1", run_id="run-1", session_name="steel-proj-1",
+            target_url="https://app.test/", scope=["app.test"],
+            data_root="/tmp",
+        ),
+        SimpleNamespace(restored={}),
+    ) is False

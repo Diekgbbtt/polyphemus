@@ -100,6 +100,17 @@ class LiveCrawlError(RuntimeError):
     """A runtime component could not be assembled or read."""
 
 
+class BrowserContextMissing(LiveCrawlError):
+    """A stored browser-context reference did not restore any state.
+
+    The crawl must not fall through to an anonymous oracle under an
+    authenticated account label. The failure is a configuration error, not a
+    target authentication failure, and it is recorded with its own stop reason.
+    """
+
+    code = "browser_context_missing"
+
+
 class LiveCdpEvent:
     """One inbound CDP event with the two fields the sidecar reads."""
 
@@ -634,6 +645,11 @@ def run_live_crawl(ctx: LiveRunContext) -> LiveRunResult:
 
     def auth_fn(root: PageInstance) -> AuthVerdict:
         loaded = session.start_report
+        if browser_context_missing(ctx, loaded):
+            raise BrowserContextMissing(
+                "browser_context_missing: the stored browser context "
+                f"{ctx.browser_context_ref!r} restored no cookies or storage; "
+                "the account is not browser-loadable or the context was lost")
         if ctx.anonymous:
             verdict = AuthVerdict(
                 classification="anonymous",
@@ -842,6 +858,22 @@ def crawl_session_root(ctx: LiveRunContext, loaded: Any = None) -> str:
     if isinstance(root, str) and root:
         return root
     return ctx.root_url or ctx.target_url
+
+
+def browser_context_missing(ctx: LiveRunContext, loaded: Any = None) -> bool:
+    """Whether a named browser context failed to restore any state.
+
+    The pool's start report carries the restore counts. A fresh session with a
+    context reference but no restored cookies, origins, or storage keys means
+    the context record is absent or empty. The crawl fails with its own
+    `browser_context_missing` stop reason instead of running an unauthenticated
+    oracle and reporting a target auth failure. An anonymous session and a
+    contextless session are not checked.
+    """
+    if ctx.anonymous or not ctx.browser_context_ref:
+        return False
+    restored = getattr(loaded, "restored", None)
+    return not isinstance(restored, Mapping) or not restored
 
 
 def crawl_session_probe(ctx: LiveRunContext, loaded: Any = None) -> str | None:

@@ -19,7 +19,7 @@ authoritative, and where the CDP capture runs.
 |---|---|---|---|---|---|
 | Deterministic crawl engine | `recon/crawl/steel/*` | the crawl pod (`crawl_pod.live_run_crawl_fn`) | the engine, by name, attached to a pre-authenticated session | `steel` CLI subprocess in the pod's environment | none; it is a pod collaborator |
 | Retired agentic crawl | `recon/crawl/steel_provider.py`, `crawl_agent.py` | `legacy_agentic_run_crawl_fn` only | the provider, by SDK create | Steel Python SDK plus Playwright over CDP | six `steel_*` tools |
-| Browser pool MCP | `kali/steel_pool/server.py` | the hunting agent and the W8 binding | the MCP lease, keyed by MCP session id | MCP streamable HTTP, three tools | `browser_start`, `browser_exec`, `browser_end` |
+| Browser pool MCP | `kali/steel_pool/server.py` | the hunting agent and the W8 binding; `browser_clear` is app-internal | the MCP lease, keyed by MCP session id | MCP streamable HTTP, four tools | `browser_start`, `browser_exec`, `browser_end`, `browser_clear` |
 
 The production crawl is the deterministic engine (`crawl_pod.py` sets
 `default_run_crawl_fn = live_run_crawl_fn`).
@@ -142,6 +142,14 @@ Every `browser_exec` resets the TTL.
 The MCP close hook, the `browser_end`, the server shutdown, and the TTL all
 release the lease.
 A CLI daemon death and a CDP sidecar death do not release it.
+
+`browser_clear` is the one store-level operation.
+The graceful project stop calls it with the project's session-name prefix.
+It deletes the project's ephemeral session records, never a durable
+auth-context record, and it skips any record with a live lease or an
+in-flight start.
+The pool store is therefore clean for the next execution without a shared
+worker-profile wipe that would break a concurrently running project.
 
 The crawler's stop owner and the MCP's lease owner are different objects.
 A crawler that opens its own MCP session can hold the lease.

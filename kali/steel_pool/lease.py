@@ -29,6 +29,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 import math
+import re
 import threading
 import time
 from typing import Protocol
@@ -77,6 +78,7 @@ __all__ = [
     "DEFAULT_LEASE_TTL_S",
     "DEFAULT_POOL_WAIT_S",
     "DEFAULT_TICK_S",
+    "ClearReport",
     "EndReport",
     "HeartbeatRunner",
     "HeartbeatThread",
@@ -88,6 +90,27 @@ __all__ = [
     "NoLease",
     "PoolExhausted",
 ]
+
+
+# The durable auth-context records share the store with the ephemeral session
+# records. A pool clear must never delete them: the account still references
+# the context, and an emptied context would read as `browser_context_missing`.
+BROWSER_CONTEXT_PREFIX = "steel-auth-"
+
+# A clear prefix is a literal session-name prefix. Requiring the trailing dash
+# makes the boundary explicit: `steel-p1-` never matches `steel-p10-`, and an
+# empty or bare project id can never clear the whole store by accident.
+_SESSION_PREFIX_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*-$")
+
+
+@dataclass(frozen=True)
+class ClearReport:
+    """The outcome of one project-scoped pool clear."""
+
+    prefix: str
+    cleared: tuple[str, ...]
+    kept_contexts: tuple[str, ...]
+    skipped_busy: tuple[str, ...]
 
 
 class LeaseError(RuntimeError):
@@ -546,6 +569,52 @@ class LeaseManager:
         with self._lock:
             lease = self._leases.get(mcp_session_id)
             return None if lease is None else lease.view()
+
+    def clear(self, *, prefix: str) -> ClearReport:
+        """Delete one project's ephemeral session records from the store.
+
+        ``prefix`` is the literal session-name prefix of one project
+        (``steel-<project_slug>-``). Only records under that prefix are
+        deleted. The durable auth-context records are never deleted, and a
+        record bound to a live lease or an in-flight start is skipped and
+        reported, so a clear racing a dying crawl cannot corrupt its record.
+        """
+        if not isinstance(prefix, str) or not _SESSION_PREFIX_RE.fullmatch(prefix):
+            raise ValueError(
+                "the clear prefix must be a session-name prefix ending in '-' "
+                "and made of letters, numbers, hyphens, and underscores"
+            )
+        with self._lock:
+            busy = set(self._names) | {
+                lease.session_name for lease in self._leases.values()
+            }
+            cleared: list[str] = []
+            kept_contexts: list[str] = []
+            skipped_busy: list[str] = []
+            for name in self._store.names():
+                if name.startswith(BROWSER_CONTEXT_PREFIX):
+                    kept_contexts.append(name)
+                    continue
+                if not name.startswith(prefix):
+                    continue
+                if name in busy:
+                    skipped_busy.append(name)
+                    continue
+                if self._store.delete(name):
+                    cleared.append(name)
+        report = ClearReport(
+            prefix=prefix,
+            cleared=tuple(cleared),
+            kept_contexts=tuple(kept_contexts),
+            skipped_busy=tuple(skipped_busy),
+        )
+        self.emit(
+            "pool.cleared",
+            prefix=prefix,
+            cleared=len(cleared),
+            skipped=len(skipped_busy),
+        )
+        return report
 
     def active_count(self) -> int:
         with self._lock:

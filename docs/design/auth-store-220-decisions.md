@@ -192,6 +192,24 @@ decoupled auth-context object; the auth store holds only the reference. The
 browser tool mounts the object with `browser(command="start", account=...)`.
 There is no fallback and no compatibility read of `steel.state`.
 
+## Amendment 2026-11-16 - the reference is a stored fact, not a projection
+
+`browser_context.ref` presence is the account shape's browser-loadable
+discriminator.
+An account without the reference is request-replay only.
+The reference is MINTED by the recon authn gateway or an external bootstrapper,
+which writes it into the account after a successful browser-context persist.
+The auth feed and the agent browser tools read the stored reference or return
+`None`; they never compute `steel-auth-<project>-<account>` themselves.
+A non-gateway browser tool refuses `persist_context=true` with
+`context_mint_not_allowed`.
+The crawl's session projection excludes request-replay-only accounts.
+The pool record already carries the general browser state - `cookies`,
+`localStorage`, `sessionStorage`, and `indexedDB` - so a JWT the SPA keeps in
+storage (for example dataease's `user.token`) is captured by the browser mint;
+no additional typed snapshot model is introduced.
+The graceful project stop clears the pool data caches.
+
 ## Amendment 2026-11-09 - the account is the session
 
 One account is one browser session.
@@ -216,18 +234,24 @@ The account record gains three optional session fields:
 The preflight mints and verifies every credential-bearing account, writes the
 absolute role/root/probe into the pool record, and sets `status` to `valid` or
 `not_valid`.
+For a browser-loadable account it mints the browser context and writes
+`accounts.<account>.browser_context.ref`; for request-replay-only material it
+writes `accounts.<account>.tokens` (`{value, location, target, expiry}`) so the
+replay carries it.
 The bootstrap does NOT write the pool record at session end.
-After authentication it persists the session through `auth_store` writes:
-`accounts.<account>.snapshot` with `{cookies, headers, params, captured_at}`
-and/or `accounts.<account>.tokens` with `{value, location, target, expiry}`.
 The account identifier is the full path the read returned; a new account is a
 create at `accounts.<account>`.
 There is no prompt-side account matching and no projection of the account
 catalog into the prompt: the agent lists the accounts on demand.
-`browser(command="end")` stops and releases without `persist_context`.
-The crawl's session list is the valid accounts, plus one anonymous fallback
-only when the auth store has zero accounts.
-No anonymous session runs when accounts exist.
+`browser(command="end")` stops and releases; `end(persist_context=true)` also
+saves the context and is reserved to the recon authn gateway and the external
+bootstrap.
+A credential-bearing account that is request-replay only carries no
+`browser_context.ref`; it validates through the request replay and never enters
+the crawl.
+The crawl's session list is the valid browser-loadable accounts, plus one
+anonymous fallback only when no browser-loadable account exists.
+No anonymous session runs when a browser-loadable account exists.
 `overview.technical_conditions` carries one authenticated-request shape per
 role; the authn skill prose covers the sign-in and sign-up procedure for each
 role.

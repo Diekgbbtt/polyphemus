@@ -243,6 +243,7 @@ def _session_accounts(tmp_path):
                 "role": "super_administrator",
                 "root_url": "/index.php/admin/Index/index.html",
                 "auth_probe": "/index.php/admin/Index/index.html",
+                "browser_context": {"ref": "steel-auth-p1-admin"},
                 "credentials": {
                     "username": "admin",
                     "password": "pw",
@@ -252,6 +253,7 @@ def _session_accounts(tmp_path):
             "member": {
                 "role": "member",
                 "root_url": "/index.php/index/user/index.html",
+                "browser_context": {"ref": "steel-auth-p1-member"},
                 "credentials": {
                     "username": "m",
                     "password": "pw",
@@ -276,10 +278,8 @@ def test_project_sessions_one_entry_per_account_with_defaults(tmp_path):
 
     sessions = project_sessions("p1", accounts, origin="http://target.test")
 
-    assert [session["account"] for session in sessions] == [
-        "admin", "member", "baseline"
-    ]
-    admin, member, baseline = sessions
+    assert [session["account"] for session in sessions] == ["admin", "member"]
+    admin, member = sessions
 
     assert admin["role"] == "super_administrator"
     assert admin["root_url"] == (
@@ -297,10 +297,9 @@ def test_project_sessions_one_entry_per_account_with_defaults(tmp_path):
         "http://target.test/index.php/index/user/index.html"
     )
     assert member["auth_probe"] is None
+    assert member["browser_context_ref"] == "steel-auth-p1-member"
 
-    assert baseline["role"] is None
-    assert baseline["root_url"] == "http://target.test/"
-    assert baseline["auth_probe"] is None
+    assert "baseline" not in [session["account"] for session in sessions]
 
 
 def test_project_sessions_keeps_absolute_and_defaults_default_role():
@@ -309,6 +308,7 @@ def test_project_sessions_keeps_absolute_and_defaults_default_role():
             "default_role": "admin",
             "root_url": "https://member.example/app",
             "auth_probe": "https://member.example/me",
+            "browser_context": {"ref": "steel-auth-p1-legacy"},
         },
         "broken": None,
     }
@@ -325,9 +325,12 @@ def test_project_sessions_keeps_absolute_and_defaults_default_role():
 
 def test_project_sessions_skips_stale_accounts():
     accounts = {
-        "valid": {"status": "valid", "root_url": "/valid"},
-        "stale": {"status": "not_valid", "root_url": "/stale"},
-        "unknown": {"root_url": "/unknown"},
+        "valid": {"status": "valid", "root_url": "/valid",
+                  "browser_context": {"ref": "steel-auth-p1-valid"}},
+        "stale": {"status": "not_valid", "root_url": "/stale",
+                  "browser_context": {"ref": "steel-auth-p1-stale"}},
+        "unknown": {"root_url": "/unknown",
+                    "browser_context": {"ref": "steel-auth-p1-unknown"}},
     }
 
     sessions = project_sessions("p1", accounts, origin="http://target.test")
@@ -414,22 +417,24 @@ def test_project_browser_context_reads_a_valid_reference():
     assert project_browser_context({}) is None
 
 
-def test_project_browser_context_computes_the_deterministic_key():
+def test_project_browser_context_without_a_stored_reference_is_none():
+    # A request-replay-only account carries no browser context. The projection
+    # must not invent one: the key is a stored reference, never a computed one.
     assert project_browser_context(
         {}, project_id="proj1", account_name="alice"
-    ) == "steel-auth-proj1-alice"
+    ) is None
 
 
 @pytest.mark.parametrize(
     "legacy",
     ["alice", "../escape", "a" * 200, "old-session-name", ""],
 )
-def test_project_browser_context_replaces_a_legacy_reference(legacy):
+def test_project_browser_context_ignores_a_retired_legacy_reference(legacy):
     account = {"steel": {"state": legacy}}
 
     assert project_browser_context(
         account, project_id="proj1", account_name="alice"
-    ) == "steel-auth-proj1-alice"
+    ) is None
 
 
 def test_project_browser_context_does_not_trust_another_projects_reference():
@@ -437,7 +442,7 @@ def test_project_browser_context_does_not_trust_another_projects_reference():
 
     assert project_browser_context(
         account, project_id="proj1", account_name="alice"
-    ) == "steel-auth-proj1-alice"
+    ) is None
 
 
 def test_project_browser_context_ignores_the_retired_steel_key():
