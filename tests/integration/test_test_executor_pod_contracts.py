@@ -24,14 +24,11 @@ import asyncio
 import inspect
 
 import pytest
-from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage
-from langchain_core.outputs import ChatGeneration, ChatResult
 
 from polymerhus.attack.hunting.pod import arun_pod
 from polymerhus.attack.hunting.pod.agents import symbolic_runner_step_fn
 from polymerhus.attack.hunting.pod.config import EXEC_TIMEOUT_S, MAX_POD_ITERS
-from polymerhus.attack.hunting.pod.llm import POD_RUNNER_ROLE, POD_TRIAGER_ROLE
 from polymerhus.attack.hunting.pod.note_tool import (
     NOTES_BAD_KIND,
     NOTES_EMPTY_BODY,
@@ -39,19 +36,13 @@ from polymerhus.attack.hunting.pod.note_tool import (
     note_tool_for,
 )
 from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore, spec_identifier
-from polymerhus.attack.hunting.pod.tools import (
-    ExecSpec,
-    ExecTool,
-)
+from polymerhus.attack.hunting.pod.tools import ExecSpec
 from polymerhus.attack.hunting.pod.types import RunnerStep, TERMINAL_REASONS
 from polymerhus.recon.domain.types import ExecResult
 from tests.support.pod_triager_fake import (
-    CLOSING,
-    assess,
     confirmed_turns,
-    decide_variant,
     space_exhausted_turns,
-    terminate,
+    triage_factory,
 )
 
 VALID_SPEC = {
@@ -262,7 +253,7 @@ def test_exec_timeout_enforced():
 
 # --- C9 -----------------------------------------------------------------------
 
-def test_variant_derivation_with_provenance():
+def test_variant_derivation_records_the_basis_and_parent():
     spec = {**SEMANTIC_SPEC,
             "skill_concretised_procedure": {"recon_action": "fetch the login page"}}
     decisions = iter([
@@ -336,82 +327,12 @@ def test_langfuse_failure_is_fail_open():
 
 # --- the production-lane harness (C13-C15: T7's ReAct lane) -------------------
 
-class _FakeModel(BaseChatModel):
-    """The scripted chat model (the e2e E1 / react-seams pattern): `_generate`
-    replays `replies` one per model step (the last repeats), `bind_tools` is a
-    passthrough so no real tool binding resolves - the ReAct loop is
-    deterministic, no live LLM."""
-
-    replies: list = []
-    idx: dict = {}
-
-    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
-        import uuid
-
-        i = self.idx.get("i", 0)
-        self.idx["i"] = i + 1
-        msg = self.replies[min(i, len(self.replies) - 1)]
-        # A provider stamps a unique id on every response. langgraph's
-        # `add_messages` derives an id from the content when it is absent, so
-        # an identical id-less reply on a RESUMED thread would replace the
-        # prior one in place instead of appending.
-        msg = msg.model_copy(deep=True, update={"id": f"fake-{i}-{uuid.uuid4().hex}"})
-        return ChatResult(generations=[ChatGeneration(message=msg)])
-
-    @property
-    def _llm_type(self):
-        return "fake"
-
-    def bind_tools(self, tools, **kwargs):
-        return self
-
-
-def _factory(by_role):
-    """A `model_factory(role_id) -> model` walking `by_role[role_id]`; each
-    `arun_session_turn` builds a fresh agent on a fresh instance, so the scripts
-    are role-scoped, never cross-thread."""
-
-    def make(role_id):
-        replies = by_role.get(role_id) or [AIMessage(content="done")]
-        return _FakeModel(replies=list(replies), idx={})
-
-    return make
-
-
-def _kb_empty(calls=None):
-    def fake(query, *, fault_id="", technological_axis=()):
-        if calls is not None:
-            calls.append(query)
-        return {"symptoms": [], "techniques": [], "source": None}
-    return fake
-
-
-def _triage_factory(runner_script, triage_turns):
-    """The role-keyed factory for a full production pod run.
-
-    The runner resets its script per stretch (the whole ReAct loop rides ONE
-    model instance), while the triager walks a SHARED cursor across the triage
-    harness's turns: the pod builds a fresh model per turn, and one decision is
-    an ASSESS turn, a DECIDE turn, and the closing turn on the same thread."""
-    runner = _factory({POD_RUNNER_ROLE: runner_script})
-    triage = {"i": 0}
-
-    def make(role_id):
-        if role_id == POD_TRIAGER_ROLE:
-            i = triage["i"]
-            triage["i"] = i + 1
-            return _FakeModel(replies=list(triage_turns), idx={"i": i})
-        return runner(role_id)
-
-    return make
-
-
-def test_note_written_on_p3_and_read_by_triager(tmp_path, monkeypatch):
+def test_note_written_on_p3_and_read_by_triager(tmp_path):
     """On P3 space exhaustion the production Runner writes the ONE consolidated
     `experiment_summary` as its FINAL tool call (D84-17/19); it lands as the
     TERMINAL RECORD of the variant's experiment-log slice (D84-35) - NOT in
-    notes.yaml - and the Triager's production note-reading turn terminates
-    `{unsuccessful, space-exhausted}` (D84-23, C14/H6)."""
+    notes.yaml - and the Triager's ASSESS/DECIDE gate calls terminate
+    `{unsuccessful, space-exhausted}` (lifecycle v2 8.11, C14/H6)."""
     exec_calls = []
     store = PodMemoryStore(tmp_path)
     runner_script = [
@@ -430,7 +351,7 @@ def test_note_written_on_p3_and_read_by_triager(tmp_path, monkeypatch):
     env = _run(arun_pod(
         VALID_SPEC, exec_fn=_exec(_ABSENT, calls=exec_calls),
         trace_fn=_no_trace, memory_store=store, spec_id=SPEC_ID,
-        model_factory=_triage_factory(
+        model_factory=triage_factory(
             runner_script,
             space_exhausted_turns(
                 note="no populated procedure attribute to bend"))))
@@ -468,7 +389,7 @@ def test_production_run_persists_its_pod_export(tmp_path):
     env = _run(arun_pod(
         VALID_SPEC, exec_fn=_exec(_OK), trace_fn=_no_trace,
         memory_store=store, spec_id=SPEC_ID, run_id="run-84",
-        model_factory=_triage_factory(runner_script, confirmed_turns())))
+        model_factory=triage_factory(runner_script, confirmed_turns())))
 
     assert env["verdict"] == "successful"
     assert env["evidence"]["terminal_reason"] == "symptom-confirmed"

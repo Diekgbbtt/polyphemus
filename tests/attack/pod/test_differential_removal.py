@@ -33,6 +33,14 @@ def _ok_exec(command, timeout_s):
     return ExecResult(stdout=_OK, stderr="", returncode=0, duration_ms=1)
 
 
+def _confirmed(spec, obs, log, facts):
+    """The v2 critic seam: the unit tier never reaches the production harness
+    (and therefore never a live LLM, CODING_STANDARD section 10)."""
+    return {"action": "terminate", "verdict": "successful",
+            "terminal_reason": "symptom-confirmed", "clean": True,
+            "note": "the observation confirms the symptom"}
+
+
 def test_no_seam_signature_carries_differential():
     for fn in (symbolic_runner_step_fn, default_runner_step_fn, default_triager_fn):
         assert "differential" not in inspect.signature(fn).parameters
@@ -51,7 +59,7 @@ def test_typed_channels_carry_no_differential_field():
 def test_graph_runs_without_differential_or_baseline_obs_state():
     final = asyncio.run(build_pod_graph(exec_fn=_ok_exec,
                                         runner_step_fn=symbolic_runner_step_fn,
-                                        triager_fn=None).ainvoke(
+                                        triager_fn=_confirmed).ainvoke(
                                             {"spec": dict(VALID_SPEC), "run_id": "t0"},
                                             config={"recursion_limit": 100}))
     assert "baseline_obs" not in final
@@ -63,7 +71,7 @@ def test_graph_runs_without_differential_or_baseline_obs_state():
 def test_exported_raw_observations_carry_no_differential():
     env = asyncio.run(build_pod_graph(exec_fn=_ok_exec,
                                       runner_step_fn=symbolic_runner_step_fn,
-                                      triager_fn=None).ainvoke(
+                                      triager_fn=_confirmed).ainvoke(
                                           {"spec": dict(VALID_SPEC), "run_id": "t0"},
                                           config={"recursion_limit": 100}))
     for obs in env["export"]["evidence"]["raw_observations"]:

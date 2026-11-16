@@ -50,7 +50,7 @@ def _exec(stdout: str = _ABSENT):
     return fake
 
 
-def _terminal_triager(spec, observation, messages, log):
+def _terminal_triager(spec, observation, log, facts):
     return {
         "classification": "noise",
         "action": "terminate",
