@@ -71,6 +71,10 @@ ENV_FILE="$INSTANCE_DIR/.env"
 set -a
 . "$ENV_FILE"
 set +a
+# The instance `.env` still names the eval-server-1 root; the run's own data
+# root must win over the file value for both the compose substitution and the
+# host-side orchestrator.
+export INSTANCE_DATA_ROOT="$EVAL_DATA_ROOT"
 required_env=(
   "API_KEY_OPENCODE_GO"
   "STEEL_CRAWL_MAX_DURATION_S=7200"
